@@ -1,11 +1,9 @@
 mod platform;
 
-use log;
 use env_logger;
 
 #[tokio::main]
 async fn main() {
-    // Inicjalizacja loggera - dodajemy na początku main
     env_logger::init();
     
     let platform = platform::get_platform();

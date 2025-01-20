@@ -1,17 +1,13 @@
 use std::sync::Arc;
-use std::time::SystemTime;
 use async_trait::async_trait;
 use windows::{
     Media::Control::{
         GlobalSystemMediaTransportControlsSession,
         GlobalSystemMediaTransportControlsSessionManager,
     },
-    core::Result as WindowsResult,
     core::Error as WindowsError,
-    Foundation::DateTime,
-    Foundation::TimeSpan,
 };
-use log::trace;
+
 use super::{
     PlaybackError, 
     Track, 
@@ -55,14 +51,6 @@ impl WindowsPlaybackInfo {
     async fn get_media_properties(&self) -> Result<windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties, PlaybackError> {
         Ok(self.session.TryGetMediaPropertiesAsync()?.await?)
     }
-
-    async fn get_end_time(&self) -> Result<f64, PlaybackError> {
-        let timeline = self.session.GetTimelineProperties()?;
-        let end_time = timeline.EndTime()?.Duration as f64 / 10_000_000.0;
-        Ok(end_time)
-    }
-
-
 }
 
 #[async_trait]

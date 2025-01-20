@@ -11,9 +11,7 @@ pub mod linux;
 
 #[derive(Debug)]
 pub enum PlaybackError {
-    TrackNotFound,
     NoActivePlayback,
-    DeviceNotAvailable,
     PermissionDenied,
     FeatureNotSupported,
     UnknownError(String),
@@ -22,9 +20,7 @@ pub enum PlaybackError {
 impl fmt::Display for PlaybackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TrackNotFound => write!(f, "Track not found"),
             Self::NoActivePlayback => write!(f, "No active playback"),
-            Self::DeviceNotAvailable => write!(f, "Device not available"),
             Self::PermissionDenied => write!(f, "Permission denied"),
             Self::FeatureNotSupported => write!(f, "Feature not supported"),
             Self::UnknownError(e) => write!(f, "Unknown error: {}", e),
