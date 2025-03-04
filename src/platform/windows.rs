@@ -72,8 +72,12 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
         let last_update_time = timeline.LastUpdatedTime()?;
         let end_time = timeline.EndTime()?.Duration as f64 / 10_000_000.0;
 
-        let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
-        let update_time = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64);
+        let update_time = if (last_update_time.UniversalTime < UNIX_EPOCH_OFFSET) {
+            std::time::SystemTime::now()
+        } else {
+            let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
+             std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
+        };
 
         let position_sec = position.Duration as f64 / 10_000_000.0;
 
