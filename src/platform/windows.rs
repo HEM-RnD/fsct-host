@@ -9,10 +9,10 @@ use windows::{
 };
 
 use super::{
-    PlaybackError, 
-    Track, 
-    PlaybackInfoProvider, 
-    PlaybackControlProvider, 
+    PlaybackError,
+    Track,
+    PlaybackInfoProvider,
+    PlaybackControlProvider,
     PlatformContext,
     PlatformBehavior,
     TimelineInfo,
@@ -74,9 +74,9 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
 
         let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
         let update_time = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64);
-        
+
         let position_sec = position.Duration as f64 / 10_000_000.0;
-        
+
         let playback_info = self.session.GetPlaybackInfo()?;
         let is_playing = playback_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
 
@@ -146,7 +146,7 @@ impl PlatformBehavior for WindowsPlatform {
             .map_err(|e| e.to_string())?;
 
         let session: GlobalSystemMediaTransportControlsSession = playback_info.session.clone();
-        
+
         let playback_control = WindowsPlaybackControl {
             session,
         };
@@ -160,10 +160,11 @@ impl PlatformBehavior for WindowsPlatform {
     async fn cleanup(&self) -> Result<(), String> {
         Ok(())
     }
-} 
+}
 
 impl From<WindowsError> for PlaybackError {
     fn from(err: WindowsError) -> Self {
         PlaybackError::UnknownError(err.to_string())
     }
-} 
+}
+
