@@ -209,7 +209,6 @@ impl MediaRemoteFramework {
                         let map = dict_to_hashmap(&dict);
                         map
                     } else {
-                        println!("Dict: None");
                         HashMap::new()
                     };
                     let tx = tx.lock().unwrap().take();
@@ -260,7 +259,7 @@ impl Drop for MediaRemoteFramework {
     }
 }
 
-struct UnknownType(String);
+struct UnknownType;
 
 fn to_any(obj: Retained<NSObject>) -> Box<dyn Any + Send> {
     let obj = match obj.downcast::<NSString>() {
@@ -293,17 +292,13 @@ fn to_any(obj: Retained<NSObject>) -> Box<dyn Any + Send> {
         Ok(obj) => {
             return Box::new(
                 std::time::SystemTime::UNIX_EPOCH
-                    + core::time::Duration::from_secs_f64(unsafe {
-                        obj.timeIntervalSinceReferenceDate()
-                    }),
+                    + core::time::Duration::from_secs_f64(unsafe { obj.timeIntervalSince1970() }),
             )
         }
 
         Err(obj) => obj,
     };
-    let class_name = obj.class().name();
-    let class_name = class_name.to_str().unwrap_or("Unknown").to_string();
-    Box::new(UnknownType(class_name))
+    Box::new(UnknownType)
 }
 
 /// Konwersja słownika (NSDictionary) do HashMap.
@@ -319,7 +314,7 @@ fn dict_to_hashmap(
             let value = to_any(val);
             map.insert(k, value);
         } else {
-            map.insert(k, Box::new(UnknownType("Unknown".to_string())));
+            map.insert(k, Box::new(UnknownType));
         }
     }
     map
