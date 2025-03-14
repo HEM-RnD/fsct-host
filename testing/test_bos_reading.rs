@@ -185,18 +185,22 @@ fn get_fsct_vendor_subclass_number_from_device(device: &DeviceInfo) -> Result<Op
     get_fsct_vendor_subclass_number(platform_caps)
 }
 
-fn find_device_with_fsct_vendor_subclass_number() -> Result<Option<DeviceInfo>, String> {
-    let devices = nusb::list_devices().map_err(|e| format!("Failed to list devices: {}", e))?;
+fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
+    let devices = nusb::list_devices().map_err(|e| format!("Failed to list devices: {}", e)).unwrap();
     for device in devices {
-        if let Some(_fsct_vendor_subclass_number) = get_fsct_vendor_subclass_number_from_device(&device)? {
-            return Ok(Some(device));
+        let result =  get_fsct_vendor_subclass_number_from_device(&device);
+        if result.is_err() {
+            continue;
+        }
+        if let Some(_fsct_vendor_subclass_number) = result.unwrap() {
+            return Some(device);
         }
     }
-    Ok(None)
+    None
 }
 fn main() {
 
-    let device = find_device_with_fsct_vendor_subclass_number().unwrap();
+    let device = find_device_with_fsct_vendor_subclass_number();
     if device.is_none() {
         println!("No device with Ferrum Streaming Control Technology interface found");
         return;
