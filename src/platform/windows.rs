@@ -83,12 +83,13 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
 
         let playback_info = self.session.GetPlaybackInfo()?;
         let is_playing = playback_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
-
+        let rate = get_rate(&playback_info);
         Ok(TimelineInfo {
             position: position_sec,
             update_time,
             duration: Some(end_time),
             is_playing,
+            rate
         })
     }
 
@@ -102,6 +103,25 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
     }
 }
 
+fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f32 {
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
+    let default = if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) == PlaybackStatus::Playing {
+        1.0
+    } else {
+        0.0
+    };
+    let rate = match playback_info.PlaybackRate() {
+        Ok(rate) => {
+            let result = rate.Value();
+            match result {
+                Ok(rate) => rate,
+                Err(_) => default,
+            }
+        },
+        Err(_) => default,
+    };
+    rate as f32
+}
 pub struct WindowsPlaybackControl {
     session: GlobalSystemMediaTransportControlsSession,
 }

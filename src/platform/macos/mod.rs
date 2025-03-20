@@ -93,6 +93,7 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
             update_time,
             duration,
             is_playing,
+            playback_rate: current_playback_rate,
         })
     }
 

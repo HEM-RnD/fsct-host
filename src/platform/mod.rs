@@ -40,6 +40,7 @@ pub struct TimelineInfo {
     pub update_time: std::time::SystemTime,  // when the position was last updated
     pub duration: Option<f64>, // total duration in seconds
     pub is_playing: bool,      // playback state
+    pub rate: f32,             // playback rate
 }
 
 #[async_trait]
