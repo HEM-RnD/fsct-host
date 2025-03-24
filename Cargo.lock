@@ -822,6 +822,7 @@ name = "dac-player-integration"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitflags 2.8.0",
  "block2 0.6.0",
  "core-foundation-sys",
  "dispatch2",

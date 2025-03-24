@@ -1,4 +1,4 @@
-mod platform;
+use fsct_service::platform;
 
 use eframe::egui;
 use env_logger;

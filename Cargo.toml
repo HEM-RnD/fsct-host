@@ -19,6 +19,7 @@ futures = "0.3"
 libc = "0.2.169"
 nusb = "0.1.13"
 uuid = { version = "1.16.0", features = ["v4"] }
+bitflags = "2.8.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.0"
@@ -27,14 +28,19 @@ core-foundation-sys = "0.8.7"
 block2 = "0.6.0"
 dispatch2 = "0.2.0"
 
+
 [[bin]]
 name = "console"
-path = "src/console.rs"
+path = "testing/console.rs"
 
 [[bin]]
 name = "gui"
-path = "src/main.rs"
+path = "testing/gui.rs"
 
 [[bin]]
 name = "test_bos_reading"
 path = "testing/test_bos_reading.rs"
+
+[[bin]]
+name = "fsct_descriptor_dump"
+path = "testing/fsct_descriptor_dump.rs"

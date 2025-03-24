@@ -1,4 +1,3 @@
-mod platform;
 
 async fn print_current_track(platform_context: &platform::PlatformContext) -> Result<(), String> {
     let track = platform_context
