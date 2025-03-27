@@ -66,7 +66,7 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
         })
     }
 
-    async fn get_timeline_info(&self) -> Result<TimelineInfo, PlaybackError> {
+    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlaybackError> {
         let timeline = self.session.GetTimelineProperties()?;
         let position = timeline.Position()?;
         let last_update_time = timeline.LastUpdatedTime()?;
@@ -82,20 +82,20 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
         let position_sec = position.Duration as f64 / 10_000_000.0;
 
         let playback_info = self.session.GetPlaybackInfo()?;
-        let is_playing = playback_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
         let rate = get_rate(&playback_info);
-        Ok(TimelineInfo {
+
+        Ok(Some(TimelineInfo {
             position: position_sec,
             update_time,
-            duration: Some(end_time),
-            is_playing,
+            duration: end_time,
             rate,
-        })
+        }))
     }
 
     async fn is_playing(&self) -> Result<bool, PlaybackError> {
-        let timeline_info = self.get_timeline_info().await?;
-        Ok(timeline_info.is_playing)
+        let playback_info = self.session.GetPlaybackInfo()?;
+        let is_playing = playback_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        Ok(is_playing)
     }
 
     async fn get_volume(&self) -> Result<u8, PlaybackError> {

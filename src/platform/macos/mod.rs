@@ -56,7 +56,7 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
         })
     }
 
-    async fn get_timeline_info(&self) -> Result<TimelineInfo, PlaybackError> {
+    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlaybackError> {
         let now_playing_info = self
             .media_remote
             .get_now_playing_info()
@@ -86,20 +86,34 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
             .and_then(|v| v.downcast_ref::<f32>())
             .cloned()
             .unwrap_or(0.0);
-        let is_playing = current_playback_rate > 0.0;
 
-        Ok(TimelineInfo {
+        if duration.is_none() {
+            return Ok(None);
+        }
+
+        Ok(Some(TimelineInfo {
             position,
             update_time,
-            duration,
-            is_playing,
+            duration: duration.unwrap(),
             playback_rate: current_playback_rate,
-        })
+        }))
     }
 
     async fn is_playing(&self) -> Result<bool, PlaybackError> {
-        let timeline = self.get_timeline_info().await?;
-        Ok(timeline.is_playing)
+        let now_playing_info = self
+            .media_remote
+            .get_now_playing_info()
+            .await
+            .map_err(|e| PlaybackError::UnknownError(e))?;
+
+        let current_playback_rate = now_playing_info
+            .get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
+            .and_then(|v| v.downcast_ref::<f32>())
+            .cloned()
+            .unwrap_or(0.0);
+
+        let is_playing = current_playback_rate > 0.0;
+        Ok(is_playing)
     }
 
     async fn get_volume(&self) -> Result<u8, PlaybackError> {

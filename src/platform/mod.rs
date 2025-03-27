@@ -4,7 +4,7 @@ use std::fmt;
 
 #[cfg(target_os = "windows")]
 pub mod windows;
-#[cfg(target_os = "macos")] 
+#[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -38,15 +38,14 @@ pub struct Track {
 pub struct TimelineInfo {
     pub position: f64,         // current position in seconds
     pub update_time: std::time::SystemTime,  // when the position was last updated
-    pub duration: Option<f64>, // total duration in seconds
-    pub is_playing: bool,      // playback state
+    pub duration: f64, // total duration in seconds
     pub rate: f32,             // playback rate
 }
 
 #[async_trait]
 pub trait PlaybackInfoProvider: Send + Sync {
     async fn get_current_track(&self) -> Result<Track, PlaybackError>;
-    async fn get_timeline_info(&self) -> Result<TimelineInfo, PlaybackError>;
+    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlaybackError>;
     async fn is_playing(&self) -> Result<bool, PlaybackError>;
     async fn get_volume(&self) -> Result<u8, PlaybackError>;
 }
