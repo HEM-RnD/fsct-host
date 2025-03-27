@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use crate::usb::definitions::{FsctFunctionality, FsctImagePixelFormat, FsctTextEncoding, FsctTextMetadata};
 
 pub const FSCT_FUNCTIONALITY_DESCRIPTOR_ID: u8 = 0x31;
@@ -52,3 +51,4 @@ pub struct FsctImageMetadataDescriptor {
     pub wImageHeight: u16,
     pub bPixelFormat: FsctImagePixelFormat, // Updated type
 }
+

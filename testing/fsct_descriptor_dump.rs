@@ -1,8 +1,6 @@
-use dac_player_integration::usb::descriptors::*;
 use dac_player_integration::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
-use dac_player_integration::usb::{find_fsct_interface_number, get_fsct_functionality_descriptor_set};
 use nusb::DeviceInfo;
-use dac_player_integration::usb;
+use dac_player_integration::usb::descriptor_utils::{find_fsct_interface_number, get_fsct_functionality_descriptor_set};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -40,23 +38,7 @@ async fn print_fsct_dump(device_info: &DeviceInfo, fsct_vendor_subclass_number: 
     );
     println!("FSCT interface number: {}", fsct_interface_number);
 
-    for descriptor in usb::Descriptors(&descriptor) {
-        match descriptor.descriptor_type() {
-            FSCT_FUNCTIONALITY_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()?;
-                println!("{:#?}", fsct_descriptor);
-            }
-            FSCT_IMAGE_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()?;
-                println!("{:#?}", fsct_descriptor);
-            }
-            FSCT_TEXT_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()?;
-                println!("{:#?}", fsct_descriptor);
-            }
-            _ => {}
-        }
-    }
+    println!("FSCT functionality descriptor set: {:#?}", descriptor);
 
     Ok(())
 }
