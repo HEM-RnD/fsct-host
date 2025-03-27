@@ -57,8 +57,8 @@ impl WindowsPlaybackInfo {
 impl PlaybackInfoProvider for WindowsPlaybackInfo {
     async fn get_current_track(&self) -> Result<Track, PlaybackError> {
         let props = self.get_media_properties()
-            .await
-            .map_err(|e| PlaybackError::UnknownError(e.to_string()))?;
+                        .await
+                        .map_err(|e| PlaybackError::UnknownError(e.to_string()))?;
 
         Ok(Track {
             title: props.Title()?.to_string(),
@@ -72,11 +72,11 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
         let last_update_time = timeline.LastUpdatedTime()?;
         let end_time = timeline.EndTime()?.Duration as f64 / 10_000_000.0;
 
-        let update_time = if (last_update_time.UniversalTime < UNIX_EPOCH_OFFSET) {
+        let update_time = if last_update_time.UniversalTime < UNIX_EPOCH_OFFSET {
             std::time::SystemTime::now()
         } else {
             let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
-             std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
+            std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
         };
 
         let position_sec = position.Duration as f64 / 10_000_000.0;
@@ -89,7 +89,7 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
             update_time,
             duration: Some(end_time),
             is_playing,
-            rate
+            rate,
         })
     }
 
@@ -117,7 +117,7 @@ fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportC
                 Ok(rate) => rate,
                 Err(_) => default,
             }
-        },
+        }
         Err(_) => default,
     };
     rate as f32
