@@ -113,14 +113,9 @@ pub fn find_fsct_interface_number(device: &DeviceInfo,
 // Copied from nusb::descriptors::Descriptors, because it is not public
 /// An iterator over a sequence of USB descriptors.
 #[derive(Clone)]
-struct Descriptors<'a>(pub &'a [u8]);
+struct Descriptors<'a>(&'a [u8]);
 
 impl<'a> Descriptors<'a> {
-    /// Get the concatenated bytes of the remaining descriptors.
-    pub fn as_bytes(&self) -> &'a [u8] {
-        self.0
-    }
-
     fn split_first(&self) -> Option<(&'a [u8], &'a [u8])> {
         if self.0.len() < 2 {
             return None;
@@ -144,38 +139,6 @@ impl<'a> Descriptors<'a> {
         }
 
         Some(self.0.split_at(self.0[0] as usize))
-    }
-
-    fn split_by_type(mut self, descriptor_type: u8, min_len: u8) -> impl Iterator<Item=&'a [u8]> {
-        iter::from_fn(move || {
-            loop {
-                let (_, next) = self.split_first()?;
-
-                if self.0[1] == descriptor_type {
-                    if self.0[0] >= min_len {
-                        break;
-                    } else {
-                        warn!("ignoring descriptor of type {} and length {} because the minimum length is {}", self.0[1], self.0[0], min_len);
-                    }
-                }
-
-                self.0 = next;
-            }
-
-            let mut end = self.0[0] as usize;
-
-            while self.0.len() >= end + 2
-                && self.0[end] > 2
-                && self.0[end + 1] != descriptor_type
-                && self.0.len() >= end + self.0[end] as usize
-            {
-                end += self.0[end] as usize;
-            }
-
-            let (r, next) = self.0.split_at(end);
-            self.0 = next;
-            Some(r)
-        })
     }
 }
 
