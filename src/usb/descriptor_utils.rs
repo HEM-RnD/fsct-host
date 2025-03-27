@@ -1,7 +1,6 @@
 use nusb::descriptors::Descriptor;
 use nusb::{DeviceInfo, Interface};
 use log::warn;
-use std::iter;
 use nusb::transfer::{ControlIn, ControlType, Recipient};
 use crate::usb::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor, FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
 

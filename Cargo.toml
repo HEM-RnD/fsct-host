@@ -44,3 +44,7 @@ path = "testing/test_bos_reading.rs"
 [[bin]]
 name = "fsct_descriptor_dump"
 path = "testing/fsct_descriptor_dump.rs"
+
+[[bin]]
+name = "requests_test"
+path = "testing/requests_test.rs"
