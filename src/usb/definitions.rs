@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Debug, Clone, Copy, Default)]
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct FsctFunctionality: u8 {
         const CurrentPlaybackMetadata = 0x01;
         const CurrentPlaybackProgress = 0x02;
@@ -11,7 +11,7 @@ bitflags! {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum FsctTextMetadata {
     #[default]
     CurrentTitle = 0x01,
@@ -33,7 +33,7 @@ pub enum FsctTextMetadata {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum FsctImagePixelFormat {
     #[default]
     Rgb565 = 0x01,
@@ -45,14 +45,14 @@ pub enum FsctImagePixelFormat {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum FsctTextDirection {
     LeftToRight = 0,
     RightToLeft = 1,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum FsctTextEncoding {
     Utf8 = 0,
     Utf16 = 1,

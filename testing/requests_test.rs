@@ -1,6 +1,6 @@
 use std::time::Duration;
 // use tokio::main;
-use dac_player_integration::usb::create_fsct_device;
+use dac_player_integration::usb::create_and_configure_fsct_device;
 use nusb::list_devices;
 use dac_player_integration::platform::TimelineInfo;
 use dac_player_integration::usb::definitions::FsctTextMetadata;
@@ -11,8 +11,9 @@ async fn main() -> Result<(), String> {
     let devices = list_devices()
         .map_err(|e| format!("Failed to list devices: {}", e))?;
     for device in devices {
-        let fsct_device = create_fsct_device(&device).await;
-        if fsct_device.is_none() {
+        let fsct_device = create_and_configure_fsct_device(&device).await;
+        if let Err(error_string) = fsct_device {
+            println!("Device {:04x}:{:04x} omitted: {}", device.vendor_id(), device.product_id(), error_string);
             continue;
         }
         let fsct_device = fsct_device.unwrap();

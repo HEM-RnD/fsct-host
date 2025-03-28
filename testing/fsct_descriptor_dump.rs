@@ -1,6 +1,7 @@
 use dac_player_integration::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
 use nusb::DeviceInfo;
 use dac_player_integration::usb::descriptor_utils::{find_fsct_interface_number, get_fsct_functionality_descriptor_set};
+use dac_player_integration::usb::open_interface;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -29,7 +30,8 @@ async fn print_fsct_dump(device_info: &DeviceInfo, fsct_vendor_subclass_number: 
         return Ok(()); // ignore devices that report FSCT in BOS descriptor but don't have FSCT interface
     }
     let fsct_interface_number = fsct_interface_number.unwrap();
-    let descriptor = get_fsct_functionality_descriptor_set(&device_info, fsct_interface_number).await?;
+    let interface = open_interface(device_info, fsct_interface_number).await?;
+    let descriptor = get_fsct_functionality_descriptor_set(&interface).await?;
     println!(
         "Device with Ferrum Streaming Control Technology interface found: \"{}\" ({:04X}:{:04X})",
         device_info.product_string().unwrap_or("Unknown"),

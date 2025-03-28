@@ -26,19 +26,10 @@ async fn get_interface_descriptor(interface: &Interface,
 
 const FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE: usize = size_of::<FsctFunctionalityDescriptor>();
 
-async fn get_fsct_functionality_descriptor_set_raw(device_info: &DeviceInfo,
-                                                   interface_number: u8) -> Result<Vec<u8>, String>
+async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, String>
 {
-    let device = device_info.open().map_err(
-        |e| format!("Failed to open device: {}", e)
-    )?;
-    let interface = device.claim_interface(interface_number)
-                          .map_err(
-                              |e| format!("Failed to claim interface {}: {}", interface_number, e)
-                          )?;
-
     let descriptor = get_interface_descriptor(
-        &interface,
+        interface,
         FSCT_FUNCTIONALITY_DESCRIPTOR_ID,
         FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE as u16,
     )
@@ -57,7 +48,7 @@ async fn get_fsct_functionality_descriptor_set_raw(device_info: &DeviceInfo,
         return Err("FSCT functionality descriptor too short".to_string());
     }
     get_interface_descriptor(
-        &interface,
+        interface,
         FSCT_FUNCTIONALITY_DESCRIPTOR_ID,
         fsct_functionality_descriptor.wTotalLength,
     )
@@ -71,10 +62,9 @@ pub enum FsctDescriptorSet {
     TextMetadata(FsctTextMetadataDescriptor),
 }
 
-pub async fn get_fsct_functionality_descriptor_set(device_info: &DeviceInfo,
-                                                   interface_number: u8) -> Result<Vec<FsctDescriptorSet>, String>
+pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, String>
 {
-    let raw_descriptor = get_fsct_functionality_descriptor_set_raw(device_info, interface_number).await?;
+    let raw_descriptor = get_fsct_functionality_descriptor_set_raw(interface).await?;
     let descriptors = Descriptors(&raw_descriptor);
     let mut fsct_descriptors = Vec::new();
     for descriptor in descriptors {
