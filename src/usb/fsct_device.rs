@@ -14,7 +14,7 @@ impl FsctDevice {
         Self {
             fsct_interface,
             time_diff: std::time::Duration::from_millis(0),
-            fsct_text_encoding: FsctTextEncoding::Unicode16,
+            fsct_text_encoding: FsctTextEncoding::Utf8,
         }
     }
     pub fn fsct_interface(&self) -> &fsct_usb_interface::FsctUsbInterface {
@@ -75,7 +75,7 @@ impl FsctDevice {
 
     fn to_usb_encoded_text(&self, text: &str) -> Vec<u8> {
         match self.fsct_text_encoding {
-            FsctTextEncoding::Unicode16 => {
+            FsctTextEncoding::Ucs2 => {
                 text.chars().map(|c| {
                     if (c as u32) < (u16::MAX as u32) {
                         c as u16
@@ -90,7 +90,7 @@ impl FsctDevice {
             FsctTextEncoding::Utf16 => {
                 text.encode_utf16().map(u16::to_ne_bytes).flatten().collect()
             }
-            FsctTextEncoding::Unicode32 => {
+            FsctTextEncoding::Utf32 => {
                 text.chars().map(|c| c as u32).map(u32::to_ne_bytes).flatten().collect()
             }
         }

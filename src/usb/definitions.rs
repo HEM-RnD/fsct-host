@@ -56,6 +56,6 @@ pub enum FsctTextDirection {
 pub enum FsctTextEncoding {
     Utf8 = 0,
     Utf16 = 1,
-    Unicode16 = 2,
-    Unicode32 = 3,
+    Ucs2 = 2,
+    Utf32 = 3,
 }
