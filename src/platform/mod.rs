@@ -28,19 +28,27 @@ impl fmt::Display for PlaybackError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Track {
     pub title: String,
     pub artist: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TimelineInfo {
     pub position: f64,         // current position in seconds
     pub update_time: std::time::SystemTime,  // when the position was last updated
     pub duration: f64, // total duration in seconds
     pub rate: f32,             // playback rate
 }
+
+impl PartialEq for TimelineInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.position == other.position && self.update_time == other.update_time && self.duration == other.duration && self.rate == other.rate
+    }
+}
+
+impl Eq for TimelineInfo {}
 
 #[async_trait]
 pub trait PlaybackInfoProvider: Send + Sync {
