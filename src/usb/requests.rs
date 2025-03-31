@@ -40,6 +40,8 @@ pub enum FsctRequestCode {
     Progress = 0x03,
     /// `status`: type: FsctStatus.
     Status = 0x04,
+    /// `poll`: empty request for ensuring that service is alive i.e. reset devices internal watchdog without sending any data
+    Poll = 0x05,
     /// `currentText`: wIndex lower half word contains FsctTextMetadata enum values.
     CurrentText = 0x10,
     /// `currentImage`: image data is provided in the format described in FsctImageMetadataDescriptor; wIndex contains index of image.

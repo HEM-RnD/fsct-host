@@ -152,4 +152,19 @@ impl FsctUsbInterface {
         )?;
         Ok(())
     }
+
+    pub async fn poll(&self) -> Result<(), String> {
+        let control_out = ControlOut {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Interface,
+            request: requests::FsctRequestCode::Poll as u8,
+            value: 0,
+            index: self.interface.interface_number() as u16,
+            data: &[],
+        };
+        self.interface.control_out(control_out).await.into_result().map_err(
+            |e| format!("Failed to poll: {}", e)
+        )?;
+        Ok(())
+    }
 }

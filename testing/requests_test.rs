@@ -50,7 +50,7 @@ async fn main() -> Result<(), String> {
         println!("Set current artist: \"{}\"", current_artist);
         fsct_device.set_status(FsctStatus::Playing).await?;
 
-        let sleep = Duration::from_secs(4);
+        let sleep = Duration::from_secs(10); // 10 seconds to ensure we are sending poll requests
         tokio::time::sleep(sleep).await;
 
         fsct_device.set_progress(Some(TimelineInfo {
@@ -67,6 +67,9 @@ async fn main() -> Result<(), String> {
         fsct_device.set_current_text(FsctTextMetadata::CurrentAuthor, None).await?;
         fsct_device.set_status(FsctStatus::Stopped).await?;
         println!("Metadata cleared.");
+        drop(fsct_device);
+        println!("Waiting for 10 seconds to check if polling stops working");
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
     Ok(())
 }
