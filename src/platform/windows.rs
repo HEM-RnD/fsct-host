@@ -105,22 +105,10 @@ impl PlaybackInfoProvider for WindowsPlaybackInfo {
 
 fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f32 {
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
-    let default = if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) == PlaybackStatus::Playing {
-        1.0
-    } else {
-        0.0
-    };
-    let rate = match playback_info.PlaybackRate() {
-        Ok(rate) => {
-            let result = rate.Value();
-            match result {
-                Ok(rate) => rate,
-                Err(_) => default,
-            }
-        }
-        Err(_) => default,
-    };
-    rate as f32
+    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
+        return 0.0;
+    }
+    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0) as f32
 }
 pub struct WindowsPlaybackControl {
     session: GlobalSystemMediaTransportControlsSession,
