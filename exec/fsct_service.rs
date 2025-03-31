@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use eframe::egui::TextBuffer;
 use futures::StreamExt;
 use log::error;
 // use tokio::main;
 use dac_player_integration::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use nusb::hotplug::HotplugEvent;
-use dac_player_integration::platform::{TimelineInfo, Track};
+use dac_player_integration::platform::{PlatformContext, TimelineInfo, Track};
 use dac_player_integration::usb::definitions::FsctTextMetadata;
 use dac_player_integration::usb::requests::FsctStatus;
 use dac_player_integration::platform;
@@ -38,36 +39,85 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
     } else {
         println!("FSCT is already enabled.");
     }
-    return Ok(fsct_device);
+    Ok(fsct_device)
 }
 
-async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo, devices: &DeviceMap)
+async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
+                                               devices: &DeviceMap,
+                                               current_metadata: &Mutex<CurrentMetadata>)
+    -> Result<(), String>
 {
-    let fsct_device = try_initialize_device(device_info).await;
-    match fsct_device {
-        Ok(device) => {
-            let mut fsct_devices = devices.lock().unwrap();
-            let device_id = device_info.id();
-            fsct_devices.insert(device_id, Arc::new(device));
+    let fsct_device = match try_initialize_device(device_info).await {
+        Ok(fsct_device) => fsct_device,
+        Err(e) => {
+            println!("Failed to initialize device {:04x}:{:04x}: {}", device_info.vendor_id(),
+                     device_info.product_id(), e);
+            return Err(e);
         }
-        Err(error_string) => {
-            println!("Device {:04x}:{:04x} omitted: {}", device_info.vendor_id(), device_info.product_id(), error_string);
-        }
+    };
+
+    apply_changes_on_device(&fsct_device, &current_metadata, &Changes {
+        current_track: true,
+        status: true,
+        timeline_info: true,
+    }).await?;
+    
+    let mut fsct_devices = devices.lock().unwrap();
+    let device_id = device_info.id();
+    if fsct_devices.contains_key(&device_id) {
+        println!("Device {:04x}:{:04x} is already in the list.", device_info.vendor_id(), device_info
+            .product_id());
+        return Ok(());
+    }
+    fsct_devices.insert(device_id, Arc::new(fsct_device));
+    Ok(())
+}
+
+async fn get_device_info_by_id(device_id: DeviceId) -> Option<nusb::DeviceInfo>
+{
+    match nusb::list_devices() {
+        Ok(mut list) => list.find(|device| device.id() == device_id),
+        Err(_) => return None
     }
 }
 
-fn run_devices_watch(fsct_devices: DeviceMap)
+async fn run_device_initialization(device_info: DeviceInfo,
+                                   devices: DeviceMap,
+                                   current_metadata: Arc<Mutex<CurrentMetadata>>)
+{
+    tokio::spawn(async move {
+        let retry_timeout = Duration::from_secs(3);
+        let retry_period = Duration::from_millis(100);
+        let retry_timout_timepoint = std::time::Instant::now() + retry_timeout;
+
+        while std::time::Instant::now() < retry_timout_timepoint {
+            if let (Some(device_info)) = get_device_info_by_id(device_info.id()).await {
+                //todo distinguish access problems from lack of FSCT features!!!
+
+                let res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
+                if res.is_ok() {
+                    return;
+                }
+            }
+            tokio::time::sleep(retry_period).await;
+        }
+        println!("Device {:04x}:{:04x} omitted after many retries.", device_info.vendor_id(), device_info
+            .product_id());
+    });
+}
+
+fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<CurrentMetadata>>)
 {
     tokio::spawn(async move {
         let mut devices_plug_events_stream = nusb::watch_devices().unwrap();
         let devices = list_devices().unwrap();
         for device in devices {
-            try_initialize_device_and_add_to_list(&device, &fsct_devices).await;
+            let _ = try_initialize_device_and_add_to_list(&device, &fsct_devices, &current_metadata).await;
         }
         while let Some(event) = devices_plug_events_stream.next().await {
             match event {
                 HotplugEvent::Connected(device_info) => {
-                    try_initialize_device_and_add_to_list(&device_info, &fsct_devices).await;
+                    run_device_initialization(device_info.clone(), fsct_devices.clone(), current_metadata.clone()).await;
                 }
                 HotplugEvent::Disconnected(device_id) => {
                     let mut fsct_devices = fsct_devices.lock().unwrap();
@@ -78,94 +128,120 @@ fn run_devices_watch(fsct_devices: DeviceMap)
     });
 }
 
+
+struct CurrentMetadata {
+    current_track: Option<Track>,
+    timeline_info: Option<TimelineInfo>,
+    status: FsctStatus,
+}
+
 struct Changes {
-    current_track: Option<Option<Track>>,
-    timeline_info: Option<Option<TimelineInfo>>,
-    status: Option<FsctStatus>,
+    current_track: bool,
+    timeline_info: bool,
+    status: bool,
 }
 
 
-fn log_changes(changes: &Changes)
+fn log_changes(changes: &Changes, current_metadata: &CurrentMetadata)
 {
-    if let Some(current_track) = changes.current_track.as_ref() {
-        println!("Current track: {:?}", current_track);
+    if changes.current_track {
+        println!("Current track: {:?}", current_metadata.current_track);
     }
-    if let Some(timeline_info) = changes.timeline_info.as_ref() {
-        println!("Timeline info: {:?}", timeline_info);
+    if changes.timeline_info {
+        println!("Timeline info: {:?}", current_metadata.timeline_info);
     }
-    if let Some(status) = changes.status {
-        println!("Status: {:?}", status);
+    if changes.status {
+        println!("Status: {:?}", current_metadata.status);
     }
 }
 
-fn run_platform_watch(fsct_devices: DeviceMap, platform_context: platform::PlatformContext)
+async fn update_current_metadata(platform_context: &PlatformContext,
+                                 current_metadata: &Mutex<CurrentMetadata>) -> Changes
+{
+    let mut changes = Changes {
+        current_track: false,
+        timeline_info: false,
+        status: false,
+    };
+
+    let new_current_track = platform_context.info.get_current_track().await.ok();
+    let new_timeline_info = platform_context.info.get_timeline_info().await.ok().flatten();
+    let new_status_result = platform_context.info.is_playing().await;
+
+    let mut current_metadata = current_metadata.lock().unwrap();
+    if new_current_track != current_metadata.current_track {
+        changes.current_track = true;
+        current_metadata.current_track = new_current_track;
+    }
+
+    if new_timeline_info != current_metadata.timeline_info {
+        changes.timeline_info = true;
+        current_metadata.timeline_info = new_timeline_info;
+    }
+
+    let new_status = match new_status_result {
+        Ok(true) => FsctStatus::Playing,
+        Ok(false) => FsctStatus::Paused,
+        Err(_) => FsctStatus::Unknown,
+    };
+
+    if new_status != current_metadata.status {
+        changes.status = true;
+        current_metadata.status = new_status;
+    }
+
+    log_changes(&changes, &current_metadata);
+
+    changes
+}
+
+fn run_metadata_watch(fsct_devices: DeviceMap,
+                      platform_context: PlatformContext,
+                      current_metadata: Arc<Mutex<CurrentMetadata>>)
 {
     tokio::spawn(async move {
-        let mut last_current_track: Option<Track> = None;
-        let mut last_timeline_info: Option<TimelineInfo> = None;
-        let mut last_status = FsctStatus::Unknown;
-
         loop {
-            let mut changes = Changes {
-                current_track: None,
-                timeline_info: None,
-                status: None,
-            };
-
-            let new_current_track = platform_context.info.get_current_track().await.ok();
-            if new_current_track != last_current_track {
-                changes.current_track = Some(new_current_track.clone());
-                last_current_track = new_current_track;
-            }
-
-            let new_timeline_info = platform_context.info.get_timeline_info().await.ok().flatten();
-            if new_timeline_info != last_timeline_info {
-                changes.timeline_info = Some(new_timeline_info.clone());
-                last_timeline_info = new_timeline_info;
-            }
-
-            let new_status_result = platform_context.info.is_playing().await;
-            let new_status = match new_status_result {
-                Ok(true) => FsctStatus::Playing,
-                Ok(false) => FsctStatus::Paused,
-                Err(_) => FsctStatus::Unknown,
-            };
-
-            if new_status != last_status {
-                changes.status = Some(new_status);
-                last_status = new_status;
-            }
-
-            log_changes(&changes);
-            apply_changes_on_devices(&fsct_devices, changes).await;
+            let changes = update_current_metadata(&platform_context, &current_metadata).await;
+            apply_changes_on_devices(&fsct_devices, &current_metadata, changes).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });
 }
 
-async fn apply_changes_on_device(device: &FsctDevice, changes: &Changes) -> Result<(), String>
+async fn apply_changes_on_device(device: &FsctDevice, current_metadata: &Mutex<CurrentMetadata>, changes: &Changes)
+    -> Result<
+        (), String>
 {
-    if let Some(current_track) = changes.current_track.as_ref() {
+    if changes.current_track {
         let (current_title, current_artist)
-            = current_track.as_ref()
-                           .map(|track| (track.title.as_str(), track.artist.as_str()))
-                           .unzip();
+            = current_metadata.lock().unwrap()
+                              .current_track
+                              .as_ref()
+                              .map(|track| (track.title.clone(), track.artist.clone()))
+                              .unzip();
+        let current_title = current_title.as_ref().map(|v| v.as_str());
+        let current_artist = current_artist.as_ref().map(|v| v.as_str());
+
         device.set_current_text(FsctTextMetadata::CurrentAuthor, current_artist).await?;
         device.set_current_text(FsctTextMetadata::CurrentTitle, current_title).await?;
     }
-    if let Some(timeline_info) = changes.timeline_info.as_ref() {
-        device.set_progress(timeline_info.clone()).await?;
+    if changes.timeline_info {
+        let timeline_info = current_metadata.lock().unwrap().timeline_info.clone();
+        device.set_progress(timeline_info).await?;
     }
-    if let Some(status) = changes.status {
+    if changes.status {
+        let status = current_metadata.lock().unwrap().status.clone();
         device.set_status(status).await?;
     }
     Ok(())
 }
 
-async fn apply_changes_on_devices(devices: &DeviceMap, changes: Changes) {
+async fn apply_changes_on_devices(devices: &DeviceMap,
+                                  current_metadata: &Mutex<CurrentMetadata>,
+                                  changes: Changes) {
     let devices = devices.lock().unwrap().values().cloned().collect::<Vec<_>>();
     for device in devices {
-        let result = apply_changes_on_device(&device, &changes).await;
+        let result = apply_changes_on_device(&device, &current_metadata, &changes).await;
         if let Err(e) = result {
             error!("Failed to apply changes on device: {}", e);
         }
@@ -177,8 +253,13 @@ async fn main() -> Result<(), String> {
     let platform = platform::get_platform();
     let platform_context = platform.initialize().await?;
     let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
-    run_devices_watch(fsct_devices.clone());
-    run_platform_watch(fsct_devices.clone(), platform_context);
+    let current_metadata = Arc::new(Mutex::new(CurrentMetadata {
+        current_track: None,
+        timeline_info: None,
+        status: FsctStatus::Unknown,
+    }));
+    run_devices_watch(fsct_devices.clone(), current_metadata.clone());
+    run_metadata_watch(fsct_devices.clone(), platform_context, current_metadata);
 
     tokio::signal::ctrl_c()
         .await
