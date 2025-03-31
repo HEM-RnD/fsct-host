@@ -28,6 +28,9 @@ core-foundation-sys = "0.8.7"
 block2 = "0.6.0"
 dispatch2 = "0.2.0"
 
+[[bin]]
+name = "fsct-service"
+path = "exec/fsct_service.rs"
 
 [[bin]]
 name = "console"
