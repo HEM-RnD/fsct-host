@@ -95,6 +95,6 @@ pub enum FsctStatus {
     /// An issue occurred, and playback cannot proceed.
     Error = 0x05,
     /// The playback state could not be determined or is undefined.
-    Unknown = 0xFF,
+    Unknown = 0x0F,
 }
 
