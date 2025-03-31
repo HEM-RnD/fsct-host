@@ -14,10 +14,6 @@ impl FsctUsbInterface {
             interface,
         }
     }
-    pub fn get_interface(&self) -> &Interface {
-        &self.interface
-    }
-
     pub async fn get_device_timestamp(&self) -> Result<requests::Timestamp, String> {
         let control_in = ControlIn {
             control_type: ControlType::Vendor,

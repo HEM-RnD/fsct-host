@@ -6,9 +6,9 @@ use log::error;
 // use tokio::main;
 use dac_player_integration::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
-use nusb::hotplug::{HotplugEvent, HotplugWatch};
+use nusb::hotplug::HotplugEvent;
 use dac_player_integration::platform::{TimelineInfo, Track};
-use dac_player_integration::usb::definitions::{FsctTextDirection, FsctTextMetadata};
+use dac_player_integration::usb::definitions::FsctTextMetadata;
 use dac_player_integration::usb::requests::FsctStatus;
 use dac_player_integration::platform;
 use dac_player_integration::usb::fsct_device::FsctDevice;
@@ -60,10 +60,11 @@ fn run_devices_watch(fsct_devices: DeviceMap)
 {
     tokio::spawn(async move {
         let mut devices_plug_events_stream = nusb::watch_devices().unwrap();
-        for device in list_devices().unwrap() {
+        let devices = list_devices().unwrap();
+        for device in devices {
             try_initialize_device_and_add_to_list(&device, &fsct_devices).await;
         }
-        for event in devices_plug_events_stream.next().await {
+        while let Some(event) = devices_plug_events_stream.next().await {
             match event {
                 HotplugEvent::Connected(device_info) => {
                     try_initialize_device_and_add_to_list(&device_info, &fsct_devices).await;
@@ -137,6 +138,7 @@ fn run_platform_watch(fsct_devices: DeviceMap, platform_context: platform::Platf
 
             log_changes(&changes);
             apply_changes_on_devices(&fsct_devices, changes).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });
 }
@@ -174,7 +176,7 @@ async fn apply_changes_on_devices(devices: &DeviceMap, changes: Changes) {
 async fn main() -> Result<(), String> {
     let platform = platform::get_platform();
     let platform_context = platform.initialize().await?;
-    let mut fsct_devices = Arc::new(Mutex::new(HashMap::new()));
+    let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
     run_devices_watch(fsct_devices.clone());
     run_platform_watch(fsct_devices.clone(), platform_context);
 

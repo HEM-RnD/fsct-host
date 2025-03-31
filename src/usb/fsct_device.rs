@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use bitflags::Flags;
 use crate::platform::TimelineInfo;
 use crate::usb::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use crate::usb::descriptor_utils::FsctDescriptorSet;
@@ -25,7 +23,7 @@ pub struct FsctDevice {
 
 impl FsctDevice {
     pub(super) fn new(fsct_interface: fsct_usb_interface::FsctUsbInterface) -> Self {
-        let mut fsct_device = Self {
+        let fsct_device = Self {
             fsct_interface: Arc::new(fsct_interface),
             time_diff: None,
             fsct_text_encoding: FsctTextEncoding::Utf8,
@@ -171,7 +169,7 @@ impl Drop for FsctDevice {
 
 fn floor_char_boundary_utf8(text: &str, max_length: usize) -> &str {
     let mut new_text_length = text.len().min(max_length);
-    while new_text_length >= 0 && !text.is_char_boundary(new_text_length) {
+    while !text.is_char_boundary(new_text_length) {
         new_text_length -= 1;
     }
     &text[..new_text_length]
