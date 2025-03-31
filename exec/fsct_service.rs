@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use eframe::egui::TextBuffer;
 use futures::StreamExt;
 use log::error;
 // use tokio::main;
@@ -61,7 +60,7 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
         status: true,
         timeline_info: true,
     }).await?;
-    
+
     let mut fsct_devices = devices.lock().unwrap();
     let device_id = device_info.id();
     if fsct_devices.contains_key(&device_id) {
@@ -91,7 +90,7 @@ async fn run_device_initialization(device_info: DeviceInfo,
         let retry_timout_timepoint = std::time::Instant::now() + retry_timeout;
 
         while std::time::Instant::now() < retry_timout_timepoint {
-            if let (Some(device_info)) = get_device_info_by_id(device_info.id()).await {
+            if let Some(device_info) = get_device_info_by_id(device_info.id()).await {
                 //todo distinguish access problems from lack of FSCT features!!!
 
                 let res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
@@ -248,7 +247,7 @@ async fn apply_changes_on_devices(devices: &DeviceMap,
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), String> {
     let platform = platform::get_platform();
     let platform_context = platform.initialize().await?;
