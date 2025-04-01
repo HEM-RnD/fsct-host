@@ -95,7 +95,7 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
             position,
             update_time,
             duration: duration.unwrap(),
-            playback_rate: current_playback_rate,
+            rate: current_playback_rate,
         }))
     }
 
