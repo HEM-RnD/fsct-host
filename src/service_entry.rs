@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use futures::{SinkExt, StreamExt};
+use futures::channel::mpsc::SendError;
 use log::error;
 use crate::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
@@ -103,10 +104,10 @@ async fn run_device_initialization(device_info: DeviceInfo,
     });
 }
 
-fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<CurrentMetadata>>)
+async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<CurrentMetadata>>) -> Result<(), String>
 {
+    let mut devices_plug_events_stream = nusb::watch_devices().map_err(|e| e.to_string())?;
     tokio::spawn(async move {
-        let mut devices_plug_events_stream = nusb::watch_devices().unwrap();
         let devices = list_devices().unwrap();
         for device in devices {
             let _ = try_initialize_device_and_add_to_list(&device, &fsct_devices, &current_metadata).await;
@@ -123,6 +124,7 @@ fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<Curren
             }
         }
     });
+    Ok(())
 }
 
 
@@ -192,6 +194,27 @@ async fn update_current_metadata(playback_service: &Player,
     changes
 }
 
+
+async fn send_changes_to_channel(
+    tx: &mut futures::channel::mpsc::Sender<PlayerEvent>,
+    current_metadata: &Mutex<CurrentMetadata>,
+    changes: &Changes) -> Result<(), SendError>
+{
+    if changes.status {
+        let is_playing = current_metadata.lock().unwrap().status == FsctStatus::Playing;
+        tx.send(PlayerEvent::StateChanged(is_playing)).await?;
+    }
+    if changes.current_track {
+        let current_track = current_metadata.lock().unwrap().current_track.clone();
+        tx.send(PlayerEvent::TrackChanged(current_track)).await?;
+    }
+    if changes.timeline_info {
+        let timeline_info = current_metadata.lock().unwrap().timeline_info.clone();
+        tx.send(PlayerEvent::TimelineInfoChanged(timeline_info)).await?;
+    }
+    Ok(())
+}
+
 fn create_polling_metadata_watch(playback_service: Player) -> PlayerEventListener
 {
     let (mut tx, rx) = futures::channel::mpsc::channel(30);
@@ -203,23 +226,11 @@ fn create_polling_metadata_watch(playback_service: Player) -> PlayerEventListene
         }));
         loop {
             let changes = update_current_metadata(&playback_service, &current_metadata).await;
-            if changes.status {
-                let is_playing = current_metadata.lock().unwrap().status == FsctStatus::Playing;
-                if let Err(e) = tx.send(PlayerEvent::StateChanged(is_playing)).await {
-                    error!("Failed to send changes to polling watch: {}", e);
+            if let Err(e) = send_changes_to_channel(&mut tx, &current_metadata, &changes).await {
+                if e.is_disconnected() {
+                    break;
                 }
-            }
-            if changes.current_track {
-                let current_track = current_metadata.lock().unwrap().current_track.clone();
-                if let Err(e) = tx.send(PlayerEvent::TrackChanged(current_track)).await {
-                    error!("Failed to send changes to polling watch: {}", e);
-                }
-            }
-            if changes.timeline_info {
-                let timeline_info = current_metadata.lock().unwrap().timeline_info.clone();
-                if let Err(e) = tx.send(PlayerEvent::TimelineInfoChanged(timeline_info)).await {
-                    error!("Failed to send changes to polling watch: {}", e);
-                }
+                error!("Failed to send changes to channel: {}", e);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -274,31 +285,28 @@ async fn process_player_event(event: PlayerEvent, fsct_devices: &DeviceMap, curr
     Ok(())
 }
 
-async fn get_playback_notification_stream(playback_service: Player) -> PlayerEventListener
+async fn get_playback_notification_stream(playback_service: Player) -> Result<PlayerEventListener, PlayerError>
 {
-    playback_service.listen_to_player_notifications().await.unwrap_or_else(
-        |e| {
-            if e != PlayerError::FeatureNotSupported {
-                error!("Failed to listen to player notifications: {}", e);
-                std::process::exit(1);
-            }
-            println!("Player notifications are not supported by this player. Using polling instead.");
-            create_polling_metadata_watch(playback_service)
-        }
-    )
+    match playback_service.listen_to_player_notifications().await {
+        Ok(listener) => Ok(listener),
+        Err(PlayerError::FeatureNotSupported) => Ok(create_polling_metadata_watch(playback_service)),
+        Err(e) => Err(e),
+    }
 }
 
-fn run_metadata_watch(fsct_devices: DeviceMap,
-                      playback_service: Player,
-                      current_metadata: Arc<Mutex<CurrentMetadata>>)
+async fn run_metadata_watch(fsct_devices: DeviceMap,
+                            playback_service: Player,
+                            current_metadata: Arc<Mutex<CurrentMetadata>>)
+    -> Result<(), String>
 {
+    let mut playback_notifications_stream = get_playback_notification_stream(playback_service).await.map_err(|e| e.to_string())?;
     tokio::spawn(async move {
-        let mut playback_notifications_stream = get_playback_notification_stream(playback_service).await;
         while let Some(event) = playback_notifications_stream.next().await {
             process_player_event(event, &fsct_devices, &current_metadata).await.unwrap_or_else(
                 |e| error!("Failed to process player event: {}", e));
         }
     });
+    Ok(())
 }
 
 async fn apply_changes_on_device(device: &FsctDevice, current_metadata: &Mutex<CurrentMetadata>, changes: &Changes)
@@ -348,8 +356,8 @@ pub async fn run_service(playback_service: Player) -> Result<(), String> {
         timeline_info: None,
         status: FsctStatus::Unknown,
     }));
-    run_devices_watch(fsct_devices.clone(), current_metadata.clone());
-    run_metadata_watch(fsct_devices.clone(), playback_service, current_metadata);
+    run_devices_watch(fsct_devices.clone(), current_metadata.clone()).await?;
+    run_metadata_watch(fsct_devices.clone(), playback_service, current_metadata).await?;
 
     tokio::signal::ctrl_c()
         .await
