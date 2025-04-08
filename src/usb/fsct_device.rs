@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::platform::TimelineInfo;
-use crate::usb::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
+use crate::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use crate::usb::descriptor_utils::FsctDescriptorSet;
 use crate::usb::fsct_usb_interface;
 use crate::usb::requests::TrackProgressRequestData;

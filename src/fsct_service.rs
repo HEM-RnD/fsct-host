@@ -8,7 +8,7 @@ use dac_player_integration::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use nusb::hotplug::HotplugEvent;
 use dac_player_integration::platform::{PlatformContext, TimelineInfo, Track};
-use dac_player_integration::usb::definitions::FsctTextMetadata;
+use dac_player_integration::definitions::FsctTextMetadata;
 use dac_player_integration::usb::requests::FsctStatus;
 use dac_player_integration::platform;
 use dac_player_integration::usb::fsct_device::FsctDevice;

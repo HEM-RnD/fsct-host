@@ -1,4 +1,4 @@
-use crate::usb::definitions::{FsctFunctionality, FsctImagePixelFormat, FsctTextEncoding, FsctTextMetadata};
+use crate::definitions::{FsctFunctionality, FsctImagePixelFormat, FsctTextEncoding, FsctTextMetadata};
 
 pub const FSCT_FUNCTIONALITY_DESCRIPTOR_ID: u8 = 0x31;
 pub const FSCT_TEXT_METADATA_DESCRIPTOR_ID: u8 = 0x32;
