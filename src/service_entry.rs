@@ -219,11 +219,11 @@ fn create_polling_metadata_watch(playback_service: Player) -> PlayerEventListene
 {
     let (mut tx, rx) = futures::channel::mpsc::channel(30);
     tokio::spawn(async move {
-        let current_metadata = Arc::new(Mutex::new(CurrentMetadata {
+        let current_metadata = Mutex::new(CurrentMetadata {
             current_track: None,
             timeline_info: None,
             status: FsctStatus::Unknown,
-        }));
+        });
         loop {
             let changes = update_current_metadata(&playback_service, &current_metadata).await;
             if let Err(e) = send_changes_to_channel(&mut tx, &current_metadata, &changes).await {
