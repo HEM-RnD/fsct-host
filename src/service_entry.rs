@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use log::error;
 use crate::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use nusb::hotplug::HotplugEvent;
 use crate::definitions::{FsctTextMetadata, TimelineInfo};
-use crate::player::{Player, PlayerInterface, Track};
+use crate::player::{Player, PlayerError, PlayerEvent, PlayerEventListener, PlayerInterface, Track};
 use crate::usb::requests::FsctStatus;
 use crate::usb::fsct_device::FsctDevice;
 
@@ -192,15 +192,111 @@ async fn update_current_metadata(playback_service: &Player,
     changes
 }
 
+fn create_polling_metadata_watch(playback_service: Player) -> PlayerEventListener
+{
+    let (mut tx, rx) = futures::channel::mpsc::channel(30);
+    tokio::spawn(async move {
+        let current_metadata = Arc::new(Mutex::new(CurrentMetadata {
+            current_track: None,
+            timeline_info: None,
+            status: FsctStatus::Unknown,
+        }));
+        loop {
+            let changes = update_current_metadata(&playback_service, &current_metadata).await;
+            if changes.status {
+                let is_playing = current_metadata.lock().unwrap().status == FsctStatus::Playing;
+                if let Err(e) = tx.send(PlayerEvent::StateChanged(is_playing)).await {
+                    error!("Failed to send changes to polling watch: {}", e);
+                }
+            }
+            if changes.current_track {
+                let current_track = current_metadata.lock().unwrap().current_track.clone();
+                if let Err(e) = tx.send(PlayerEvent::TrackChanged(current_track)).await {
+                    error!("Failed to send changes to polling watch: {}", e);
+                }
+            }
+            if changes.timeline_info {
+                let timeline_info = current_metadata.lock().unwrap().timeline_info.clone();
+                if let Err(e) = tx.send(PlayerEvent::TimelineInfoChanged(timeline_info)).await {
+                    error!("Failed to send changes to polling watch: {}", e);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    rx
+}
+
+async fn process_player_event(event: PlayerEvent, fsct_devices: &DeviceMap, current_metadata:
+&Arc<Mutex<CurrentMetadata>>)
+    -> Result<(), String>
+{
+    let changes = {
+        let mut current_metadata = current_metadata.lock().unwrap();
+        match event {
+            PlayerEvent::StateChanged(playing) => {
+                let status = if playing { FsctStatus::Playing } else { FsctStatus::Paused };
+                if status == current_metadata.status {
+                    return Ok(());
+                }
+                current_metadata.status = status;
+                Changes {
+                    current_track: false,
+                    timeline_info: false,
+                    status: true,
+                }
+            }
+            PlayerEvent::TrackChanged(track) => {
+                if track == current_metadata.current_track {
+                    return Ok(());
+                }
+                current_metadata.current_track = track;
+                Changes {
+                    current_track: true,
+                    timeline_info: false,
+                    status: false,
+                }
+            }
+            PlayerEvent::TimelineInfoChanged(timeline) => {
+                if timeline == current_metadata.timeline_info {
+                    return Ok(());
+                }
+                current_metadata.timeline_info = timeline;
+                Changes {
+                    current_track: false,
+                    timeline_info: true,
+                    status: false,
+                }
+            }
+        }
+    };
+    apply_changes_on_devices(fsct_devices, current_metadata, changes).await;
+    Ok(())
+}
+
+async fn get_playback_notification_stream(playback_service: Player) -> PlayerEventListener
+{
+    playback_service.listen_to_player_notifications().await.unwrap_or_else(
+        |e| {
+            if e != PlayerError::FeatureNotSupported {
+                error!("Failed to listen to player notifications: {}", e);
+                std::process::exit(1);
+            }
+            println!("Player notifications are not supported by this player. Using polling instead.");
+            create_polling_metadata_watch(playback_service)
+        }
+    )
+}
+
 fn run_metadata_watch(fsct_devices: DeviceMap,
                       playback_service: Player,
                       current_metadata: Arc<Mutex<CurrentMetadata>>)
 {
     tokio::spawn(async move {
-        loop {
-            let changes = update_current_metadata(&playback_service, &current_metadata).await;
-            apply_changes_on_devices(&fsct_devices, &current_metadata, changes).await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut playback_notifications_stream = get_playback_notification_stream(playback_service).await;
+        while let Some(event) = playback_notifications_stream.next().await {
+            process_player_event(event, &fsct_devices, &current_metadata).await.unwrap_or_else(
+                |e| error!("Failed to process player event: {}", e));
         }
     });
 }

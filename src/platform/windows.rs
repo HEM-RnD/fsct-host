@@ -8,7 +8,7 @@ use windows::{
     },
 };
 use crate::definitions::TimelineInfo;
-use crate::player::{PlaybackError, Player, PlayerInterface, Track};
+use crate::player::{PlayerError, Player, PlayerInterface, Track};
 use super::PlatformBehavior;
 
 pub struct WindowsPlatform;
@@ -26,35 +26,35 @@ pub struct WindowsPlatformGlobalSessionManager {
 const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
 impl WindowsPlatformGlobalSessionManager {
-    async fn new() -> Result<Self, PlaybackError> {
+    async fn new() -> Result<Self, PlayerError> {
         let session_manager_result = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .map_err(|e| PlaybackError::UnknownError(e.to_string()))?
+            .map_err(|e| PlayerError::UnknownError(e.to_string()))?
             .await;
 
 
-        let session_manager = session_manager_result.map_err(|e| PlaybackError::UnknownError(e.to_string()))?;
+        let session_manager = session_manager_result.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
 
         Ok(Self { session_manager })
     }
 
-    async fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlaybackError> {
+    async fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
         let session = self.session_manager
                           .GetCurrentSession()
-                          .map_err(|e| PlaybackError::UnknownError(e.to_string()))?;
+                          .map_err(|e| PlayerError::UnknownError(e.to_string()))?;
         Ok(session)
     }
 
-    async fn get_media_properties(&self) -> Result<windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties, PlaybackError> {
+    async fn get_media_properties(&self) -> Result<windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties, PlayerError> {
         Ok(self.get_session().await?.TryGetMediaPropertiesAsync()?.await?)
     }
 }
 
 #[async_trait]
 impl PlayerInterface for WindowsPlatformGlobalSessionManager {
-    async fn get_current_track(&self) -> Result<Track, PlaybackError> {
+    async fn get_current_track(&self) -> Result<Track, PlayerError> {
         let props = self.get_media_properties()
                         .await
-                        .map_err(|e| PlaybackError::UnknownError(e.to_string()))?;
+                        .map_err(|e| PlayerError::UnknownError(e.to_string()))?;
 
         Ok(Track {
             title: props.Title()?.to_string(),
@@ -62,7 +62,7 @@ impl PlayerInterface for WindowsPlatformGlobalSessionManager {
         })
     }
 
-    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlaybackError> {
+    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlayerError> {
         let session = self.get_session().await?;
         let timeline = session.GetTimelineProperties()?;
         let position = timeline.Position()?;
@@ -89,34 +89,34 @@ impl PlayerInterface for WindowsPlatformGlobalSessionManager {
         }))
     }
 
-    async fn is_playing(&self) -> Result<bool, PlaybackError> {
+    async fn is_playing(&self) -> Result<bool, PlayerError> {
         let session = self.get_session().await?;
         let playback_info = session.GetPlaybackInfo()?;
         let is_playing = playback_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
         Ok(is_playing)
     }
 
-    async fn play(&self) -> Result<(), PlaybackError> {
+    async fn play(&self) -> Result<(), PlayerError> {
         self.get_session().await?.TryPlayAsync()?.await?;
         Ok(())
     }
 
-    async fn pause(&self) -> Result<(), PlaybackError> {
+    async fn pause(&self) -> Result<(), PlayerError> {
         self.get_session().await?.TryPauseAsync()?.await?;
         Ok(())
     }
 
-    async fn stop(&self) -> Result<(), PlaybackError> {
+    async fn stop(&self) -> Result<(), PlayerError> {
         self.get_session().await?.TryStopAsync()?.await?;
         Ok(())
     }
 
-    async fn next_track(&self) -> Result<(), PlaybackError> {
+    async fn next_track(&self) -> Result<(), PlayerError> {
         self.get_session().await?.TrySkipNextAsync()?.await?;
         Ok(())
     }
 
-    async fn previous_track(&self) -> Result<(), PlaybackError> {
+    async fn previous_track(&self) -> Result<(), PlayerError> {
         self.get_session().await?.TrySkipPreviousAsync()?.await?;
         Ok(())
     }
@@ -149,9 +149,9 @@ impl PlatformBehavior for WindowsPlatform {
     }
 }
 
-impl From<WindowsError> for PlaybackError {
+impl From<WindowsError> for PlayerError {
     fn from(err: WindowsError) -> Self {
-        PlaybackError::UnknownError(err.to_string())
+        PlayerError::UnknownError(err.to_string())
     }
 }
 

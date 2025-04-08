@@ -12,7 +12,7 @@ use crate::platform::{
     PlatformBehavior, PlaybackControlProvider, PlaybackInfoProvider,
     PlaybackInterface,
 };
-use crate::player::{PlaybackError, Player, PlayerInterface, Track};
+use crate::player::{PlayerError, Player, PlayerInterface, Track};
 
 mod media_remote; // importujemy nasz moduł FFI
 
@@ -30,25 +30,25 @@ pub struct MacOSPlaybackManager {
 
 #[async_trait]
 impl PlayerInterface for MacOSPlaybackManager {
-    async fn get_current_track(&self) -> Result<Track, PlaybackError> {
+    async fn get_current_track(&self) -> Result<Track, PlayerError> {
         let now_playing_info = self
             .media_remote
             .get_now_playing_info()
             .await
-            .map_err(|e| PlaybackError::UnknownError(e))?;
+            .map_err(|e| PlayerError::UnknownError(e))?;
 
         let title_value = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoTitle")
-            .ok_or_else(|| PlaybackError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
             .downcast_ref::<String>()
-            .ok_or_else(|| PlaybackError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
             .clone();
 
         let artist_value = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoArtist")
-            .ok_or_else(|| PlaybackError::UnknownError("Nie znaleziono wykonawcy".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono wykonawcy".into()))?
             .downcast_ref::<String>()
-            .ok_or_else(|| PlaybackError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
             .clone();
 
         Ok(Track {
@@ -57,12 +57,12 @@ impl PlayerInterface for MacOSPlaybackManager {
         })
     }
 
-    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlaybackError> {
+    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlayerError> {
         let now_playing_info = self
             .media_remote
             .get_now_playing_info()
             .await
-            .map_err(|e| PlaybackError::UnknownError(e))?;
+            .map_err(|e| PlayerError::UnknownError(e))?;
 
         let duration = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoDuration")
@@ -98,12 +98,12 @@ impl PlayerInterface for MacOSPlaybackManager {
         }))
     }
 
-    async fn is_playing(&self) -> Result<bool, PlaybackError> {
+    async fn is_playing(&self) -> Result<bool, PlayerError> {
         let now_playing_info = self
             .media_remote
             .get_now_playing_info()
             .await
-            .map_err(|e| PlaybackError::UnknownError(e))?;
+            .map_err(|e| PlayerError::UnknownError(e))?;
 
         let current_playback_rate = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
@@ -113,27 +113,6 @@ impl PlayerInterface for MacOSPlaybackManager {
 
         let is_playing = current_playback_rate > 0.0;
         Ok(is_playing)
-    }
-
-    async fn play(&self) -> Result<(), PlaybackError> {
-        // Tutaj należy umieścić wywołanie MediaRemote dla rozpoczęcia odtwarzania.
-        Ok(())
-    }
-
-    async fn pause(&self) -> Result<(), PlaybackError> {
-        Ok(())
-    }
-
-    async fn stop(&self) -> Result<(), PlaybackError> {
-        Ok(())
-    }
-
-    async fn next_track(&self) -> Result<(), PlaybackError> {
-        Ok(())
-    }
-
-    async fn previous_track(&self) -> Result<(), PlaybackError> {
-        Ok(())
     }
 }
 
