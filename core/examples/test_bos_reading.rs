@@ -1,4 +1,4 @@
-use fsct::usb::fsct_bos_finder;
+use fsct_core::usb::fsct_bos_finder;
 
 fn main() {
     let device = fsct_bos_finder::find_device_with_fsct_vendor_subclass_number();

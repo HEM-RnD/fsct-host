@@ -4,17 +4,13 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio;
-use crate::definitions::TimelineInfo;
-// upewnij się, że używasz asynchronicznego runtime (np. tokio)
+use fsct_core::definitions::TimelineInfo;
+use fsct_core::player::{PlayerError, PlayerInterface, Track};
 
-use crate::platform::macos::media_remote::MediaRemoteFramework;
-use crate::platform::{
-    PlatformBehavior, PlaybackControlProvider, PlaybackInfoProvider,
-    PlaybackInterface,
-};
-use crate::player::{PlayerError, Player, PlayerInterface, Track};
+mod media_remote;
 
-mod media_remote; // importujemy nasz moduł FFI
+use crate::media_remote::MediaRemoteFramework;
+
 
 pub struct MacOSPlatform;
 
@@ -28,6 +24,13 @@ pub struct MacOSPlaybackManager {
     media_remote: Arc<MediaRemoteFramework>,
 }
 
+impl MacOSPlaybackManager {
+    pub fn new() -> Result<Self, PlayerError> {
+        let media_remote = Arc::new(MediaRemoteFramework::load().map_err(|e| PlayerError::UnknownError(e))?);
+        Ok(MacOSPlaybackManager { media_remote })
+    }
+}
+
 #[async_trait]
 impl PlayerInterface for MacOSPlaybackManager {
     async fn get_current_track(&self) -> Result<Track, PlayerError> {
@@ -39,16 +42,16 @@ impl PlayerInterface for MacOSPlaybackManager {
 
         let title_value = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoTitle")
-            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("No track title found".into()))?
             .downcast_ref::<String>()
-            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("No track title found".into()))?
             .clone();
 
         let artist_value = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoArtist")
-            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono wykonawcy".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("No track artist found".into()))?
             .downcast_ref::<String>()
-            .ok_or_else(|| PlayerError::UnknownError("Nie znaleziono tytułu utworu".into()))?
+            .ok_or_else(|| PlayerError::UnknownError("No track artist found".into()))?
             .clone();
 
         Ok(Track {
@@ -113,25 +116,5 @@ impl PlayerInterface for MacOSPlaybackManager {
 
         let is_playing = current_playback_rate > 0.0;
         Ok(is_playing)
-    }
-}
-
-#[async_trait]
-impl PlatformBehavior for MacOSPlatform {
-    fn get_platform_name(&self) -> &'static str {
-        "macOS"
-    }
-
-    async fn initialize(&self) -> Result<Player, String> {
-        let media_remote = Arc::new(MediaRemoteFramework::load()?);
-        let playback_manager: Arc<dyn PlaybackInfoProvider> = Arc::new(MacOSPlaybackManager {
-            media_remote: media_remote.clone(),
-        });
-
-        Ok(Player::new(playback_manager))
-    }
-
-    async fn cleanup(&self) -> Result<(), String> {
-        Ok(())
     }
 }

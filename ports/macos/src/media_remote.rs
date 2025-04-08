@@ -1,6 +1,5 @@
 use block2::RcBlock;
 use core_foundation_sys::base::TCFTypeRef;
-use core_foundation_sys::dictionary::CFDictionaryRef;
 use core_foundation_sys::string::CFStringRef;
 use core_foundation_sys::{
     base::{kCFAllocatorDefault, CFRelease},
@@ -15,13 +14,12 @@ use futures::SinkExt;
 use libc::{c_char, c_void};
 use objc2::rc::Retained;
 use objc2::{Encoding, Message};
-use objc2_foundation::{NSBundle, NSDate, NSDictionary, NSNumber, NSObject, NSString};
+use objc2_foundation::{NSDate, NSDictionary, NSNumber, NSObject, NSString};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::mem::{transmute, ManuallyDrop};
+use std::mem::{transmute};
 use std::ops::Deref;
-use std::ptr::null;
 use std::sync::{Arc, Mutex};
 
 /// ObjectiveC declarations:
@@ -41,14 +39,14 @@ use std::sync::{Arc, Mutex};
 ///         NSLog(@"We got the information: %@", information);
 /// });
 type MRMediaRemoteGetNowPlayingInfoFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationPIDFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationIsPlayingFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 
 type MRMediaRemoteRegisterForNowPlayingNotificationsFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t);
+unsafe extern "C" fn(queue: dispatch_queue_t);
 type MRMediaRemoteUnregisterForNowPlayingNotificationsFn = unsafe extern "C" fn();
 
 pub struct MediaRemoteFramework {
@@ -79,28 +77,24 @@ fn to_cfstring(s: &str) -> Result<CFStringRef, String> {
 #[allow(non_snake_case)]
 fn load_using_cfbundle() -> Result<CFBundleRef, String> {
     unsafe {
-        // Ścieżka do MediaRemote.framework w formie ciągu C
         let c_path = "/System/Library/PrivateFrameworks/MediaRemote.framework\0";
 
-        // Tworzymy CFStringRef dla ścieżki frameworka
         let cf_string_path = to_cfstring(c_path)?;
 
-        // Tworzymy CFURLRef dla ścieżki do frameworka
         let cf_url = CFURLCreateWithFileSystemPath(
             kCFAllocatorDefault,
             cf_string_path,
             core_foundation_sys::url::kCFURLPOSIXPathStyle,
             true as u8,
         );
-        CFRelease(cf_string_path.as_void_ptr()); // Zwolnij CFStringRef, bo już nie jest potrzebne
+        CFRelease(cf_string_path.as_void_ptr());
 
         if cf_url.is_null() {
             return Err("CFURL dla ścieżki frameworka nie zostało utworzone".into());
         }
 
-        // Tworzymy CFBundleRef
         let bundle_ref = CFBundleCreate(kCFAllocatorDefault, cf_url);
-        CFRelease(cf_url.as_void_ptr()); // Zwolnij CFURLRef, bo już nie jest potrzebne
+        CFRelease(cf_url.as_void_ptr());
 
         if bundle_ref.is_null() {
             return Err("Nie udało się załadować MediaRemote.framework jako CFBundle".into());
@@ -118,15 +112,14 @@ unsafe impl<T> Send for Desync<T> {}
 unsafe impl<T> Sync for Desync<T> {}
 
 unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> Result<*const c_void, String> {
-    let fn_name = "MRMediaRemoteGetNowPlayingInfo\0";
-    let fn_name = to_cfstring(fn_name)?;
+    let fn_name_cfstring = to_cfstring(fn_name)?;
     let fn_pointer =
-        core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name);
-    CFRelease(fn_name.as_void_ptr());
+        core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name_cfstring);
+    CFRelease(fn_name_cfstring.as_void_ptr());
 
     if fn_pointer.is_null() {
         return Err(
-            "Nie udało się pobrać wskaźnika do funkcji MRMediaRemoteCopyNowPlayingInfo".into(),
+            format!("Failed to get function `{fn_name}` pointer")
         );
     }
 
@@ -288,7 +281,7 @@ fn to_any(obj: Retained<NSObject>) -> Box<dyn Any + Send> {
 
         Err(obj) => obj,
     };
-    let obj = match obj.downcast::<NSDate>() {
+    let _obj = match obj.downcast::<NSDate>() {
         Ok(obj) => {
             return Box::new(
                 std::time::SystemTime::UNIX_EPOCH
@@ -301,8 +294,6 @@ fn to_any(obj: Retained<NSObject>) -> Box<dyn Any + Send> {
     Box::new(UnknownType)
 }
 
-/// Konwersja słownika (NSDictionary) do HashMap.
-/// Zakładamy, że klucze i wartości to NSString (napisy).
 fn dict_to_hashmap(
     dict: &NSDictionary<NSString, NSObject>,
 ) -> HashMap<String, Box<dyn Any + Send>> {

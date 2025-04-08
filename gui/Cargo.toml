@@ -1,0 +1,11 @@
+[package]
+name = "fsct_gui"
+edition = "2024"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[dependencies]
+eframe = "0.31.1"
+fsct_core.workspace = true
+tokio.workspace = true

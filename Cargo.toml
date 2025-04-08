@@ -1,37 +1,33 @@
-[package]
-name = "fsct"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "3"
+members = ["core", "gui", "ports/macos", "ports/windows", "services/native"]
 
-[dependencies]
+[workspace.package]
+version = "0.2.0"
+authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
+description = "Tools supporting Ferrum Streaming Control Technology"
 
-tokio = { version = "1.28", features = ["full"] }
-async-trait = "0.1.68"
-log = "0.4.25"
-env_logger = "0.11.6"
-eframe = "0.30.0"
+[workspace.dependencies]
+async-trait = "0.1.88"
+tokio = { version = "1.44", features = ["full"] }
 futures = "0.3"
-libc = "0.2.169"
-nusb = "0.1.13"
-uuid = { version = "1.16.0", features = ["v4"] }
-bitflags = "2.8.0"
+env_logger = "0.11"
+fsct_core = { path = "core" }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.59", features = [
-    "Media_Control",
-    "Foundation",
-    "Foundation_Collections",
-    "Storage_Streams"
-] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.0"
-objc2-foundation = "0.3.0"
-core-foundation-sys = "0.8.7"
-block2 = "0.6.0"
-dispatch2 = "0.2.0"
-
-[[bin]]
-name = "fsct-native-service"
-path = "services/fsct_native_service.rs"
+#
+#[dependencies]
+#env_logger = "0.11.6"
+#eframe = "0.30.0"
+#fsct-core = { workspace = true, path = "core" }
+#
+#[target.'cfg(target_os = "windows")'.dependencies]
+#fsct_windows_port = { workspace = true, path = "ports/windows" }
+#
+#[target.'cfg(target_os = "macos")'.dependencies]
+#fsct_macos_port = { workspace = true, path = "ports/macos" }
+#
+#
+#[[bin]]
+#name = "fsct-native-service"
+#path = "services/fsct_native_service.rs"
 

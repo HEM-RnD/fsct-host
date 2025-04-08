@@ -1,9 +1,8 @@
-use fsct::{definitions, platform, player};
+use fsct_core::{definitions, player};
 
 use eframe::egui;
-use env_logger;
 use std::sync::{Arc, Mutex};
-use fsct::player::{Player, PlayerInterface};
+use fsct_core::player::{Player, PlayerInterface};
 
 #[derive(Default)]
 struct PlayerState {
@@ -137,14 +136,7 @@ impl eframe::App for PlayerApp {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), String> {
-    env_logger::init();
-
-    // Inicjalizacja platformy
-    let platform = platform::get_platform();
-    let player = platform.initialize().await?;
-
+pub async fn run_gui(player: Player) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([300.0, 400.0]),
