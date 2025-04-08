@@ -1,59 +1,55 @@
-use dac_player_integration::platform;
+use dac_player_integration::{definitions, platform, player};
 
 use eframe::egui;
 use env_logger;
 use std::sync::{Arc, Mutex};
+use dac_player_integration::player::{Player, PlayerInterface};
 
 #[derive(Default)]
 struct PlayerState {
-    current_track: Option<platform::Track>,
-    timeline: Option<platform::TimelineInfo>,
+    current_track: Option<player::Track>,
+    timeline: Option<definitions::TimelineInfo>,
     is_playing: bool,
 }
 
 struct PlayerApp {
-    platform: Box<dyn platform::PlatformBehavior>,
-    control: Arc<dyn platform::PlaybackControlProvider>,
+    player: Player,
     state: Arc<Mutex<PlayerState>>,
     _runtime_handle: tokio::runtime::Handle,
 }
 
 impl PlayerApp {
     fn new(
-        platform: Box<dyn platform::PlatformBehavior>,
-        context: platform::PlatformContext,
+        player: Player,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
         let state = Arc::new(Mutex::new(PlayerState::default()));
 
-        let control = context.control.clone();
-        let info = context.info.clone();
-
+        let player_clone = player.clone();
         let state_clone = state.clone();
         runtime_handle.spawn(async move {
+            let player = player_clone;
+            let state = state_clone;
             loop {
-                let mut state: PlayerState = PlayerState::default();
+                let mut state_local: PlayerState = PlayerState::default();
 
-                // Aktualizacja informacji o utworze
-                if let Ok(track) = info.get_current_track().await {
-                    state.current_track = Some(track);
+                if let Ok(track) = player.get_current_track().await {
+                    state_local.current_track = Some(track);
                 }
 
-                // Aktualizacja informacji o odtwarzaniu
-                if let Ok(timeline) = info.get_timeline_info().await {
-                    state.timeline = timeline;
+                if let Ok(timeline) = player.get_timeline_info().await {
+                    state_local.timeline = timeline;
                 }
 
-                state.is_playing = info.is_playing().await.unwrap_or(false);
+                state_local.is_playing = player.is_playing().await.unwrap_or(false);
 
-                *state_clone.lock().unwrap() = state;
+                *state.lock().unwrap() = state_local;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         });
 
         Self {
-            platform,
-            control,
+            player,
             state,
             _runtime_handle: runtime_handle,
         }
@@ -106,30 +102,30 @@ impl eframe::App for PlayerApp {
                     let runtime_handle = self._runtime_handle.clone();
                     ui.horizontal(|ui| {
                         if ui.button("⏮").clicked() {
-                            let control = self.control.clone();
+                            let player = self.player.clone();
                             runtime_handle.spawn(async move {
-                                let _ = control.previous_track().await;
+                                let _ = player.previous_track().await;
                             });
                         }
                         if state.is_playing {
                             if ui.button("⏸").clicked() {
-                                let control = self.control.clone();
+                                let player = self.player.clone();
                                 runtime_handle.spawn(async move {
-                                    let _ = control.pause().await;
+                                    let _ = player.pause().await;
                                 });
                             }
                         } else {
                             if ui.button("▶").clicked() {
-                                let control = self.control.clone();
+                                let player = self.player.clone();
                                 runtime_handle.spawn(async move {
-                                    let _ = control.play().await;
+                                    let _ = player.play().await;
                                 });
                             }
                         }
                         if ui.button("⏭").clicked() {
-                            let control = self.control.clone();
+                            let player = self.player.clone();
                             runtime_handle.spawn(async move {
-                                let _ = control.next_track().await;
+                                let _ = player.next_track().await;
                             });
                         }
                     });
@@ -147,7 +143,7 @@ async fn main() -> Result<(), String> {
 
     // Inicjalizacja platformy
     let platform = platform::get_platform();
-    let context = platform.initialize().await?;
+    let player = platform.initialize().await?;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -160,7 +156,7 @@ async fn main() -> Result<(), String> {
         options,
         Box::new(|_cc| {
             let runtime_handle = tokio::runtime::Handle::current();
-            Ok(Box::new(PlayerApp::new(platform, context, runtime_handle)))
+            Ok(Box::new(PlayerApp::new(player, runtime_handle)))
         }),
     ).map_err(|e| e.to_string())
 }

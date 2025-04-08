@@ -2,7 +2,7 @@ use std::time::Duration;
 // use tokio::main;
 use dac_player_integration::usb::create_and_configure_fsct_device;
 use nusb::list_devices;
-use dac_player_integration::platform::TimelineInfo;
+use dac_player_integration::definitions::TimelineInfo;
 use dac_player_integration::definitions::FsctTextMetadata;
 use dac_player_integration::usb::requests::FsctStatus;
 

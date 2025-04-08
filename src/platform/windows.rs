@@ -1,22 +1,15 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use windows::{
+    core::Error as WindowsError,
     Media::Control::{
         GlobalSystemMediaTransportControlsSession,
         GlobalSystemMediaTransportControlsSessionManager,
     },
-    core::Error as WindowsError,
 };
-
-use super::{
-    PlaybackError,
-    Track,
-    PlaybackInfoProvider,
-    PlaybackControlProvider,
-    PlatformContext,
-    PlatformBehavior,
-    TimelineInfo,
-};
+use crate::definitions::TimelineInfo;
+use crate::player::{PlaybackError, Player, PlayerInterface, Track};
+use super::PlatformBehavior;
 
 pub struct WindowsPlatform;
 
@@ -57,7 +50,7 @@ impl WindowsPlatformGlobalSessionManager {
 }
 
 #[async_trait]
-impl PlaybackInfoProvider for WindowsPlatformGlobalSessionManager {
+impl PlayerInterface for WindowsPlatformGlobalSessionManager {
     async fn get_current_track(&self) -> Result<Track, PlaybackError> {
         let props = self.get_media_properties()
                         .await
@@ -103,20 +96,6 @@ impl PlaybackInfoProvider for WindowsPlatformGlobalSessionManager {
         Ok(is_playing)
     }
 
-    async fn get_volume(&self) -> Result<u8, PlaybackError> {
-        Err(PlaybackError::FeatureNotSupported)
-    }
-}
-
-fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f32 {
-    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
-    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
-        return 0.0;
-    }
-    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0) as f32
-}
-#[async_trait]
-impl PlaybackControlProvider for WindowsPlatformGlobalSessionManager {
     async fn play(&self) -> Result<(), PlaybackError> {
         self.get_session().await?.TryPlayAsync()?.await?;
         Ok(())
@@ -141,10 +120,14 @@ impl PlaybackControlProvider for WindowsPlatformGlobalSessionManager {
         self.get_session().await?.TrySkipPreviousAsync()?.await?;
         Ok(())
     }
+}
 
-    async fn set_volume(&self, _volume: u8) -> Result<(), PlaybackError> {
-        Err(PlaybackError::FeatureNotSupported)
+fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f32 {
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
+    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
+        return 0.0;
     }
+    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0) as f32
 }
 
 #[async_trait]
@@ -153,15 +136,12 @@ impl PlatformBehavior for WindowsPlatform {
         "Windows"
     }
 
-    async fn initialize(&self) -> Result<PlatformContext, String> {
-        let playback_info = Arc::new(WindowsPlatformGlobalSessionManager::new()
+    async fn initialize(&self) -> Result<Player, String> {
+        let global_session_manager = Arc::new(WindowsPlatformGlobalSessionManager::new()
             .await
             .map_err(|e| e.to_string())?);
 
-        Ok(PlatformContext {
-            info: playback_info.clone(),
-            control: playback_info,
-        })
+        Ok(Player::new(global_session_manager))
     }
 
     async fn cleanup(&self) -> Result<(), String> {

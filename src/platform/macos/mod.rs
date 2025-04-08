@@ -3,13 +3,16 @@ use std::any::Any;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio; // upewnij się, że używasz asynchronicznego runtime (np. tokio)
+use tokio;
+use crate::definitions::TimelineInfo;
+// upewnij się, że używasz asynchronicznego runtime (np. tokio)
 
 use crate::platform::macos::media_remote::MediaRemoteFramework;
 use crate::platform::{
-    PlatformBehavior, PlatformContext, PlaybackControlProvider, PlaybackError,
-    PlaybackInfoProvider, TimelineInfo, Track,
+    PlatformBehavior, PlaybackControlProvider, PlaybackInfoProvider,
+    PlaybackInterface,
 };
+use crate::player::{PlaybackError, Player, PlayerInterface, Track};
 
 mod media_remote; // importujemy nasz moduł FFI
 
@@ -21,13 +24,12 @@ impl MacOSPlatform {
     }
 }
 
-/// Implementacja PlaybackInfoProvider dla macOS wykorzystująca MediaRemote.framework.
-pub struct MacOSPlaybackInfoProvider {
+pub struct MacOSPlaybackManager {
     media_remote: Arc<MediaRemoteFramework>,
 }
 
 #[async_trait]
-impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
+impl PlayerInterface for MacOSPlaybackManager {
     async fn get_current_track(&self) -> Result<Track, PlaybackError> {
         let now_playing_info = self
             .media_remote
@@ -35,7 +37,6 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
             .await
             .map_err(|e| PlaybackError::UnknownError(e))?;
 
-        // Funkcja find zwraca Option<&CFType>; zakładamy, że wartości są CFString.
         let title_value = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoTitle")
             .ok_or_else(|| PlaybackError::UnknownError("Nie znaleziono tytułu utworu".into()))?
@@ -63,13 +64,11 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
             .await
             .map_err(|e| PlaybackError::UnknownError(e))?;
 
-        // Próba pobrania czasu trwania utworu – zakładamy, że zwracana wartość to napis reprezentujący liczbę sekund.
         let duration = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoDuration")
             .and_then(|v| v.downcast_ref::<f64>())
             .cloned();
 
-        // Spróbuj pobrać informację o bieżącej pozycji – zakładamy klucz "kMRMediaRemoteNowPlayingInfoElapsedTime"
         let position = now_playing_info
             .get("kMRMediaRemoteNowPlayingInfoElapsedTime")
             .and_then(|v| v.downcast_ref::<f64>())
@@ -116,17 +115,6 @@ impl PlaybackInfoProvider for MacOSPlaybackInfoProvider {
         Ok(is_playing)
     }
 
-    async fn get_volume(&self) -> Result<u8, PlaybackError> {
-        // Jeśli MediaRemote nie udostępnia poziomu głośności – zwracamy przykładową wartość.
-        Ok(50)
-    }
-}
-
-/// Implementacja PlaybackControlProvider dla macOS (pozostaje przykładowa).
-pub struct MacOSPlaybackControlProvider;
-
-#[async_trait]
-impl PlaybackControlProvider for MacOSPlaybackControlProvider {
     async fn play(&self) -> Result<(), PlaybackError> {
         // Tutaj należy umieścić wywołanie MediaRemote dla rozpoczęcia odtwarzania.
         Ok(())
@@ -147,10 +135,6 @@ impl PlaybackControlProvider for MacOSPlaybackControlProvider {
     async fn previous_track(&self) -> Result<(), PlaybackError> {
         Ok(())
     }
-
-    async fn set_volume(&self, _volume: u8) -> Result<(), PlaybackError> {
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -159,17 +143,13 @@ impl PlatformBehavior for MacOSPlatform {
         "macOS"
     }
 
-    async fn initialize(&self) -> Result<PlatformContext, String> {
+    async fn initialize(&self) -> Result<Player, String> {
         let media_remote = Arc::new(MediaRemoteFramework::load()?);
-        let info_provider: Arc<dyn PlaybackInfoProvider> = Arc::new(MacOSPlaybackInfoProvider {
+        let playback_manager: Arc<dyn PlaybackInfoProvider> = Arc::new(MacOSPlaybackManager {
             media_remote: media_remote.clone(),
         });
-        let control_provider: Arc<dyn PlaybackControlProvider> =
-            Arc::new(MacOSPlaybackControlProvider);
-        Ok(PlatformContext {
-            info: info_provider,
-            control: control_provider,
-        })
+
+        Ok(Player::new(playback_manager))
     }
 
     async fn cleanup(&self) -> Result<(), String> {

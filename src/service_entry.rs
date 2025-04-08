@@ -6,8 +6,8 @@ use log::error;
 use crate::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use nusb::hotplug::HotplugEvent;
-use crate::platform::{PlatformContext, TimelineInfo, Track};
-use crate::definitions::FsctTextMetadata;
+use crate::definitions::{FsctTextMetadata, TimelineInfo};
+use crate::player::{Player, PlayerInterface, Track};
 use crate::usb::requests::FsctStatus;
 use crate::usb::fsct_device::FsctDevice;
 
@@ -152,7 +152,7 @@ fn log_changes(changes: &Changes, current_metadata: &CurrentMetadata)
     }
 }
 
-async fn update_current_metadata(platform_context: &PlatformContext,
+async fn update_current_metadata(playback_service: &Player,
                                  current_metadata: &Mutex<CurrentMetadata>) -> Changes
 {
     let mut changes = Changes {
@@ -161,9 +161,9 @@ async fn update_current_metadata(platform_context: &PlatformContext,
         status: false,
     };
 
-    let new_current_track = platform_context.info.get_current_track().await.ok();
-    let new_timeline_info = platform_context.info.get_timeline_info().await.ok().flatten();
-    let new_status_result = platform_context.info.is_playing().await;
+    let new_current_track = playback_service.get_current_track().await.ok();
+    let new_timeline_info = playback_service.get_timeline_info().await.ok().flatten();
+    let new_status_result = playback_service.is_playing().await;
 
     let mut current_metadata = current_metadata.lock().unwrap();
     if new_current_track != current_metadata.current_track {
@@ -193,12 +193,12 @@ async fn update_current_metadata(platform_context: &PlatformContext,
 }
 
 fn run_metadata_watch(fsct_devices: DeviceMap,
-                      platform_context: PlatformContext,
+                      playback_service: Player,
                       current_metadata: Arc<Mutex<CurrentMetadata>>)
 {
     tokio::spawn(async move {
         loop {
-            let changes = update_current_metadata(&platform_context, &current_metadata).await;
+            let changes = update_current_metadata(&playback_service, &current_metadata).await;
             apply_changes_on_devices(&fsct_devices, &current_metadata, changes).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -245,7 +245,7 @@ async fn apply_changes_on_devices(devices: &DeviceMap,
     }
 }
 
-pub async fn run_service(platform_context: PlatformContext) -> Result<(), String> {
+pub async fn run_service(playback_service: Player) -> Result<(), String> {
     let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
     let current_metadata = Arc::new(Mutex::new(CurrentMetadata {
         current_track: None,
@@ -253,7 +253,7 @@ pub async fn run_service(platform_context: PlatformContext) -> Result<(), String
         status: FsctStatus::Unknown,
     }));
     run_devices_watch(fsct_devices.clone(), current_metadata.clone());
-    run_metadata_watch(fsct_devices.clone(), platform_context, current_metadata);
+    run_metadata_watch(fsct_devices.clone(), playback_service, current_metadata);
 
     tokio::signal::ctrl_c()
         .await
