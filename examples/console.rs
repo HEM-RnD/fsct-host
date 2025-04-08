@@ -1,5 +1,5 @@
-use dac_player_integration::platform;
-use dac_player_integration::player::{Player, PlayerInterface};
+use fsct::platform;
+use fsct::player::{Player, PlayerInterface};
 
 async fn print_current_track(player: &Player) -> Result<(), String> {
     let track = player

@@ -1,15 +1,10 @@
 [package]
-name = "dac-player-integration"
+name = "fsct"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-windows = { version = "0.59", features = [
-    "Media_Control",
-    "Foundation",
-    "Foundation_Collections",
-    "Storage_Streams"
-] }
+
 tokio = { version = "1.28", features = ["full"] }
 async-trait = "0.1.68"
 log = "0.4.25"
@@ -20,6 +15,14 @@ libc = "0.2.169"
 nusb = "0.1.13"
 uuid = { version = "1.16.0", features = ["v4"] }
 bitflags = "2.8.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.59", features = [
+    "Media_Control",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams"
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.0"

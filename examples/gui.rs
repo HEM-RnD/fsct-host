@@ -1,9 +1,9 @@
-use dac_player_integration::{definitions, platform, player};
+use fsct::{definitions, platform, player};
 
 use eframe::egui;
 use env_logger;
 use std::sync::{Arc, Mutex};
-use dac_player_integration::player::{Player, PlayerInterface};
+use fsct::player::{Player, PlayerInterface};
 
 #[derive(Default)]
 struct PlayerState {

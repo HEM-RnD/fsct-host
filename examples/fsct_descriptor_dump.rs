@@ -1,7 +1,7 @@
-use dac_player_integration::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
+use fsct::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
 use nusb::DeviceInfo;
-use dac_player_integration::usb::descriptor_utils::{find_fsct_interface_number, get_fsct_functionality_descriptor_set};
-use dac_player_integration::usb::open_interface;
+use fsct::usb::descriptor_utils::{find_fsct_interface_number, get_fsct_functionality_descriptor_set};
+use fsct::usb::open_interface;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

@@ -818,28 +818,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
 
 [[package]]
-name = "dac-player-integration"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bitflags 2.8.0",
- "block2 0.6.0",
- "core-foundation-sys",
- "dispatch2",
- "eframe",
- "env_logger",
- "futures",
- "libc",
- "log",
- "nusb",
- "objc2 0.6.0",
- "objc2-foundation 0.3.0",
- "tokio",
- "uuid",
- "windows 0.59.0",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1217,6 +1195,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fsct"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bitflags 2.8.0",
+ "block2 0.6.0",
+ "core-foundation-sys",
+ "dispatch2",
+ "eframe",
+ "env_logger",
+ "futures",
+ "libc",
+ "log",
+ "nusb",
+ "objc2 0.6.0",
+ "objc2-foundation 0.3.0",
+ "tokio",
+ "uuid",
+ "windows 0.59.0",
 ]
 
 [[package]]

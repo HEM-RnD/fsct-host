@@ -1,5 +1,5 @@
-use dac_player_integration::platform;
-use dac_player_integration::run_service;
+use fsct::platform;
+use fsct::run_service;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), String> {

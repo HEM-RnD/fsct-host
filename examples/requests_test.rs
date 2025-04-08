@@ -1,10 +1,10 @@
 use std::time::Duration;
 // use tokio::main;
-use dac_player_integration::usb::create_and_configure_fsct_device;
+use fsct::usb::create_and_configure_fsct_device;
 use nusb::list_devices;
-use dac_player_integration::definitions::TimelineInfo;
-use dac_player_integration::definitions::FsctTextMetadata;
-use dac_player_integration::usb::requests::FsctStatus;
+use fsct::definitions::TimelineInfo;
+use fsct::definitions::FsctTextMetadata;
+use fsct::usb::requests::FsctStatus;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

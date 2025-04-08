@@ -1,7 +1,6 @@
-use dac_player_integration::usb::fsct_bos_finder;
+use fsct::usb::fsct_bos_finder;
 
 fn main() {
-
     let device = fsct_bos_finder::find_device_with_fsct_vendor_subclass_number();
     if device.is_none() {
         println!("No device with Ferrum Streaming Control Technology interface found");
@@ -15,9 +14,9 @@ fn main() {
     match fsct_cap {
         Some(fsct_cap) => {
             println!("Vendor subclass number of Ferrum Streaming Control Technology interface: 0x{:02X}", fsct_cap);
-        },
+        }
         None => {
             println!("Ferrum Streaming Control Technology interface Vendor subclass number not provided in BOS descriptor");
-        },
+        }
     }
 }
