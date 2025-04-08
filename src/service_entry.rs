@@ -3,15 +3,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use futures::StreamExt;
 use log::error;
-// use tokio::main;
-use dac_player_integration::usb::create_and_configure_fsct_device;
+use crate::usb::create_and_configure_fsct_device;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use nusb::hotplug::HotplugEvent;
-use dac_player_integration::platform::{PlatformContext, TimelineInfo, Track};
-use dac_player_integration::definitions::FsctTextMetadata;
-use dac_player_integration::usb::requests::FsctStatus;
-use dac_player_integration::platform;
-use dac_player_integration::usb::fsct_device::FsctDevice;
+use crate::platform::{PlatformContext, TimelineInfo, Track};
+use crate::definitions::FsctTextMetadata;
+use crate::usb::requests::FsctStatus;
+use crate::usb::fsct_device::FsctDevice;
 
 type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
 
@@ -247,10 +245,7 @@ async fn apply_changes_on_devices(devices: &DeviceMap,
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), String> {
-    let platform = platform::get_platform();
-    let platform_context = platform.initialize().await?;
+pub async fn run_service(platform_context: PlatformContext) -> Result<(), String> {
     let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
     let current_metadata = Arc::new(Mutex::new(CurrentMetadata {
         current_track: None,

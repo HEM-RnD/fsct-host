@@ -29,6 +29,6 @@ block2 = "0.6.0"
 dispatch2 = "0.2.0"
 
 [[bin]]
-name = "fsct-service"
-path = "src/fsct_service.rs"
+name = "fsct-native-service"
+path = "services/fsct_native_service.rs"
 
