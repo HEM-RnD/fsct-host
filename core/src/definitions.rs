@@ -60,7 +60,7 @@ pub enum FsctTextEncoding {
     Utf32 = 3,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimelineInfo {
     pub position: f64,         // current position in seconds
     pub update_time: std::time::SystemTime,  // when the position was last updated
@@ -68,10 +68,34 @@ pub struct TimelineInfo {
     pub rate: f32,             // playback rate
 }
 
-impl PartialEq for TimelineInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.position == other.position && self.update_time == other.update_time && self.duration == other.duration && self.rate == other.rate
-    }
+/// Represents the various playback states within the Ferrum Streaming Control Technology (FSCT) system.
+///
+/// This enumeration defines distinct states that describe the current playback status of a media session
+/// in FSCT-enabled devices. It facilitates precise communication of playback conditions between a USB-connected
+/// device and a host system.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_snake_case)]
+#[allow(unused)]
+pub enum FsctStatus {
+    /// Playback is currently not active.
+    Stopped = 0x00,
+    /// Playback is in progress.
+    Playing = 0x01,
+    /// Playback is temporarily halted but can be resumed.
+    Paused = 0x02,
+    /// The playback position is being adjusted, either forward or backward.
+    Seeking = 0x03,
+    /// Playback is momentarily halted due to data loading or network conditions.
+    Buffering = 0x04,
+    /// An issue occurred, and playback cannot proceed.
+    Error = 0x05,
+    /// The playback state could not be determined or is undefined.
+    Unknown = 0x0F,
 }
 
-impl Eq for TimelineInfo {}
+impl Default for FsctStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}

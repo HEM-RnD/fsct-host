@@ -4,7 +4,7 @@ use fsct_core::usb::create_and_configure_fsct_device;
 use nusb::list_devices;
 use fsct_core::definitions::TimelineInfo;
 use fsct_core::definitions::FsctTextMetadata;
-use fsct_core::usb::requests::FsctStatus;
+use fsct_core::definitions::FsctStatus;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

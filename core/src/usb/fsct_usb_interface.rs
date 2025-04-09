@@ -2,7 +2,7 @@ use nusb::Interface;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use crate::definitions::FsctTextMetadata;
 use crate::usb::requests;
-use crate::usb::requests::FsctStatus;
+use crate::definitions::FsctStatus;
 
 pub struct FsctUsbInterface {
     interface: Interface,

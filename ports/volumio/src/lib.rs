@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use reqwest::Url;
 use fsct_core::definitions::TimelineInfo;
-use fsct_core::player::{PlayerError, PlayerInterface, Track};
+use fsct_core::player::{PlayerError, PlayerInterface, TrackMetadata};
+use fsct_core::definitions::FsctStatus;
 
 pub struct VolumioPlayer {
     url: Url,
@@ -31,37 +32,49 @@ impl VolumioPlayer {
     }
 }
 
+fn get_current_track(state: &serde_json::Value) -> TrackMetadata {
+    let mut texts = TrackMetadata::default();
+    texts.title = state["title"].as_str().map(|s| s.to_string());
+    texts.artist = state["artist"].as_str().map(|s| s.to_string());
+    texts.album = state["album"].as_str().map(|s| s.to_string());
+
+    texts
+}
+
+fn get_timeline_info(state: &serde_json::Value) -> Option<TimelineInfo> {
+    let position = state["seek"].as_u64()?;
+    let duration = state["duration"].as_u64()?;
+    let status = state["status"].as_str().unwrap_or("stop");
+    let rate = if status == "play" { 1.0 } else { 0.0 };
+    Some(TimelineInfo {
+        position: position as f64 / 1000.0,
+        update_time: std::time::SystemTime::now(),
+        duration: duration as f64,
+        rate: rate as f32,
+    })
+}
+
+fn get_status(state: &serde_json::Value) -> FsctStatus {
+    match state["status"].as_str().unwrap_or("stop") {
+        "play" => FsctStatus::Playing,
+        "pause" => FsctStatus::Paused,
+        "stop" => FsctStatus::Stopped,
+        _ => FsctStatus::Unknown,
+    }
+}
+
 #[async_trait]
 impl PlayerInterface for VolumioPlayer {
-    async fn get_current_track(&self) -> Result<Track, PlayerError> {
+    async fn get_current_state(&self) -> Result<fsct_core::player::PlayerState, PlayerError> {
         let state = self.get_state().await?;
-        let title = state["title"].as_str().unwrap_or_default();
-        let artist = state["artist"].as_str().unwrap_or_default();
-        Ok(Track {
-            title: title.to_string(),
-            artist: artist.to_string(),
+        let texts = get_current_track(&state);
+        let timeline = get_timeline_info(&state);
+        let status = get_status(&state);
+        Ok(fsct_core::player::PlayerState {
+            status,
+            timeline,
+            texts,
         })
-    }
-
-    async fn get_timeline_info(&self) -> Result<Option<TimelineInfo>, PlayerError> {
-        let state = self.get_state().await?;
-        let position = state["seek"].as_u64().unwrap_or(0);
-        let duration = state["duration"].as_u64().unwrap_or(0);
-        let status = state["status"].as_str().unwrap_or("stop");
-        let default_rate = if status == "play" { 1.0 } else { 0.0 };
-        let rate = state["rate"].as_f64().unwrap_or(default_rate);
-        Ok(Some(TimelineInfo {
-            position: position as f64 / 1000.0,
-            update_time: std::time::SystemTime::now(),
-            duration: duration as f64,
-            rate: rate as f32,
-        }))
-    }
-
-    async fn is_playing(&self) -> Result<bool, PlayerError> {
-        let state = self.get_state().await?;
-        let status = state["status"].as_str().unwrap_or("stop");
-        Ok(status == "play")
     }
 
     async fn play(&self) -> Result<(), PlayerError> {

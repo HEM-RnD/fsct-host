@@ -152,7 +152,7 @@ impl FsctDevice {
         }
     }
 
-    pub async fn set_status(&self, status: crate::usb::requests::FsctStatus) -> Result<(), String>
+    pub async fn set_status(&self, status: crate::definitions::FsctStatus) -> Result<(), String>
     {
         self.fsct_interface.send_status(status).await
     }
