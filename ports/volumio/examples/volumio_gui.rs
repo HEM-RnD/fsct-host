@@ -1,18 +1,14 @@
-use std::sync::Arc;
 use env_logger;
-use reqwest::Url;
-use fsct_core::player::Player;
-use fsct_volumio_platform::VolumioPlayer;
 use fsct_gui::run_gui;
-
+use fsct_volumio_platform::create_rest_api_volumio_player;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
     env_logger::init();
 
-    let volumio_url = Url::parse("http://streamplay.local/").map_err(|e| e.to_string())?;
-    let player = Arc::new(VolumioPlayer::new(volumio_url).await.map_err(|e| e.to_string())?);
-    run_gui(Player::new(player)).await?;
+    let volumio_url = "http://streamplay.local/";
+    let player = create_rest_api_volumio_player(volumio_url).await.map_err(|e| e.to_string())?;
+    run_gui(player).await?;
 
     Ok(())
 }

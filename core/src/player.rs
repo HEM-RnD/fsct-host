@@ -147,8 +147,8 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(player_impl: Arc<dyn PlayerInterface + Sync + Send>) -> Self {
-        Self { player_impl }
+    pub fn new<T: PlayerInterface + Sync + Send + 'static>(player_impl: T) -> Self {
+        Self { player_impl: Arc::new(player_impl) }
     }
 }
 
