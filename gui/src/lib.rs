@@ -1,15 +1,8 @@
-use fsct_core::{definitions, player};
+use fsct_core::{definitions, run_player_watch, NoopPlayerEventListener};
 
 use eframe::egui;
 use std::sync::{Arc, Mutex};
-use fsct_core::player::{Player, PlayerInterface};
-
-#[derive(Default)]
-struct PlayerState {
-    current_track: Option<player::Track>,
-    timeline: Option<definitions::TimelineInfo>,
-    is_playing: bool,
-}
+use fsct_core::player::{Player, PlayerInterface, PlayerState};
 
 struct PlayerApp {
     player: Player,
@@ -20,33 +13,9 @@ struct PlayerApp {
 impl PlayerApp {
     fn new(
         player: Player,
+        state: Arc<Mutex<PlayerState>>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
-        let state = Arc::new(Mutex::new(PlayerState::default()));
-
-        let player_clone = player.clone();
-        let state_clone = state.clone();
-        runtime_handle.spawn(async move {
-            let player = player_clone;
-            let state = state_clone;
-            loop {
-                let mut state_local: PlayerState = PlayerState::default();
-
-                if let Ok(track) = player.get_current_track().await {
-                    state_local.current_track = Some(track);
-                }
-
-                if let Ok(timeline) = player.get_timeline_info().await {
-                    state_local.timeline = timeline;
-                }
-
-                state_local.is_playing = player.is_playing().await.unwrap_or(false);
-
-                *state.lock().unwrap() = state_local;
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        });
-
         Self {
             player,
             state,
@@ -63,10 +32,14 @@ impl eframe::App for PlayerApp {
             ui.vertical_centered(|ui| {
                 ui.heading("Music Player");
 
-                if let Some(track) = &state.current_track {
+                if let Some(title) = &state.texts.title {
                     ui.add_space(20.0);
-                    ui.heading(&track.title);
-                    ui.label(&track.artist);
+                    ui.heading(title);
+                }
+
+                if let Some(artist) = &state.texts.artist {
+                    ui.add_space(10.0);
+                    ui.label(artist);
                 }
 
                 if let Some(timeline) = &state.timeline {
@@ -92,7 +65,7 @@ impl eframe::App for PlayerApp {
 
 
                     ui.add_space(10.0);
-                    ui.label(if state.is_playing {
+                    ui.label(if state.status == definitions::FsctStatus::Playing {
                         "▶ Playing"
                     } else {
                         "⏸ Paused"
@@ -106,7 +79,7 @@ impl eframe::App for PlayerApp {
                                 let _ = player.previous_track().await;
                             });
                         }
-                        if state.is_playing {
+                        if state.status == definitions::FsctStatus::Playing {
                             if ui.button("⏸").clicked() {
                                 let player = self.player.clone();
                                 runtime_handle.spawn(async move {
@@ -137,6 +110,11 @@ impl eframe::App for PlayerApp {
 }
 
 pub async fn run_gui(player: Player) -> Result<(), String> {
+    let player_state = Arc::new(Mutex::new(PlayerState::default()));
+
+
+    run_player_watch(player.clone(), NoopPlayerEventListener::new(), player_state.clone()).await?;
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([300.0, 400.0]),
@@ -148,7 +126,7 @@ pub async fn run_gui(player: Player) -> Result<(), String> {
         options,
         Box::new(|_cc| {
             let runtime_handle = tokio::runtime::Handle::current();
-            Ok(Box::new(PlayerApp::new(player, runtime_handle)))
+            Ok(Box::new(PlayerApp::new(player, player_state, runtime_handle)))
         }),
     ).map_err(|e| e.to_string())
 }

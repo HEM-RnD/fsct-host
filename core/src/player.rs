@@ -107,7 +107,7 @@ pub enum PlayerEvent {
     TimelineChanged(Option<TimelineInfo>),
 }
 
-pub type PlayerEventListener = futures::channel::mpsc::Receiver<PlayerEvent>;
+pub type PlayerEventsStream = futures::channel::mpsc::Receiver<PlayerEvent>;
 
 #[async_trait]
 pub trait PlayerInterface: Send + Sync {
@@ -136,7 +136,7 @@ pub trait PlayerInterface: Send + Sync {
         Err(PlayerError::FeatureNotSupported)
     }
 
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventListener, PlayerError> {
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsStream, PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
 }
@@ -173,7 +173,7 @@ impl PlayerInterface for Player {
         self.player_impl.previous_track().await
     }
 
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventListener, PlayerError> {
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsStream, PlayerError> {
         self.player_impl.listen_to_player_notifications().await
     }
 }
