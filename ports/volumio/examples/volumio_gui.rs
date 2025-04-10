@@ -6,8 +6,9 @@ use fsct_volumio_platform::create_rest_api_volumio_player;
 async fn main() -> Result<(), String> {
     env_logger::init();
 
-    let volumio_url = "http://streamplay.local/";
-    let player = create_rest_api_volumio_player(volumio_url).await.map_err(|e| e.to_string())?;
+    let volumio_url = std::env::var("VOLUMIO_URL").unwrap_or("http://volumio.local/".to_string());
+
+    let player = create_rest_api_volumio_player(volumio_url.as_str()).await.map_err(|e| e.to_string())?;
     run_gui(player).await?;
 
     Ok(())
