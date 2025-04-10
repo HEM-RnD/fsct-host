@@ -8,13 +8,25 @@ description.workspace = true
 [dependencies]
 fsct_core.workspace = true
 tokio.workspace = true
+async-trait.workspace = true
+env_logger.workspace = true
 
 [dev-dependencies]
-env_logger = "0.11.8"
 fsct_gui = { path = "../../gui" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-fsct_windows_port = { path = "../../ports/windows" }
+windows = { version = "0.59", features = [
+    "Media_Control",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams"
+] }
+windows-core = "0.59.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-fsct_macos_port = { path = "../../ports/macos" }
+objc2 = "0.6.0"
+objc2-foundation = "0.3.0"
+core-foundation-sys = "0.8.7"
+block2 = "0.6.0"
+dispatch2 = "0.2.0"
+libc = "0.2.169"

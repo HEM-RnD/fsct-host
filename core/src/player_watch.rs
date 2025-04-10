@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::error;
+use log::{error, info};
 use futures::channel::mpsc::{SendError, Sender};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
@@ -87,8 +87,25 @@ fn create_polling_metadata_watch(player: Player) -> PlayerEventsStream
     let (mut tx, rx) = futures::channel::mpsc::channel(30);
     tokio::spawn(async move {
         let mut current_metadata = PlayerState::default();
+        let mut get_current_state_failure_logged = false;
         loop {
-            let state = player.get_current_state().await.unwrap_or_default();
+            let state = player.get_current_state().await;
+            let state = match state {
+                Ok(state) => {
+                    if get_current_state_failure_logged {
+                        get_current_state_failure_logged = false;
+                        info!("Got state after several failures.");
+                    }
+                    state
+                }
+                Err(e) => {
+                    if !get_current_state_failure_logged {
+                        get_current_state_failure_logged = true;
+                        error!("Failed to get state: {}", e);
+                    }
+                    continue;
+                }
+            };
 
             if let Err(e) = update_current_metadata(&state, &mut current_metadata, &mut tx).await {
                 if e.is_disconnected() {

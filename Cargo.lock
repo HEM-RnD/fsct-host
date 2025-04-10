@@ -1254,31 +1254,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsct_macos_port"
+name = "fsct_native_service"
 version = "0.2.0"
 dependencies = [
  "async-trait",
  "block2 0.6.0",
  "core-foundation-sys",
  "dispatch2",
- "fsct_core",
- "futures",
- "libc",
- "objc2 0.6.0",
- "objc2-foundation 0.3.0",
- "tokio",
-]
-
-[[package]]
-name = "fsct_native_service"
-version = "0.2.0"
-dependencies = [
  "env_logger",
  "fsct_core",
  "fsct_gui",
- "fsct_macos_port",
- "fsct_windows_port",
+ "libc",
+ "log",
+ "objc2 0.6.0",
+ "objc2-foundation 0.3.0",
  "tokio",
+ "windows 0.59.0",
+ "windows-core 0.59.0",
 ]
 
 [[package]]
@@ -1289,19 +1281,10 @@ dependencies = [
  "env_logger",
  "fsct_core",
  "fsct_gui",
+ "log",
  "reqwest",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "fsct_windows_port"
-version = "0.2.0"
-dependencies = [
- "async-trait",
- "fsct_core",
- "windows 0.59.0",
- "windows-core 0.59.0",
 ]
 
 [[package]]

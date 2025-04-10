@@ -18,10 +18,13 @@ impl RestApiVolumioPlayer {
         let response = reqwest::get(info_url).await.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
         let response = response.error_for_status().map_err(|e| PlayerError::UnknownError(e.to_string()))?;
         let response_text = response.text().await.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+        println!("Response: {}", response_text);
         let json_value = serde_json::from_str(&response_text).map_err(|e| PlayerError::UnknownError(e.to_string()))?;
         Ok(json_value)
     }
 
+
+    //
     async fn send_command(&self, command: &str) -> Result<(), PlayerError>
     {
         let info_url = self.url.join(format!("api/v1/commands/?cmd={command}").as_str()).unwrap();
