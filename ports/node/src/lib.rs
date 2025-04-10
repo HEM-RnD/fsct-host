@@ -5,73 +5,91 @@ mod js_types;
 #[macro_use]
 extern crate napi_derive;
 
-use fsct_core::definitions::FsctStatus;
+use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
 use fsct_core::{player::PlayerState, player::Player, player::PlayerInterface, run_service};
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use fsct_core::player::PlayerError;
 
-use js_types::PlayerStatus;
-use js_types::get_timeline_info;
+use js_types::{PlayerStatus, CurrentTextMetadata, TimelineInfo, FsctTimelineInfo};
 
-pub struct NodePlayer {
+pub struct NodePlayerImpl {
     current_state: Mutex<PlayerState>,
 }
 
-impl NodePlayer {
+impl NodePlayerImpl {
     pub fn new() -> Self {
         Self { current_state: Mutex::new(PlayerState::default()) }
+    }
+
+    pub async fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
+        let status: FsctStatus = status.into();
+        self.current_state.lock().unwrap().status = status;
+
+        // here emit event
+
+        Ok(())
+    }
+
+    pub async fn set_timeline(&self,
+                              timeline: Option<&TimelineInfo>) -> napi::Result<()> {
+        let timeline: Option<FsctTimelineInfo> = timeline.map(|v|(*v).into()).to_owned();
+        self.current_state.lock().unwrap().timeline = timeline;
+
+        // here emit event
+
+        Ok(())
+    }
+
+    pub async fn set_text(&self, text_type: CurrentTextMetadata, text: Option<String>) -> napi::Result<()> {
+        let text_type: FsctTextMetadata = text_type.into();
+        *self.current_state.lock().unwrap().texts.get_mut_text(text_type) = text;
+
+        // here emit event
+
+        Ok(())
     }
 }
 
 #[async_trait]
-impl PlayerInterface for NodePlayer {
+impl PlayerInterface for NodePlayerImpl {
     async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
         Ok(self.current_state.lock().unwrap().clone())
     }
 
 }
 
-#[napi(js_name = "NodePlayer")]
-pub struct JsNodePlayer {
-    player_impl: Arc<NodePlayer>,
+#[napi]
+pub struct NodePlayer {
+    player_impl: Arc<NodePlayerImpl>,
 }
 
-
-
 #[napi]
-impl JsNodePlayer {
+impl NodePlayer {
     #[napi(constructor)]
     pub fn new() -> Self {
-        JsNodePlayer { player_impl: Arc::new(NodePlayer::new()) }
+        NodePlayer { player_impl: Arc::new(NodePlayerImpl::new()) }
     }
 
     #[napi]
     pub async fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
-        let mut current_state = self.player_impl.current_state.lock().unwrap();
-        let status: FsctStatus = status.into();
-        if current_state.status != status {
-            current_state.status = status;
-        }
-        Ok(())
+        self.player_impl.set_status(status).await
     }
 
     #[napi]
     pub async fn set_timeline(&self,
-                              position: f64,
-                              duration: f64,
-                              rate: f64) -> napi::Result<()> {
-        let mut current_state = self.player_impl.current_state.lock().unwrap();
-        let timeline_info = get_timeline_info(position, duration, rate);
-        if current_state.timeline != timeline_info {
-            current_state.timeline = timeline_info;
-        }
-        Ok(())
+                              timeline: Option<&TimelineInfo>) -> napi::Result<()> {
+        self.player_impl.set_timeline(timeline).await
+    }
+
+    #[napi]
+    pub async fn set_text(&self, text_type: CurrentTextMetadata, text: Option<String>) -> napi::Result<()> {
+        self.player_impl.set_text(text_type, text).await
     }
 }
 
 
 #[napi]
-async fn run_fsct(player: &JsNodePlayer) -> napi::Result<()> {
+async fn run_fsct(player: &NodePlayer) -> napi::Result<()> {
     run_service(Player::from_arc(player.player_impl.clone())).await.map_err(|e| napi::Error::from_reason(e.to_string()))
 }

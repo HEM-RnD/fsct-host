@@ -1,6 +1,6 @@
 use std::time::SystemTime;
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
+use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
+pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
 
 #[napi(string_enum)]
 pub enum PlayerStatus {
@@ -34,15 +34,48 @@ impl From<PlayerStatus> for FsctStatus {
     }
 }
 
-pub fn get_timeline_info(position: f64,
-                        duration: f64,
-                        rate: f64) -> Option<FsctTimelineInfo> {
-    if !duration.is_nan() && !position.is_nan() && !rate.is_nan() {
-        Some(TimelineInfo {
-            position,
-            duration,
+#[napi(constructor)]
+#[derive(Debug, Clone, PartialEq, Copy, Default)]
+pub struct TimelineInfo {
+    pub position: f64,
+    pub duration: f64,
+    pub rate: f64
+}
+
+impl From<TimelineInfo> for FsctTimelineInfo {
+    fn from(value: TimelineInfo) -> Self {
+        FsctTimelineInfo {
+            position: value.position,
+            duration: value.duration,
             update_time: SystemTime::now(),
-            rate: rate as f32
-        })
-    } else { None }
+            rate: value.rate as f32
+        }
+    }
+}
+
+#[napi(string_enum)]
+pub enum CurrentTextMetadata {
+    Title,
+    Author,
+    Genre,
+    Year,
+    Track,
+    Album,
+    Comment,
+    Rating,
+}
+
+impl From<CurrentTextMetadata> for FsctTextMetadata {
+    fn from(value: CurrentTextMetadata) -> Self {
+        match value {
+            CurrentTextMetadata::Title => FsctTextMetadata::CurrentTitle,
+            CurrentTextMetadata::Author => FsctTextMetadata::CurrentAuthor,
+            CurrentTextMetadata::Genre => FsctTextMetadata::CurrentGenre,
+            CurrentTextMetadata::Year => FsctTextMetadata::CurrentYear,
+            CurrentTextMetadata::Track => FsctTextMetadata::CurrentTrack,
+            CurrentTextMetadata::Album => FsctTextMetadata::CurrentAlbum,
+            CurrentTextMetadata::Comment => FsctTextMetadata::CurrentComment,
+            CurrentTextMetadata::Rating => FsctTextMetadata::CurrentRating,
+        }
+    }
 }

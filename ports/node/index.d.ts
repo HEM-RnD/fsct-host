@@ -19,10 +19,26 @@ export const enum PlayerStatus {
   /** The playback state could not be determined or is undefined. */
   Unknown = 'Unknown'
 }
+export const enum CurrentTextMetadata {
+  Title = 'Title',
+  Author = 'Author',
+  Genre = 'Genre',
+  Year = 'Year',
+  Track = 'Track',
+  Album = 'Album',
+  Comment = 'Comment',
+  Rating = 'Rating'
+}
 export declare function runFsct(player: NodePlayer): Promise<void>
-export type JsNodePlayer = NodePlayer
+export declare class TimelineInfo {
+  position: number
+  duration: number
+  rate: number
+  constructor(position: number, duration: number, rate: number)
+}
 export declare class NodePlayer {
   constructor()
   setStatus(status: PlayerStatus): Promise<void>
-  setTimeline(position: number, duration: number, rate: number): Promise<void>
+  setTimeline(timeline?: TimelineInfo | undefined | null): Promise<void>
+  setText(textType: CurrentTextMetadata, text?: string | undefined | null): Promise<void>
 }
