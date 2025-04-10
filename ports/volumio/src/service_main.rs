@@ -7,7 +7,7 @@ use fsct_volumio_port::create_rest_api_volumio_player;
 async fn main() -> Result<(), String> {
     env_logger::init();
 
-    let url = std::env::var("FSCT_VOLUMIO_URL").unwrap_or("http://localhost/".to_string());
+    let url = std::env::var("FSCT_VOLUMIO_URL").unwrap_or("http://localhost:3000/".to_string());
     info!("Using volumio url: {}", url);
 
     let platform_global_player = create_rest_api_volumio_player(url.as_str()).await.map_err
