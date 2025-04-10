@@ -16,3 +16,7 @@ env_logger.workspace = true
 
 [dev-dependencies]
 fsct_gui = { path = "../../gui" }
+
+[[bin]]
+name = "fsct_volumio_service"
+path = "src/service_main.rs"

@@ -30,3 +30,7 @@ core-foundation-sys = "0.8.7"
 block2 = "0.6.0"
 dispatch2 = "0.2.0"
 libc = "0.2.169"
+
+[[bin]]
+name = "fsct_native_service"
+path = "src/service_main.rs"
