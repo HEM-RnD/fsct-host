@@ -13,10 +13,5 @@ pub async fn run_service(player: Player) -> Result<(), String> {
 
     devices_watch::run_devices_watch(fsct_devices.clone(), player_state.clone()).await?;
     player_watch::run_player_watch(player, player_event_listener, player_state).await?;
-
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C signal");
-    println!("Exiting...");
     Ok(())
 }

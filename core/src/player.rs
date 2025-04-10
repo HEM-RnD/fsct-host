@@ -150,6 +150,10 @@ impl Player {
     pub fn new<T: PlayerInterface + Sync + Send + 'static>(player_impl: T) -> Self {
         Self { player_impl: Arc::new(player_impl) }
     }
+
+    pub fn from_arc(player_impl: Arc<dyn PlayerInterface + Sync + Send>) -> Self {
+        Self { player_impl }
+    }
 }
 
 #[async_trait]

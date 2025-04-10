@@ -12,5 +12,11 @@ async fn main() -> Result<(), String> {
 
     let platform_global_player = create_rest_api_volumio_player(url.as_str()).await.map_err
     (|e| e.to_string())?;
-    run_service(platform_global_player).await
+    run_service(platform_global_player).await?;
+
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for Ctrl+C signal");
+    println!("Exiting...");
+    Ok(())
 }

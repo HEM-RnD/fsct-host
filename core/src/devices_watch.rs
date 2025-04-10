@@ -11,7 +11,7 @@ use crate::player_watch::PlayerEventListener;
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::fsct_device::FsctDevice;
 
-type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
+pub type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
 
 async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, String>
 {
