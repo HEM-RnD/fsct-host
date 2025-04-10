@@ -1,5 +1,5 @@
 [package]
-name = "fsct_volumio_platform"
+name = "fsct_volumio_port"
 edition = "2024"
 version.workspace = true
 authors.workspace = true

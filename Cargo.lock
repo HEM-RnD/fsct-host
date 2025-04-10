@@ -1254,7 +1254,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsct_native_service"
+name = "fsct_native_port"
 version = "0.2.0"
 dependencies = [
  "async-trait",
@@ -1265,7 +1265,6 @@ dependencies = [
  "fsct_core",
  "fsct_gui",
  "libc",
- "log",
  "objc2 0.6.0",
  "objc2-foundation 0.3.0",
  "tokio",
@@ -1274,7 +1273,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsct_volumio_platform"
+name = "fsct_volumio_port"
 version = "0.2.0"
 dependencies = [
  "async-trait",

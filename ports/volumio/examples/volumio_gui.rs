@@ -1,6 +1,6 @@
 use env_logger;
 use fsct_gui::run_gui;
-use fsct_volumio_platform::create_rest_api_volumio_player;
+use fsct_volumio_port::create_rest_api_volumio_player;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

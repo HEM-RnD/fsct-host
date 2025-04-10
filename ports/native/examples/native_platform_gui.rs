@@ -1,5 +1,5 @@
 use env_logger;
-use fsct_native_service::initialize_native_platform_player;
+use fsct_native_port::initialize_native_platform_player;
 use fsct_gui::run_gui;
 
 
