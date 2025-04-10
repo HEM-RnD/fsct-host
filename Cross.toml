@@ -1,0 +1,20 @@
+# BUILD
+# -----
+# Set build configurations for all targets.
+
+[build]
+# Use `-Zbuild-std` when cross-compiling for targets without a
+# pre-built standard library. This overrides `xargo`: if enabled,
+# `xargo` will not be used.
+#build-std = true
+# Default target to build if the target is not provided via
+# `--target` or `CARGO_BUILD_TARGET`.
+default-target = "x86_64-unknown-linux-gnu"
+#xargo = true                                   # enable the use of xargo by default
+# Additional commands to run prior to building the package.
+# These are translated into RUN commands to add to the Docker
+# image prior to running cross.
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
