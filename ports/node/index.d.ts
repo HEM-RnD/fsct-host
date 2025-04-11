@@ -19,6 +19,11 @@ export const enum PlayerStatus {
   /** The playback state could not be determined or is undefined. */
   Unknown = 'Unknown'
 }
+export interface TimelineInfo {
+  position: number
+  duration: number
+  rate: number
+}
 export const enum CurrentTextMetadata {
   Title = 'Title',
   Author = 'Author',
@@ -30,12 +35,6 @@ export const enum CurrentTextMetadata {
   Rating = 'Rating'
 }
 export declare function runFsct(player: NodePlayer): Promise<void>
-export declare class TimelineInfo {
-  position: number
-  duration: number
-  rate: number
-  constructor(position: number, duration: number, rate: number)
-}
 export declare class NodePlayer {
   constructor()
   setStatus(status: PlayerStatus): void

@@ -37,8 +37,8 @@ impl NodePlayerImpl {
         self.emit(PlayerEvent::StatusChanged(status))
     }
 
-    fn set_timeline(&self, timeline: Option<&TimelineInfo>) -> napi::Result<()> {
-        let timeline: Option<FsctTimelineInfo> = timeline.map(|v| (*v).into()).to_owned();
+    fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
+        let timeline: Option<FsctTimelineInfo> = timeline.map(|v| v.into());
         self.current_state.lock().unwrap().timeline = timeline.clone();
 
         self.emit(PlayerEvent::TimelineChanged(timeline))
@@ -95,7 +95,7 @@ impl NodePlayer {
     }
 
     #[napi]
-    pub fn set_timeline(&self, timeline: Option<&TimelineInfo>) -> napi::Result<()> {
+    pub fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
         self.player_impl.set_timeline(timeline)
     }
 

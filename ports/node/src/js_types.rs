@@ -1,6 +1,6 @@
-use std::time::SystemTime;
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
 pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
+use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
+use std::time::SystemTime;
 
 #[napi(string_enum)]
 pub enum PlayerStatus {
@@ -9,7 +9,7 @@ pub enum PlayerStatus {
     /// Playback is in progress.
     Playing,
     /// Playback is temporarily halted but can be resumed.
-    Paused ,
+    Paused,
     /// The playback position is being adjusted, either forward or backward.
     Seeking,
     /// Playback is momentarily halted due to data loading or network conditions.
@@ -17,7 +17,7 @@ pub enum PlayerStatus {
     /// An issue occurred, and playback cannot proceed.
     Error,
     /// The playback state could not be determined or is undefined.
-    Unknown
+    Unknown,
 }
 
 impl From<PlayerStatus> for FsctStatus {
@@ -34,12 +34,12 @@ impl From<PlayerStatus> for FsctStatus {
     }
 }
 
-#[napi(constructor)]
+#[napi(object)]
 #[derive(Debug, Clone, PartialEq, Copy, Default)]
 pub struct TimelineInfo {
     pub position: f64,
     pub duration: f64,
-    pub rate: f64
+    pub rate: f64,
 }
 
 impl From<TimelineInfo> for FsctTimelineInfo {
@@ -48,7 +48,7 @@ impl From<TimelineInfo> for FsctTimelineInfo {
             position: value.position,
             duration: value.duration,
             update_time: SystemTime::now(),
-            rate: value.rate as f32
+            rate: value.rate as f32,
         }
     }
 }
