@@ -1,5 +1,5 @@
 {
-  "name": "fsct-node-lib-linux-arm64-musl",
+  "name": "fsct-node-lib-linux-arm64-gnu",
   "version": "0.0.0",
   "os": [
     "linux"
@@ -7,15 +7,15 @@
   "cpu": [
     "arm64"
   ],
-  "main": "fsct-node-lib.linux-arm64-musl.node",
+  "main": "fsct-node-lib.linux-arm64-gnu.node",
   "files": [
-    "fsct-node-lib.linux-arm64-musl.node"
+    "fsct-node-lib.linux-arm64-gnu.node"
   ],
   "license": "MIT",
   "engines": {
     "node": ">= 10"
   },
   "libc": [
-    "musl"
+    "glibc"
   ]
 }

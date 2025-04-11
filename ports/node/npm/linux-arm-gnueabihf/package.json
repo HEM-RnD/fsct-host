@@ -1,5 +1,5 @@
 {
-  "name": "fsct-node-lib-linux-arm-musleabihf",
+  "name": "fsct-node-lib-linux-arm-gnueabihf",
   "version": "0.0.0",
   "os": [
     "linux"
@@ -7,9 +7,9 @@
   "cpu": [
     "arm"
   ],
-  "main": "fsct-node-lib.linux-arm-musleabihf.node",
+  "main": "fsct-node-lib.linux-arm-gnueabihf.node",
   "files": [
-    "fsct-node-lib.linux-arm-musleabihf.node"
+    "fsct-node-lib.linux-arm-gnueabihf.node"
   ],
   "license": "MIT",
   "engines": {
