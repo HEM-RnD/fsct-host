@@ -8,14 +8,10 @@
     "triples": {
       "defaults": false,
       "additional": [
-        "aarch64-apple-darwin",
         "aarch64-unknown-linux-gnu",
-        "armv7-unknown-linux-gnueabihf",
         "arm-uknown-linux-gnueabihf",
-        "x86_64-apple-darwin",
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "universal-apple-darwin"
+        "armv7-uknown-linux-gnueabihf",
+        "x86_64-unknown-linux-gnu"
       ]
     }
   },
@@ -38,5 +34,10 @@
     "test": "ava",
     "universal": "napi universal",
     "version": "napi version"
+  },
+  "optionalDependencies": {
+    "fsct-node-lib-linux-arm64-gnu": "0.0.0",
+    "fsct-node-lib-linux-arm-gnueabihf": "0.0.0",
+    "fsct-node-lib-linux-x64-gnu": "0.0.0"
   }
 }
