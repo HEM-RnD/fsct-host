@@ -38,7 +38,7 @@ export declare class TimelineInfo {
 }
 export declare class NodePlayer {
   constructor()
-  setStatus(status: PlayerStatus): Promise<void>
-  setTimeline(timeline?: TimelineInfo | undefined | null): Promise<void>
-  setText(textType: CurrentTextMetadata, text?: string | undefined | null): Promise<void>
+  setStatus(status: PlayerStatus): void
+  setTimeline(timeline?: TimelineInfo | undefined | null): void
+  setText(textType: CurrentTextMetadata, text?: string | undefined | null): void
 }

@@ -1,11 +1,13 @@
-use async_trait::async_trait;
-use log::{error, info};
-use futures::channel::mpsc::{SendError, Sender};
-use std::time::Duration;
-use std::sync::{Arc, Mutex};
-use futures::{SinkExt, StreamExt};
 use crate::definitions::FsctTextMetadata;
-use crate::player::{Player, PlayerError, PlayerEvent, PlayerEventsStream, PlayerInterface, PlayerState};
+use crate::player::{
+    Player, PlayerError, PlayerEvent, PlayerEventReceiveError, PlayerEventsReceiver,
+    PlayerEventsSender, PlayerInterface, PlayerState, create_player_events_channel,
+};
+use async_trait::async_trait;
+
+use log::{error, info, warn};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[async_trait]
 pub trait PlayerEventListener: Send + Sync + 'static {
@@ -25,66 +27,64 @@ impl NoopPlayerEventListener {
     }
 }
 
-
 // player watch
-async fn update_current_status(new_state: &PlayerState, current_state: &mut PlayerState, tx: &mut
-Sender<PlayerEvent>) -> Result<(), SendError> {
+fn update_current_status(
+    new_state: &PlayerState,
+    current_state: &mut PlayerState,
+    tx: &PlayerEventsSender,
+) {
     if new_state.status != current_state.status {
         current_state.status = new_state.status;
-        tx.send(PlayerEvent::StatusChanged(new_state.status.clone())).await?;
+        tx.send(PlayerEvent::StatusChanged(new_state.status.clone()))
+            .unwrap_or_default();
     }
-    Ok(())
 }
 
-async fn update_timeline(new_state: &PlayerState,
-                         current_state: &mut PlayerState,
-                         tx: &mut Sender<PlayerEvent>) -> Result<(), SendError> {
+fn update_timeline(
+    new_state: &PlayerState,
+    current_state: &mut PlayerState,
+    tx: &PlayerEventsSender,
+) {
     if new_state.timeline != current_state.timeline {
         current_state.timeline = new_state.timeline.clone();
-        tx.send(PlayerEvent::TimelineChanged(new_state.timeline.clone())).await?;
+        tx.send(PlayerEvent::TimelineChanged(new_state.timeline.clone()))
+            .unwrap_or_default();
     }
-    Ok(())
 }
 
-async fn update_text(text_id: FsctTextMetadata,
-                     new_state: &PlayerState,
-                     current_state: &mut PlayerState,
-                     tx: &mut Sender<PlayerEvent>) -> Result<(), SendError>
-{
+fn update_text(
+    text_id: FsctTextMetadata,
+    new_state: &PlayerState,
+    current_state: &mut PlayerState,
+    tx: &PlayerEventsSender,
+) {
     let new_text = new_state.texts.get_text(text_id);
     let current_text = current_state.texts.get_mut_text(text_id);
     if new_text != current_text {
         *current_text = new_text.clone();
-        tx.send(PlayerEvent::TextChanged((text_id, new_text.clone()))).await?;
+        tx.send(PlayerEvent::TextChanged((text_id, new_text.clone())))
+            .unwrap_or_default();
     }
-    Ok(())
 }
 
-async fn update_texts(new_state: &PlayerState,
-                      current_state: &mut PlayerState,
-                      tx: &mut Sender<PlayerEvent>) -> Result<(), SendError> {
-    update_text(FsctTextMetadata::CurrentTitle, new_state, current_state, tx).await?;
-    update_text(FsctTextMetadata::CurrentAuthor, new_state, current_state, tx).await?;
-    update_text(FsctTextMetadata::CurrentAlbum, new_state, current_state, tx).await?;
-    update_text(FsctTextMetadata::CurrentGenre, new_state, current_state, tx).await?;
-    update_text(FsctTextMetadata::CurrentYear, new_state, current_state, tx).await?;
-
-    Ok(())
+fn update_texts(new_state: &PlayerState, current_state: &mut PlayerState, tx: &PlayerEventsSender) {
+    current_state.texts.iter_id().for_each(|text_id| {
+        update_text(*text_id, new_state, current_state, tx);
+    });
 }
 
-async fn update_current_metadata(new_state: &PlayerState,
-                                 current_state: &mut PlayerState,
-                                 tx: &mut Sender<PlayerEvent>) -> Result<(), SendError>
-{
-    update_current_status(new_state, current_state, tx).await?;
-    update_timeline(new_state, current_state, tx).await?;
-    update_texts(new_state, current_state, tx).await?;
-    Ok(())
+fn update_current_metadata(
+    new_state: &PlayerState,
+    current_state: &mut PlayerState,
+    tx: &PlayerEventsSender,
+) {
+    update_current_status(new_state, current_state, tx);
+    update_timeline(new_state, current_state, tx);
+    update_texts(new_state, current_state, tx);
 }
 
-fn create_polling_metadata_watch(player: Player) -> PlayerEventsStream
-{
-    let (mut tx, rx) = futures::channel::mpsc::channel(30);
+fn create_polling_metadata_watch(player: Player) -> PlayerEventsReceiver {
+    let (mut tx, rx) = create_player_events_channel();
     tokio::spawn(async move {
         let mut current_metadata = PlayerState::default();
         let mut get_current_state_failure_logged = false;
@@ -107,12 +107,7 @@ fn create_polling_metadata_watch(player: Player) -> PlayerEventsStream
                 }
             };
 
-            if let Err(e) = update_current_metadata(&state, &mut current_metadata, &mut tx).await {
-                if e.is_disconnected() {
-                    break;
-                }
-                error!("Failed to send changes to channel: {}", e);
-            }
+            update_current_metadata(&state, &mut current_metadata, &mut tx);
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });
@@ -147,10 +142,11 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
     false
 }
 
-async fn process_player_event(event: PlayerEvent, player_event_listener: &impl PlayerEventListener,
-                              current_metadata:
-                              &Arc<Mutex<PlayerState>>)
-{
+async fn process_player_event(
+    event: PlayerEvent,
+    player_event_listener: &impl PlayerEventListener,
+    current_metadata: &Arc<Mutex<PlayerState>>,
+) {
     let has_changed = update_current_state_on_event(&event, &mut current_metadata.lock().unwrap());
     if !has_changed {
         return;
@@ -159,24 +155,54 @@ async fn process_player_event(event: PlayerEvent, player_event_listener: &impl P
     player_event_listener.on_event(event).await;
 }
 
-async fn get_playback_notification_stream(player: Player) -> Result<PlayerEventsStream, PlayerError>
-{
+async fn get_playback_notification_stream(
+    player: Player,
+) -> Result<PlayerEventsReceiver, PlayerError> {
     match player.listen_to_player_notifications().await {
-        Ok(listener) => Ok(listener),
-        Err(PlayerError::FeatureNotSupported) => Ok(create_polling_metadata_watch(player)),
+        Ok(listener) => {
+            println!("Player supports notification stream, Using it");
+            Ok(listener)
+        }
+        Err(PlayerError::FeatureNotSupported) => {
+            println!(
+                "Player doesn't support notification stream, Using polling metadata watch fallback"
+            );
+            Ok(create_polling_metadata_watch(player))
+        }
         Err(e) => Err(e),
     }
 }
 
-pub async fn run_player_watch(player: Player,
-                              player_event_listener: impl PlayerEventListener,
-                              player_state: Arc<Mutex<PlayerState>>)
-    -> Result<(), String>
-{
-    let mut playback_notifications_stream = get_playback_notification_stream(player).await.map_err(|e| e.to_string())?;
+pub async fn run_player_watch(
+    player: Player,
+    player_event_listener: impl PlayerEventListener,
+    player_state: Arc<Mutex<PlayerState>>,
+) -> Result<(), String> {
+    let mut playback_notifications_stream = get_playback_notification_stream(player)
+        .await
+        .map_err(|e| e.to_string())?;
     tokio::spawn(async move {
-        while let Some(event) = playback_notifications_stream.next().await {
-            process_player_event(event, &player_event_listener, &player_state).await;
+        loop {
+            let event = playback_notifications_stream.recv().await;
+            match event {
+                Ok(event) => {
+                    process_player_event(event, &player_event_listener, &player_state).await
+                }
+                Err(e) => match e {
+                    PlayerEventReceiveError::Closed => {
+                        info!("Playback notifications stream closed");
+                        break;
+                    }
+                    PlayerEventReceiveError::Lagged(number) => {
+                        warn!(
+                            "Playback notifications stream lagged {} event{}.",
+                            number,
+                            if number == 1 { "" } else { "s" }
+                        );
+                        break;
+                    }
+                },
+            }
         }
     });
     Ok(())

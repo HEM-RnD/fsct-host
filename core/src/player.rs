@@ -1,8 +1,9 @@
-use std::fmt;
-use async_trait::async_trait;
-use std::sync::Arc;
-use crate::definitions::*;
 use crate::definitions::FsctStatus;
+use crate::definitions::*;
+use async_trait::async_trait;
+use std::fmt;
+use std::slice::Iter;
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum PlayerError {
@@ -22,44 +23,33 @@ impl fmt::Display for PlayerError {
 }
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct TrackMetadata {
-    pub title: Option<String>, //CurrentTitle
+    pub title: Option<String>,  //CurrentTitle
     pub artist: Option<String>, //CurrentAuthor
-    pub album: Option<String>, //CurrentAlbum
-    pub genre: Option<String>, //CurrentGenre
-    pub year: Option<String>, //CurrentYear
+    pub album: Option<String>,  //CurrentAlbum
+    pub genre: Option<String>,  //CurrentGenre
+    pub year: Option<String>,   //CurrentYear
 }
+
+const TRACK_METADATA_IDS: [FsctTextMetadata; 5] = [
+    FsctTextMetadata::CurrentTitle,
+    FsctTextMetadata::CurrentAuthor,
+    FsctTextMetadata::CurrentAlbum,
+    FsctTextMetadata::CurrentGenre,
+    FsctTextMetadata::CurrentYear,
+];
 
 pub struct TrackMetadataIterator<'a> {
     metadata: &'a TrackMetadata,
-    fsct_text_metadata: FsctTextMetadata,
+    id_iterator: Iter<'static, FsctTextMetadata>,
 }
 
 impl<'a> Iterator for TrackMetadataIterator<'a> {
     type Item = (FsctTextMetadata, &'a Option<String>);
     fn next(&mut self) -> Option<(FsctTextMetadata, &'a Option<String>)> {
-        match self.fsct_text_metadata {
-            FsctTextMetadata::CurrentTitle => {
-                self.fsct_text_metadata = FsctTextMetadata::CurrentAuthor;
-                Some((FsctTextMetadata::CurrentTitle, &self.metadata.title))
-            }
-            FsctTextMetadata::CurrentAuthor => {
-                self.fsct_text_metadata = FsctTextMetadata::CurrentAlbum;
-                Some((FsctTextMetadata::CurrentAuthor, &self.metadata.artist))
-            }
-            FsctTextMetadata::CurrentAlbum => {
-                self.fsct_text_metadata = FsctTextMetadata::CurrentGenre;
-                Some((FsctTextMetadata::CurrentAlbum, &self.metadata.album))
-            }
-            FsctTextMetadata::CurrentGenre => {
-                self.fsct_text_metadata = FsctTextMetadata::CurrentYear;
-                Some((FsctTextMetadata::CurrentGenre, &self.metadata.genre))
-            }
-            FsctTextMetadata::CurrentYear => {
-                self.fsct_text_metadata = FsctTextMetadata::CurrentTrack; // unused, so causes None in next iteration
-                Some((FsctTextMetadata::CurrentYear, &self.metadata.year))
-            }
-            _ => None,
+        if let Some(id) = self.id_iterator.next() {
+            return Some((*id, self.metadata.get_text(*id)));
         }
+        None
     }
 }
 
@@ -88,8 +78,12 @@ impl TrackMetadata {
     pub fn iter(&self) -> TrackMetadataIterator {
         TrackMetadataIterator {
             metadata: self,
-            fsct_text_metadata: FsctTextMetadata::CurrentTitle,
+            id_iterator: TRACK_METADATA_IDS.iter(),
         }
+    }
+
+    pub fn iter_id(&self) -> Iter<'static, FsctTextMetadata> {
+        TRACK_METADATA_IDS.iter()
     }
 }
 
@@ -107,36 +101,40 @@ pub enum PlayerEvent {
     TimelineChanged(Option<TimelineInfo>),
 }
 
-pub type PlayerEventsStream = futures::channel::mpsc::Receiver<PlayerEvent>;
+pub type PlayerEventsReceiver = tokio::sync::broadcast::Receiver<PlayerEvent>;
+pub type PlayerEventsSender = tokio::sync::broadcast::Sender<PlayerEvent>;
+
+pub type PlayerEventReceiveError = tokio::sync::broadcast::error::RecvError;
+pub type PlayerEventSendError = tokio::sync::broadcast::error::SendError<PlayerEvent>;
+
+const DEFAULT_CAPACITY: usize = 30;
+
+pub fn create_player_events_channel() -> (PlayerEventsSender, PlayerEventsReceiver) {
+    tokio::sync::broadcast::channel(DEFAULT_CAPACITY)
+}
 
 #[async_trait]
 pub trait PlayerInterface: Send + Sync {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError>
-    {
+    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
-    async fn play(&self) -> Result<(), PlayerError>
-    {
+    async fn play(&self) -> Result<(), PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
-    async fn pause(&self) -> Result<(), PlayerError>
-    {
+    async fn pause(&self) -> Result<(), PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
-    async fn stop(&self) -> Result<(), PlayerError>
-    {
+    async fn stop(&self) -> Result<(), PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
-    async fn next_track(&self) -> Result<(), PlayerError>
-    {
+    async fn next_track(&self) -> Result<(), PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
-    async fn previous_track(&self) -> Result<(), PlayerError>
-    {
+    async fn previous_track(&self) -> Result<(), PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
 
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsStream, PlayerError> {
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
         Err(PlayerError::FeatureNotSupported)
     }
 }
@@ -148,7 +146,9 @@ pub struct Player {
 
 impl Player {
     pub fn new<T: PlayerInterface + Sync + Send + 'static>(player_impl: T) -> Self {
-        Self { player_impl: Arc::new(player_impl) }
+        Self {
+            player_impl: Arc::new(player_impl),
+        }
     }
 
     pub fn from_arc(player_impl: Arc<dyn PlayerInterface + Sync + Send>) -> Self {
@@ -177,7 +177,7 @@ impl PlayerInterface for Player {
         self.player_impl.previous_track().await
     }
 
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsStream, PlayerError> {
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
         self.player_impl.listen_to_player_notifications().await
     }
 }
