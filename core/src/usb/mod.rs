@@ -7,6 +7,22 @@ mod fsct_usb_interface;
 pub mod fsct_device;
 pub mod requests;
 
+const FSCT_SUPPORTED_PROTOCOL_VERSION: u8 = 0x01;
+
+fn check_fsct_interface_protocol(device_info: &DeviceInfo, fsct_interface_number: u8) -> Result<(), String> {
+    let protocol = device_info
+        .interfaces()
+        .find(|i| i.interface_number() == fsct_interface_number)
+        .map(|v| v.protocol());
+
+    if protocol == Some(FSCT_SUPPORTED_PROTOCOL_VERSION) {
+        Ok(())
+    } else {
+        Err(String::from("Not supported protocol version of FSCT interface"))
+    }
+}
+
+
 pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> Result<nusb::Interface, String>
 {
     let device = device_info.open().map_err(
@@ -26,6 +42,7 @@ pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Resul
     let fsct_interface_number = descriptor_utils::find_fsct_interface_number(device_info, fsct_vendor_subclass_number).ok_or_else(
         || String::from("No FSCT interface found")
     )?;
+    check_fsct_interface_protocol(device_info, fsct_interface_number)?;
     let interface = open_interface(&device_info, fsct_interface_number).await?;
     let fsct_descriptors = descriptor_utils::get_fsct_functionality_descriptor_set(&interface).await?;
     let fsct_interface = fsct_usb_interface::FsctUsbInterface::new(interface);
