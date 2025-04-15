@@ -36,7 +36,7 @@ fn update_current_status(
     if new_state.status != current_state.status {
         current_state.status = new_state.status;
         tx.send(PlayerEvent::StatusChanged(new_state.status.clone()))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -48,7 +48,7 @@ fn update_timeline(
     if new_state.timeline != current_state.timeline {
         current_state.timeline = new_state.timeline.clone();
         tx.send(PlayerEvent::TimelineChanged(new_state.timeline.clone()))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -63,7 +63,7 @@ fn update_text(
     if new_text != current_text {
         *current_text = new_text.clone();
         tx.send(PlayerEvent::TextChanged((text_id, new_text.clone())))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -87,23 +87,23 @@ fn create_polling_metadata_watch(player: Player) -> PlayerEventsReceiver {
     let (mut tx, rx) = create_player_events_channel();
     tokio::spawn(async move {
         let mut current_metadata = PlayerState::default();
-        let mut get_current_state_failure_logged = false;
+        let mut last_get_current_state_failed = false;
         loop {
             let state = player.get_current_state().await;
             let state = match state {
                 Ok(state) => {
-                    if get_current_state_failure_logged {
-                        get_current_state_failure_logged = false;
+                    if last_get_current_state_failed {
+                        last_get_current_state_failed = false;
                         info!("Got state after several failures.");
                     }
                     state
                 }
                 Err(e) => {
-                    if !get_current_state_failure_logged {
-                        get_current_state_failure_logged = true;
+                    if !last_get_current_state_failed {
+                        last_get_current_state_failed = true;
                         error!("Failed to get state: {}", e);
                     }
-                    continue;
+                    PlayerState::default()
                 }
             };
 
