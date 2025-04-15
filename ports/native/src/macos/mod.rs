@@ -5,7 +5,7 @@ use fsct_core::player::{PlayerError, PlayerInterface, PlayerState, TrackMetadata
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 mod media_remote;
 
@@ -17,8 +17,7 @@ pub struct MacOSPlaybackManager {
 
 impl MacOSPlaybackManager {
     pub fn new() -> Result<Self, PlayerError> {
-        let media_remote =
-            Arc::new(MediaRemoteFramework::load().map_err(|e| PlayerError::UnknownError(e))?);
+        let media_remote = Arc::new(MediaRemoteFramework::load().map_err(|e| PlayerError::UnknownError(e))?);
         Ok(MacOSPlaybackManager { media_remote })
     }
 }
@@ -34,21 +33,15 @@ fn get_text_from_now_playing_info(
 }
 fn get_current_track(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
-    texts.title =
-        get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoTitle");
-    texts.artist =
-        get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoArtist");
-    texts.album =
-        get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoAlbum");
-    texts.genre =
-        get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoGenre");
+    texts.title = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoTitle");
+    texts.artist = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoArtist");
+    texts.album = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoAlbum");
+    texts.genre = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoGenre");
 
     texts
 }
 
-fn get_timeline_info(
-    now_playing_info: &HashMap<String, Box<dyn Any + Send>>,
-) -> Option<TimelineInfo> {
+fn get_timeline_info(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> Option<TimelineInfo> {
     let duration = now_playing_info
         .get("kMRMediaRemoteNowPlayingInfoDuration")
         .and_then(|v| v.downcast_ref::<f64>())
@@ -73,10 +66,10 @@ fn get_timeline_info(
         .unwrap_or(0.0);
 
     Some(TimelineInfo {
-        position,
+        position: Duration::from_secs_f64(position),
         update_time,
-        duration,
-        rate,
+        duration: Duration::from_secs_f64(duration),
+        rate: rate as f64,
     })
 }
 
