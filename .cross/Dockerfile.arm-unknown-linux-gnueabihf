@@ -1,0 +1,19 @@
+FROM debian:buster-slim
+
+LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
+
+RUN apt update && apt install --no-install-recommends -y ca-certificates wget  gcc g++  && rm -rf /var/lib/apt/lists/*
+
+RUN wget -O /tmp/rustup-init.sh  https://sh.rustup.rs && chmod +x /tmp/rustup-init.sh && \
+    /tmp/rustup-init.sh -y --default-toolchain 1.86.0 --profile minimal --target arm-unknown-linux-gnueabihf && rm \
+    tmp/rustup-init.sh
+
+RUN wget -O /tmp/cross-gcc.tar.gz \
+    https://sourceforge.net/projects/raspberry-pi-cross-compilers/files/Raspberry%20Pi%20GCC%20Cross-Compiler%20Toolchains/Buster/GCC%208.3.0/Raspberry%20Pi%201%2C%20Zero/cross-gcc-8.3.0-pi_0-1.tar.gz/download \
+    && mkdir -p /opt/cross-pi-gcc \
+    && tar -xvzf /tmp/cross-gcc.tar.gz -C /opt/cross-pi-gcc \
+    && rm /tmp/cross-gcc.tar.gz
+
+RUN mkdir -p /.cargo
+RUN printf '[target.arm-unknown-linux-gnueabihf]\n\
+          linker = "/opt/cross-pi-gcc/cross-pi-gcc-8.3.0-0/bin/arm-linux-gnueabihf-gcc"' > /.cargo/config.toml
