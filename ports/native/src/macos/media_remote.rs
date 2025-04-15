@@ -2,7 +2,7 @@ use block2::RcBlock;
 use core_foundation_sys::base::TCFTypeRef;
 use core_foundation_sys::string::CFStringRef;
 use core_foundation_sys::{
-    base::{kCFAllocatorDefault, CFRelease},
+    base::{CFRelease, kCFAllocatorDefault},
     bundle::CFBundleCreate,
     bundle::CFBundleRef,
     string::CFStringCreateWithCString,
@@ -10,15 +10,13 @@ use core_foundation_sys::{
 };
 use dispatch2::ffi::dispatch_queue_t;
 use dispatch2::{Queue, QueueAttribute};
-use futures::SinkExt;
 use libc::{c_char, c_void};
+use objc2::Encoding;
 use objc2::rc::Retained;
-use objc2::{Encoding, Message};
 use objc2_foundation::{NSDate, NSDictionary, NSNumber, NSObject, NSString};
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::mem::{transmute};
+use std::mem::transmute;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
@@ -39,14 +37,14 @@ use std::sync::{Arc, Mutex};
 ///         NSLog(@"We got the information: %@", information);
 /// });
 type MRMediaRemoteGetNowPlayingInfoFn =
-unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationPIDFn =
-unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationIsPlayingFn =
-unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 
 type MRMediaRemoteRegisterForNowPlayingNotificationsFn =
-unsafe extern "C" fn(queue: dispatch_queue_t);
+    unsafe extern "C" fn(queue: dispatch_queue_t);
 type MRMediaRemoteUnregisterForNowPlayingNotificationsFn = unsafe extern "C" fn();
 
 pub struct MediaRemoteFramework {
@@ -113,31 +111,17 @@ unsafe impl<T> Sync for Desync<T> {}
 
 unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> Result<*const c_void, String> {
     let fn_name_cfstring = to_cfstring(fn_name)?;
-    let fn_pointer =
-        core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name_cfstring);
+    let fn_pointer = core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(
+        bundle_ref,
+        fn_name_cfstring,
+    );
     CFRelease(fn_name_cfstring.as_void_ptr());
 
     if fn_pointer.is_null() {
-        return Err(
-            format!("Failed to get function `{fn_name}` pointer")
-        );
+        return Err(format!("Failed to get function `{fn_name}` pointer"));
     }
 
     Ok(fn_pointer)
-}
-
-fn to_string(ptr: *const c_void) -> Option<String> {
-    let ns_obj = unsafe { Retained::from_raw(ptr as *mut NSObject) };
-    if let Some(ns_obj) = ns_obj {
-        println!("Type: {:?}", ns_obj);
-        if let Some(str) = ns_obj.downcast::<NSString>().ok() {
-            Some(str.to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    }
 }
 
 impl MediaRemoteFramework {
@@ -192,7 +176,7 @@ impl MediaRemoteFramework {
         let queue = Desync(unsafe { self.queue.as_raw() });
 
         let queue = queue;
-        let (mut tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
         {
             let block =
@@ -221,11 +205,11 @@ impl MediaRemoteFramework {
             self.get_now_playing_application_is_playing_fn.clone();
         let queue = Desync(unsafe { self.queue.as_raw() });
         let queue = queue;
-        let (mut tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
         {
             let block = block2::RcBlock::new(move |is_playing: c_char| {
-                let is_playing = unsafe { is_playing != 0 };
+                let is_playing = is_playing != 0;
                 let tx = tx.lock().unwrap().take();
                 if let Some(tx) = tx {
                     tx.send(is_playing).unwrap();
@@ -286,7 +270,7 @@ fn to_any(obj: Retained<NSObject>) -> Box<dyn Any + Send> {
             return Box::new(
                 std::time::SystemTime::UNIX_EPOCH
                     + core::time::Duration::from_secs_f64(unsafe { obj.timeIntervalSince1970() }),
-            )
+            );
         }
 
         Err(obj) => obj,
