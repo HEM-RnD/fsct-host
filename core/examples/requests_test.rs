@@ -36,8 +36,8 @@ async fn main() -> Result<(), String> {
 
         fsct_device.set_progress(Some(TimelineInfo {
             update_time: std::time::SystemTime::now() - Duration::from_secs(60),
-            position: 60f64,
-            duration: 186f64,
+            position: Duration::from_secs(60),
+            duration: Duration::from_secs(186),
             rate: 1.0,
         })).await?;
         println!(
@@ -55,8 +55,8 @@ async fn main() -> Result<(), String> {
 
         fsct_device.set_progress(Some(TimelineInfo {
             update_time: std::time::SystemTime::now(),
-            position: 120f64 + sleep.as_secs_f64(),
-            duration: 186f64,
+            position: Duration::from_secs(120) + sleep,
+            duration: Duration::from_secs(186),
             rate: 0.0,
         })).await?;
         fsct_device.set_status(FsctStatus::Paused).await?;

@@ -1,3 +1,4 @@
+use std::time::Duration;
 use async_trait::async_trait;
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player::{PlayerError, PlayerInterface, TrackMetadata};
@@ -49,10 +50,10 @@ fn get_timeline_info(state: &serde_json::Value) -> Option<TimelineInfo> {
     let status = state["status"].as_str().unwrap_or("stop");
     let rate = if status == "play" { 1.0 } else { 0.0 };
     Some(TimelineInfo {
-        position: position as f64 / 1000.0,
+        position: Duration::from_millis(position),
         update_time: std::time::SystemTime::now(),
-        duration: duration as f64,
-        rate: rate as f32,
+        duration: Duration::from_secs(duration),
+        rate,
     })
 }
 
