@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use crate::definitions::TimelineInfo;
 use crate::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use crate::usb::descriptor_utils::FsctDescriptorSet;
 use crate::usb::fsct_usb_interface;
+use crate::usb::fsct_usb_interface::FsctUsbInterface;
 use crate::usb::requests::TrackProgressRequestData;
 
 
@@ -12,31 +13,38 @@ struct SupportedMetadata {
     pub max_length: usize,
 }
 
-pub struct FsctDevice {
-    fsct_interface: Arc<fsct_usb_interface::FsctUsbInterface>,
+struct FsctDeviceSharedState {
     time_diff: Option<std::time::Duration>,
     fsct_text_encoding: FsctTextEncoding,
     supported_current_texts: Vec<SupportedMetadata>,
     supported_functionalities: FsctFunctionality,
+}
+pub struct FsctDevice {
+    fsct_interface: Arc<fsct_usb_interface::FsctUsbInterface>,
     poll_task_handle: Option<tokio::task::JoinHandle<()>>,
+    time_sync_handle: Option<tokio::task::JoinHandle<()>>,
+    state: Arc<Mutex<FsctDeviceSharedState>>,
 }
 
 impl FsctDevice {
     pub(super) fn new(fsct_interface: fsct_usb_interface::FsctUsbInterface) -> Self {
         let fsct_device = Self {
             fsct_interface: Arc::new(fsct_interface),
-            time_diff: None,
-            fsct_text_encoding: FsctTextEncoding::Utf8,
-            supported_current_texts: Vec::new(),
-            supported_functionalities: FsctFunctionality::empty(),
             poll_task_handle: None,
+            time_sync_handle: None,
+            state: Arc::new(Mutex::new(FsctDeviceSharedState {
+                time_diff: None,
+                fsct_text_encoding: FsctTextEncoding::Utf8,
+                supported_current_texts: Vec::new(),
+                supported_functionalities: FsctFunctionality::empty(),
+            })),
         };
         fsct_device
     }
 
     pub(super) async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), String> {
         self.parse_descriptors(fsct_descriptors);
-        if self.supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+        if self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             self.synchronize_time().await?;
         }
         self.fsct_interface.set_enable(true).await?;
@@ -51,18 +59,30 @@ impl FsctDevice {
             }
         }));
 
+        let state = self.state.clone();
+        let fsct_interface = self.fsct_interface.clone();
+        self.time_sync_handle = Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60 * 10)).await;
+                Self::synchronize_time_impl(state.clone(), fsct_interface.clone()).await.unwrap_or_else(|e|
+                    log::error!("Failed to synchronize time: {}", e)
+                )
+            }
+        }));
+
         Ok(())
     }
     fn parse_descriptors(&mut self, fsct_descriptor_set: &[FsctDescriptorSet]) {
         for descriptor in fsct_descriptor_set {
+            let mut state = self.state.lock().unwrap();
             match descriptor {
                 FsctDescriptorSet::Functionality(functionality_descriptor) => {
-                    self.supported_functionalities = functionality_descriptor.bmFunctionality;
+                    state.supported_functionalities = functionality_descriptor.bmFunctionality;
                 }
                 FsctDescriptorSet::TextMetadata(text_metadata_descriptor) => {
-                    self.fsct_text_encoding = text_metadata_descriptor.bSystemTextCoding;
+                    state.fsct_text_encoding = text_metadata_descriptor.bSystemTextCoding;
                     for metadata_part in &text_metadata_descriptor.aMetadata {
-                        self.supported_current_texts.push(SupportedMetadata {
+                        state.supported_current_texts.push(SupportedMetadata {
                             metadata: metadata_part.bMetadata,
                             max_length: metadata_part.wMaxLength as usize,
                         });
@@ -74,15 +94,22 @@ impl FsctDevice {
     }
 
     pub fn time_diff(&self) -> Option<std::time::Duration> {
-        self.time_diff
+        self.state.lock().unwrap().time_diff
     }
 
     async fn synchronize_time(&mut self) -> Result<(), String> {
-        if !self.supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+        let state = self.state.clone();
+        let fsct_interface = self.fsct_interface.clone();
+
+        Self::synchronize_time_impl(state, fsct_interface).await
+    }
+
+    async fn synchronize_time_impl(state: Arc<Mutex<FsctDeviceSharedState>>, fsct_interface: Arc<FsctUsbInterface>) -> Result<(), String> {
+        if !state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             return Err("Device does not support current playback progress, so it can't synchronize time".to_string());
         }
         let before = std::time::SystemTime::now();
-        let timestamp_in_millis = self.fsct_interface.get_device_timestamp().await?;
+        let timestamp_in_millis = fsct_interface.get_device_timestamp().await?;
         let after = std::time::SystemTime::now();
         let mean_now = ((before.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + after.duration_since
         (std::time::UNIX_EPOCH).unwrap().as_millis()) / 2) as i128;
@@ -93,7 +120,7 @@ impl FsctDevice {
         if time_diff < 0 {
             return Err("Time difference is negative".to_string());
         }
-        self.time_diff = Some(std::time::Duration::from_millis(time_diff as u64));
+        state.lock().unwrap().time_diff = Some(std::time::Duration::from_millis(time_diff as u64));
         Ok(())
     }
 
@@ -106,10 +133,10 @@ impl FsctDevice {
 
     pub async fn set_progress(&self, progress: Option<TimelineInfo>) -> Result<(), String>
     {
-        if !self.supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+        if !self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             return Ok(()); // not supported, omitting
         }
-        let time_diff = self.time_diff.ok_or("Time is not synchronized")?;
+        let time_diff = self.state.lock().unwrap().time_diff.ok_or("Time is not synchronized")?;
         match progress {
             None => self.fsct_interface.disable_track_progress().await,
             Some(progress) => {
@@ -137,7 +164,7 @@ impl FsctDevice {
     pub async fn set_current_text(&self, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), String>
     {
         let supported_metadata =
-            self.supported_current_texts.iter().find(|metadata| metadata.metadata == text_id).copied();
+            self.state.lock().unwrap().supported_current_texts.iter().find(|metadata| metadata.metadata == text_id).copied();
         if supported_metadata.is_none() {
             return Ok(());
         }
@@ -146,7 +173,7 @@ impl FsctDevice {
         match text {
             None => self.fsct_interface.disable_current_text(text_id).await,
             Some(text) => {
-                let data_text = to_usb_encoded_text(self.fsct_text_encoding, text, supported_metadata.max_length);
+                let data_text = to_usb_encoded_text(self.state.lock().unwrap().fsct_text_encoding, text, supported_metadata.max_length);
                 self.fsct_interface.send_current_text(text_id, data_text.as_slice()).await
             }
         }
@@ -162,6 +189,10 @@ impl Drop for FsctDevice {
     fn drop(&mut self) {
         if let Some(handle) = self.poll_task_handle.take() {
             log::info!("Stopping FSCT device polling task");
+            handle.abort();
+        }
+        if let Some(handle) = self.time_sync_handle.take() {
+            log::info!("Stopping FSCT device time synchronization task");
             handle.abort();
         }
     }
