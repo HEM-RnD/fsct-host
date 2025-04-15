@@ -1,6 +1,6 @@
 pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[napi(string_enum)]
 pub enum PlayerStatus {
@@ -37,18 +37,21 @@ impl From<PlayerStatus> for FsctStatus {
 #[napi(object)]
 #[derive(Debug, Clone, PartialEq, Copy, Default)]
 pub struct TimelineInfo {
+    /// Position in seconds from track start
     pub position: f64,
+    /// Track duration in seconds
     pub duration: f64,
+    /// Playback speed rate. Use 1.0
     pub rate: f64,
 }
 
 impl From<TimelineInfo> for FsctTimelineInfo {
     fn from(value: TimelineInfo) -> Self {
         FsctTimelineInfo {
-            position: value.position,
-            duration: value.duration,
+            position: Duration::from_secs_f64(value.position),
+            duration: Duration::from_secs_f64(value.duration),
             update_time: SystemTime::now(),
-            rate: value.rate as f32,
+            rate: value.rate,
         }
     }
 }
