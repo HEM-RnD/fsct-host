@@ -1,6 +1,6 @@
-use uuid::Uuid;
 use nusb::DeviceInfo;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[repr(packed)]
 #[derive(Debug, Copy, Clone)]
@@ -61,31 +61,56 @@ struct PlatformCapability {
 
 fn decode_bos_descriptor(data: &[u8]) -> Result<BosDescriptor, String> {
     if data.len() < std::mem::size_of::<BosDescriptor>() {
-        return Err(format!("Data too short to parse BosDescriptor, expected at least {} bytes, got {} bytes", std::mem::size_of::<BosDescriptor>(), data.len()));
+        return Err(format!(
+            "Data too short to parse BosDescriptor, expected at least {} bytes, got {} bytes",
+            std::mem::size_of::<BosDescriptor>(),
+            data.len()
+        ));
     }
-    let descriptor: BosDescriptor = unsafe { *std::mem::transmute::<*const u8, &BosDescriptor>(data.as_ptr()) };
+    let descriptor: BosDescriptor =
+        unsafe { *std::mem::transmute::<*const u8, &BosDescriptor>(data.as_ptr()) };
     if descriptor.bDescriptorType != 0x0F {
-        return Err(format!("Expected BOS descriptor type 0x0F, got 0x{:02X}", descriptor.bDescriptorType));
+        return Err(format!(
+            "Expected BOS descriptor type 0x0F, got 0x{:02X}",
+            descriptor.bDescriptorType
+        ));
     }
     Ok(descriptor)
 }
 
 fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData, String> {
     if data.len() < std::mem::size_of::<BosCapabilityDescriptor>() {
-        return Err(format!("Data too short to parse BosCapabilityDescriptor, expected at least {} bytes, got {} bytes", std::mem::size_of::<BosCapabilityDescriptor>(), data.len()));
+        return Err(format!(
+            "Data too short to parse BosCapabilityDescriptor, expected at least {} bytes, got {} bytes",
+            std::mem::size_of::<BosCapabilityDescriptor>(),
+            data.len()
+        ));
     }
-    let capability_desc: BosCapabilityDescriptor = unsafe { *std::mem::transmute::<*const u8, &BosCapabilityDescriptor>(data.as_ptr()) };
+    let capability_desc: BosCapabilityDescriptor =
+        unsafe { *std::mem::transmute::<*const u8, &BosCapabilityDescriptor>(data.as_ptr()) };
     if capability_desc.bLength as usize > data.len() {
-        return Err(format!("Data too short to parse BosCapabilityDescriptor with length {}, expected at least {} bytes, got {} bytes", capability_desc.bLength, capability_desc.bLength, data.len()));
+        return Err(format!(
+            "Data too short to parse BosCapabilityDescriptor with length {}, expected at least {} bytes, got {} bytes",
+            capability_desc.bLength,
+            capability_desc.bLength,
+            data.len()
+        ));
     }
     if capability_desc.bDescriptorType != 0x10 {
-        return Err(format!("Expected BosCapabilityDescriptor type 0x10, got 0x{:02X}", capability_desc.bDescriptorType));
+        return Err(format!(
+            "Expected BosCapabilityDescriptor type 0x10, got 0x{:02X}",
+            capability_desc.bDescriptorType
+        ));
     }
-    let data = &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)];
+    let data =
+        &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)];
     if capability_desc.bDevCapabilityType == 0 || capability_desc.bDevCapabilityType > 17 {
-        return Err(format!("Unknown BOS capability type: {}", capability_desc.bDevCapabilityType));
+        return Err(format!(
+            "Unknown BOS capability type: {}",
+            capability_desc.bDevCapabilityType
+        ));
     }
-    let capability = unsafe {std::mem::transmute(capability_desc.bDevCapabilityType)};
+    let capability = unsafe { std::mem::transmute(capability_desc.bDevCapabilityType) };
     Ok(BosCapabilityDescWithData {
         length: capability_desc.bLength as usize,
         capability,
@@ -93,11 +118,17 @@ fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData, Strin
     })
 }
 
-fn decode_bos_descriptor_with_capabilities(data: &[u8]) -> Result<Vec<BosCapabilityDescWithData>, String> {
+fn decode_bos_descriptor_with_capabilities(
+    data: &[u8],
+) -> Result<Vec<BosCapabilityDescWithData>, String> {
     let descriptor = decode_bos_descriptor(data)?;
     let total_length = descriptor.wTotalLength as usize;
     if data.len() < total_length {
-        return Err(format!("Data too short to parse BosDescriptor with capabilities, expected at least {} bytes, got {} bytes", total_length, data.len()));
+        return Err(format!(
+            "Data too short to parse BosDescriptor with capabilities, expected at least {} bytes, got {} bytes",
+            total_length,
+            data.len()
+        ));
     }
     let mut capabilities = Vec::new();
     let mut offset = descriptor.bLength as usize;
@@ -109,20 +140,23 @@ fn decode_bos_descriptor_with_capabilities(data: &[u8]) -> Result<Vec<BosCapabil
     Ok(capabilities)
 }
 
-fn get_platform_capabilities(bos_capabilities: Vec<BosCapabilityDescWithData>) -> Result<Vec<PlatformCapability>, String>
-{
+fn get_platform_capabilities(
+    bos_capabilities: Vec<BosCapabilityDescWithData>,
+) -> Result<Vec<PlatformCapability>, String> {
     let mut capabilities = Vec::new();
     for capability in bos_capabilities {
         match capability.capability {
             BosCapabilityType::Platform => {
-                let uuid_bytes = capability.data[0..16].try_into().map_err(|_| "Platform capability data too short".to_string())?;
+                let uuid_bytes = capability.data[0..16]
+                    .try_into()
+                    .map_err(|_| "Platform capability data too short".to_string())?;
                 let uuid = Uuid::from_bytes_le(uuid_bytes);
                 capabilities.push(PlatformCapability {
                     uuid,
                     data: capability.data[16..].to_vec(),
                 });
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
     Ok(capabilities)
@@ -133,7 +167,7 @@ fn get_platform_capabilities(bos_capabilities: Vec<BosCapabilityDescWithData>) -
 #[derive(Debug, Copy, Clone)]
 struct FSCTCapabilityDesc {
     capabilityDescriptorVersion: u16,
-    vendorSubClassNumber: u8
+    vendorSubClassNumber: u8,
 }
 
 const FSCT_CAPABILITY_DESCRIPTOR_VERSION: u16 = 0x0100;
@@ -146,52 +180,69 @@ struct FSCTCapability {
     version: (u8, u8),
 }
 
-fn get_fsct_capability(platform_capabilities: Vec<PlatformCapability>) -> Result<Option<FSCTCapability>, String> {
+fn get_fsct_capability(
+    platform_capabilities: Vec<PlatformCapability>,
+) -> Result<Option<FSCTCapability>, String> {
     for capability in platform_capabilities {
         if capability.uuid == FSCT_UUID {
             if capability.data.len() < std::mem::size_of::<FSCTCapabilityDesc>() {
                 return Err("FSCT capability data too short".to_string());
             }
-            let fsct_capability: FSCTCapabilityDesc = unsafe { *std::mem::transmute::<*const u8, &FSCTCapabilityDesc>(capability.data.as_ptr()) };
+            let fsct_capability: FSCTCapabilityDesc = unsafe {
+                *std::mem::transmute::<*const u8, &FSCTCapabilityDesc>(capability.data.as_ptr())
+            };
             if fsct_capability.capabilityDescriptorVersion != FSCT_CAPABILITY_DESCRIPTOR_VERSION {
                 let capability_descriptor_version = fsct_capability.capabilityDescriptorVersion;
-                return Err(format!("Expected FSCT capability descriptor version 0x{:04X}, got 0x{:04X}", FSCT_CAPABILITY_DESCRIPTOR_VERSION, capability_descriptor_version));
+                return Err(format!(
+                    "Expected FSCT capability descriptor version 0x{:04X}, got 0x{:04X}",
+                    FSCT_CAPABILITY_DESCRIPTOR_VERSION, capability_descriptor_version
+                ));
             }
             return Ok(Some(FSCTCapability {
                 vendor_sub_class_number: fsct_capability.vendorSubClassNumber,
-                version: ((fsct_capability.capabilityDescriptorVersion >> 8) as u8, fsct_capability.capabilityDescriptorVersion as u8),
+                version: (
+                    (fsct_capability.capabilityDescriptorVersion >> 8) as u8,
+                    fsct_capability.capabilityDescriptorVersion as u8,
+                ),
             }));
         }
     }
     Ok(None)
 }
 
-fn get_fsct_vendor_subclass_number(platform_capabilities: Vec<PlatformCapability>) -> Result<Option<u8>, String> {
+fn get_fsct_vendor_subclass_number(
+    platform_capabilities: Vec<PlatformCapability>,
+) -> Result<Option<u8>, String> {
     match get_fsct_capability(platform_capabilities)? {
         Some(fsct_capability) => Ok(Some(fsct_capability.vendor_sub_class_number)),
         None => Ok(None),
     }
 }
 
-pub fn get_fsct_vendor_subclass_number_from_device(device: &DeviceInfo) -> Result<Option<u8>, String> {
-    //TODO add check if device bcdUSB is > 0x0200, because BOS descriptor is only available in USB 2.01 and later
+pub fn get_fsct_vendor_subclass_number_from_device(
+    device: &DeviceInfo,
+) -> Result<Option<u8>, String> {
+    if device.usb_version() <= 0x0200 {
+        return Ok(None);
+    }
 
-    let handle = device.open().map_err(|e| format!("Failed to open device: {}", e))?;
-    let desc = handle.get_descriptor(
-        15,
-        0,
-        0,
-        Duration::from_secs(1),
-    ).map_err(|e| format!("Failed to get descriptor: {}", e))?;
+    let handle = device
+        .open()
+        .map_err(|e| format!("Failed to open device: {}", e))?;
+    let desc = handle
+        .get_descriptor(15, 0, 0, Duration::from_secs(1))
+        .map_err(|e| format!("Failed to get descriptor: {}", e))?;
     let bos_desc = decode_bos_descriptor_with_capabilities(&desc)?;
     let platform_caps = get_platform_capabilities(bos_desc)?;
     get_fsct_vendor_subclass_number(platform_caps)
 }
 
 pub fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
-    let devices = nusb::list_devices().map_err(|e| format!("Failed to list devices: {}", e)).unwrap();
+    let devices = nusb::list_devices()
+        .map_err(|e| format!("Failed to list devices: {}", e))
+        .unwrap();
     for device in devices {
-        let result =  get_fsct_vendor_subclass_number_from_device(&device);
+        let result = get_fsct_vendor_subclass_number_from_device(&device);
         if result.is_err() {
             continue;
         }

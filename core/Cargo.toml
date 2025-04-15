@@ -6,7 +6,7 @@ authors.workspace = true
 
 [dependencies]
 log = "0.4.25"
-nusb = "0.1.13"
+nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
 uuid = { version = "1.16.0", features = ["v4"] }
 bitflags = "2.8.0"
 futures.workspace = true
