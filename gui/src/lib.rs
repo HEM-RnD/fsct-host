@@ -45,11 +45,14 @@ impl eframe::App for PlayerApp {
                 if let Some(timeline) = &state.timeline {
                     ui.add_space(10.0);
 
-                    let time_diff = timeline.update_time.elapsed().unwrap_or_default().as_secs_f64() * timeline.rate as f64;
+                    let time_diff = std::time::Duration::from_secs_f64(timeline.update_time.elapsed().unwrap_or_default()
+                                                                               .as_secs_f64() *
+                        timeline
+                            .rate);
 
                     let current_pos = timeline.position + time_diff;
 
-                    let progress = current_pos / timeline.duration;
+                    let progress = current_pos.as_secs_f64() / timeline.duration.as_secs_f64();
                     let progress_bar = egui::ProgressBar::new(progress as f32)
                         .show_percentage()
                         .animate(timeline.rate > 0.0);
@@ -57,10 +60,10 @@ impl eframe::App for PlayerApp {
 
                     ui.label(format!(
                         "{:02}:{:02} / {:02}:{:02}",
-                        (current_pos / 60.0) as i32,
-                        (current_pos % 60.0) as i32,
-                        (timeline.duration / 60.0) as i32,
-                        (timeline.duration % 60.0) as i32
+                        (current_pos.as_secs_f64() / 60.0) as i32,
+                        (current_pos.as_secs_f64() % 60.0) as i32,
+                        (timeline.duration.as_secs_f64() / 60.0) as i32,
+                        (timeline.duration.as_secs_f64() % 60.0) as i32
                     ));
 
 

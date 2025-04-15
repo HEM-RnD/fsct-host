@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use crate::definitions::TimelineInfo;
 use crate::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use crate::usb::descriptor_utils::FsctDescriptorSet;
-use crate::usb::fsct_usb_interface;
 use crate::usb::fsct_usb_interface::FsctUsbInterface;
 use crate::usb::requests::TrackProgressRequestData;
 
@@ -14,20 +14,20 @@ struct SupportedMetadata {
 }
 
 struct FsctDeviceSharedState {
-    time_diff: Option<std::time::Duration>,
+    time_diff: Option<Duration>,
     fsct_text_encoding: FsctTextEncoding,
     supported_current_texts: Vec<SupportedMetadata>,
     supported_functionalities: FsctFunctionality,
 }
 pub struct FsctDevice {
-    fsct_interface: Arc<fsct_usb_interface::FsctUsbInterface>,
+    fsct_interface: Arc<FsctUsbInterface>,
     poll_task_handle: Option<tokio::task::JoinHandle<()>>,
     time_sync_handle: Option<tokio::task::JoinHandle<()>>,
     state: Arc<Mutex<FsctDeviceSharedState>>,
 }
 
 impl FsctDevice {
-    pub(super) fn new(fsct_interface: fsct_usb_interface::FsctUsbInterface) -> Self {
+    pub(super) fn new(fsct_interface: FsctUsbInterface) -> Self {
         let fsct_device = Self {
             fsct_interface: Arc::new(fsct_interface),
             poll_task_handle: None,
@@ -63,7 +63,7 @@ impl FsctDevice {
         let fsct_interface = self.fsct_interface.clone();
         self.time_sync_handle = Some(tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(60 * 10)).await;
+                tokio::time::sleep(Duration::from_secs(60 * 10)).await;
                 Self::synchronize_time_impl(state.clone(), fsct_interface.clone()).await.unwrap_or_else(|e|
                     log::error!("Failed to synchronize time: {}", e)
                 )
@@ -93,7 +93,7 @@ impl FsctDevice {
         }
     }
 
-    pub fn time_diff(&self) -> Option<std::time::Duration> {
+    pub fn time_diff(&self) -> Option<Duration> {
         self.state.lock().unwrap().time_diff
     }
 
@@ -120,7 +120,7 @@ impl FsctDevice {
         if time_diff < 0 {
             return Err("Time difference is negative".to_string());
         }
-        state.lock().unwrap().time_diff = Some(std::time::Duration::from_millis(time_diff as u64));
+        state.lock().unwrap().time_diff = Some(Duration::from_millis(time_diff as u64));
         Ok(())
     }
 
@@ -146,14 +146,15 @@ impl FsctDevice {
                     It seems that timestamp is later than now. Error: {}", e)
                 )?;
 
-                let position = progress.position + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
+                let position = progress.position.as_secs_f64() + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
+                let position = position * 1000.0; // position is in milliseconds
                 let device_timestamp = (timestamp - time_diff).duration_since(std::time::UNIX_EPOCH)
                                                               .unwrap().as_millis() as u64;
                 let track_progress_request_data = TrackProgressRequestData {
-                    duration: progress.duration as u32,
-                    position: position as i32,
+                    duration: progress.duration.as_secs_f64().round() as u32,
+                    position: position.round() as i32,
                     timestamp: device_timestamp,
-                    rate: progress.rate,
+                    rate: progress.rate as f32,
                 };
                 self.fsct_interface.send_track_progress(&track_progress_request_data).await
             }

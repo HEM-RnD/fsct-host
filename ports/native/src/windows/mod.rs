@@ -1,3 +1,4 @@
+use std::time::Duration;
 use async_trait::async_trait;
 use windows::{
     core::Error as WindowsError,
@@ -70,9 +71,9 @@ Result<Option<TimelineInfo>, PlayerError> {
     let rate = get_rate(playback_info);
 
     Ok(Some(TimelineInfo {
-        position: position_sec,
+        position: Duration::from_secs_f64(position_sec),
         update_time,
-        duration: end_time,
+        duration: Duration::from_secs_f64(end_time),
         rate,
     }))
 }
@@ -145,31 +146,12 @@ impl PlayerInterface for WindowsPlatformGlobalSessionManager {
     }
 }
 
-fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f32 {
+fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f64 {
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
     if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
         return 0.0;
     }
-    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0) as f32
+    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
 }
 
-// struct WindowsPlayerError(PlayerError);
-// 
-// impl From<WindowsError> for WindowsPlayerError {
-//     fn from(err: WindowsError) -> Self {
-//         Self(PlayerError::UnknownError(err.to_string()))
-//     }
-// }
-// 
-// impl From<WindowsPlayerError> for PlayerError {
-//     fn from(err: WindowsPlayerError) -> Self {
-//         err.0
-//     }
-// }
-
-// impl From<WindowsError> for PlayerError {
-//     fn from(err: WindowsError) -> Self {
-//         PlayerError::UnknownError(err.to_string())
-//     }
-// }
 

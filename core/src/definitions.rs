@@ -54,10 +54,10 @@ pub enum FsctTextEncoding {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineInfo {
-    pub position: f64,                      // current position in seconds
+    pub position: std::time::Duration,                      // current position in seconds
     pub update_time: std::time::SystemTime, // when the position was last updated
-    pub duration: f64,                      // total duration in seconds
-    pub rate: f32,                          // playback rate
+    pub duration: std::time::Duration,                      // total duration in seconds
+    pub rate: f64,                          // playback rate
 }
 
 /// Represents the various playback states within the Ferrum Streaming Control Technology (FSCT) system.
