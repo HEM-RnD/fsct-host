@@ -5,7 +5,7 @@ use crate::player::{
 };
 use async_trait::async_trait;
 
-use log::{error, info, warn, debug};
+use log::{error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

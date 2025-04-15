@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use std::time::Duration;
 use async_trait::async_trait;
-use log::{trace, debug, info, warn, error};
+use log::{debug, info, warn, error};
 use nusb::hotplug::HotplugEvent;
 use futures::StreamExt;
 use crate::player::{PlayerEvent, PlayerState};
