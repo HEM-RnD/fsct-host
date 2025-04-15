@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use nusb::{list_devices, DeviceId, DeviceInfo};
 use std::time::Duration;
 use async_trait::async_trait;
-use log::error;
+use log::{trace, debug, info, warn, error};
 use nusb::hotplug::HotplugEvent;
 use futures::StreamExt;
 use crate::player::{PlayerEvent, PlayerState};
@@ -17,24 +17,24 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
 {
     let fsct_device = create_and_configure_fsct_device(device_info).await?;
 
-    println!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
-             device_info.product_string().unwrap_or("Unknown"),
-             device_info.vendor_id(),
-             device_info.product_id());
+    info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
+          device_info.product_string().unwrap_or("Unknown"),
+          device_info.vendor_id(),
+          device_info.product_id());
 
     let time_diff = fsct_device.time_diff();
-    println!("Time difference: {:?}", time_diff);
+    debug!("Time difference: {:?}", time_diff);
 
     let enable = fsct_device.get_enable().await?;
-    println!("Enable: {}", enable);
+    debug!("Enable: {}", enable);
 
     if !enable {
-        println!("Enabling FSCT...");
+        info!("Enabling FSCT...");
         fsct_device.set_enable(true).await?;
         let enable = fsct_device.get_enable().await?;
-        println!("Enable: {}", enable);
+        debug!("Enable: {}", enable);
     } else {
-        println!("FSCT is already enabled.");
+        info!("FSCT is already enabled.");
     }
     Ok(fsct_device)
 }
@@ -47,8 +47,8 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
     let fsct_device = match try_initialize_device(device_info).await {
         Ok(fsct_device) => fsct_device,
         Err(e) => {
-            println!("Failed to initialize device {:04x}:{:04x}: {}", device_info.vendor_id(),
-                     device_info.product_id(), e);
+            warn!("Failed to initialize device {:04x}:{:04x}: {}", device_info.vendor_id(),
+                  device_info.product_id(), e);
             return Err(e);
         }
     };
@@ -59,8 +59,7 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
     let mut fsct_devices = devices.lock().unwrap();
     let device_id = device_info.id();
     if fsct_devices.contains_key(&device_id) {
-        println!("Device {:04x}:{:04x} is already in the list.", device_info.vendor_id(), device_info
-            .product_id());
+        debug!("Device {:04x}:{:04x} is already in the list.", device_info.vendor_id(), device_info.product_id());
         return Ok(());
     }
     fsct_devices.insert(device_id, Arc::new(fsct_device));
@@ -95,8 +94,7 @@ async fn run_device_initialization(device_info: DeviceInfo,
             }
             tokio::time::sleep(retry_period).await;
         }
-        println!("Device {:04x}:{:04x} omitted after many retries.", device_info.vendor_id(), device_info
-            .product_id());
+        warn!("Device {:04x}:{:04x} omitted after many retries.", device_info.vendor_id(), device_info.product_id());
     });
 }
 

@@ -5,7 +5,7 @@ use crate::player::{
 };
 use async_trait::async_trait;
 
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -119,14 +119,14 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
         PlayerEvent::StatusChanged(status) => {
             if *status != current_state.status {
                 current_state.status = status.clone();
-                println!("Status changed to {:?}", current_state.status);
+                info!("Status changed to {:?}", current_state.status);
                 return true;
             }
         }
         PlayerEvent::TimelineChanged(timeline) => {
             if *timeline != current_state.timeline {
                 current_state.timeline = timeline.clone();
-                println!("Timeline changed to {:?}", current_state.timeline);
+                info!("Timeline changed to {:?}", current_state.timeline);
                 return true;
             }
         }
@@ -134,7 +134,7 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
             let current_text = current_state.texts.get_mut_text(*text_id);
             if *text != *current_text {
                 *current_text = text.clone();
-                println!("Text {:?} changed to {:?}", text_id, text);
+                info!("Text {:?} changed to {:?}", text_id, text);
                 return true;
             }
         }
@@ -160,11 +160,11 @@ async fn get_playback_notification_stream(
 ) -> Result<PlayerEventsReceiver, PlayerError> {
     match player.listen_to_player_notifications().await {
         Ok(listener) => {
-            println!("Player supports notification stream, Using it");
+            info!("Player supports notification stream, Using it");
             Ok(listener)
         }
         Err(PlayerError::FeatureNotSupported) => {
-            println!(
+            info!(
                 "Player doesn't support notification stream, Using polling metadata watch fallback"
             );
             Ok(create_polling_metadata_watch(player))
