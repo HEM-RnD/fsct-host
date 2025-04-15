@@ -57,12 +57,8 @@ impl From<TimelineInfo> for FsctTimelineInfo {
 pub enum CurrentTextMetadata {
     Title,
     Author,
-    Genre,
-    Year,
-    Track,
     Album,
-    Comment,
-    Rating,
+    Genre,
 }
 
 impl From<CurrentTextMetadata> for FsctTextMetadata {
@@ -70,12 +66,8 @@ impl From<CurrentTextMetadata> for FsctTextMetadata {
         match value {
             CurrentTextMetadata::Title => FsctTextMetadata::CurrentTitle,
             CurrentTextMetadata::Author => FsctTextMetadata::CurrentAuthor,
-            CurrentTextMetadata::Genre => FsctTextMetadata::CurrentGenre,
-            CurrentTextMetadata::Year => FsctTextMetadata::CurrentYear,
-            CurrentTextMetadata::Track => FsctTextMetadata::CurrentTrack,
             CurrentTextMetadata::Album => FsctTextMetadata::CurrentAlbum,
-            CurrentTextMetadata::Comment => FsctTextMetadata::CurrentComment,
-            CurrentTextMetadata::Rating => FsctTextMetadata::CurrentRating,
+            CurrentTextMetadata::Genre => FsctTextMetadata::CurrentGenre,
         }
     }
 }

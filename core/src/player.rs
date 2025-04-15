@@ -27,15 +27,13 @@ pub struct TrackMetadata {
     pub artist: Option<String>, //CurrentAuthor
     pub album: Option<String>,  //CurrentAlbum
     pub genre: Option<String>,  //CurrentGenre
-    pub year: Option<String>,   //CurrentYear
 }
 
-const TRACK_METADATA_IDS: [FsctTextMetadata; 5] = [
+const TRACK_METADATA_IDS: [FsctTextMetadata; 4] = [
     FsctTextMetadata::CurrentTitle,
     FsctTextMetadata::CurrentAuthor,
     FsctTextMetadata::CurrentAlbum,
     FsctTextMetadata::CurrentGenre,
-    FsctTextMetadata::CurrentYear,
 ];
 
 pub struct TrackMetadataIterator<'a> {
@@ -60,7 +58,6 @@ impl TrackMetadata {
             FsctTextMetadata::CurrentAuthor => &self.artist,
             FsctTextMetadata::CurrentAlbum => &self.album,
             FsctTextMetadata::CurrentGenre => &self.genre,
-            FsctTextMetadata::CurrentYear => &self.year,
             _ => panic!("Unknown text type"),
         }
     }
@@ -70,7 +67,6 @@ impl TrackMetadata {
             FsctTextMetadata::CurrentAuthor => &mut self.artist,
             FsctTextMetadata::CurrentAlbum => &mut self.album,
             FsctTextMetadata::CurrentGenre => &mut self.genre,
-            FsctTextMetadata::CurrentYear => &mut self.year,
             _ => panic!("Unknown text type"),
         }
     }

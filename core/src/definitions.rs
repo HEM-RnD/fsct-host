@@ -16,20 +16,12 @@ pub enum FsctTextMetadata {
     #[default]
     CurrentTitle = 0x01,
     CurrentAuthor = 0x02,
-    CurrentGenre = 0x03,
-    CurrentYear = 0x04,
-    CurrentTrack = 0x05,
-    CurrentAlbum = 0x06,
-    CurrentComment = 0x07,
-    CurrentRating = 0x08,
+    CurrentAlbum = 0x03,
+    CurrentGenre = 0x04,
     QueueTitle = 0x31,
     QueueAuthor = 0x32,
-    QueueGenre = 0x33,
-    QueueYear = 0x34,
-    QueueTrack = 0x35,
-    QueueAlbum = 0x36,
-    QueueComment = 0x37,
-    QueueRating = 0x38,
+    QueueAlbum = 0x33,
+    QueueGenre = 0x34,
 }
 
 #[repr(u8)]
@@ -62,10 +54,10 @@ pub enum FsctTextEncoding {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineInfo {
-    pub position: f64,         // current position in seconds
-    pub update_time: std::time::SystemTime,  // when the position was last updated
-    pub duration: f64, // total duration in seconds
-    pub rate: f32,             // playback rate
+    pub position: f64,                      // current position in seconds
+    pub update_time: std::time::SystemTime, // when the position was last updated
+    pub duration: f64,                      // total duration in seconds
+    pub rate: f32,                          // playback rate
 }
 
 /// Represents the various playback states within the Ferrum Streaming Control Technology (FSCT) system.
