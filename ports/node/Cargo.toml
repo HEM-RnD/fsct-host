@@ -10,9 +10,11 @@ crate-type = ["cdylib"]
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
 napi = { version = "2.12.2", default-features = false, features = ["napi4", "tokio_rt"] }
 napi-derive = "2.12.2"
+simple_logger = "5.0.0"
 fsct_core.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
+log = "0.4.25"
 
 [build-dependencies]
 napi-build = "2.0.1"

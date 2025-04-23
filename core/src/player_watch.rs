@@ -177,11 +177,11 @@ pub async fn run_player_watch(
     player: Player,
     player_event_listener: impl PlayerEventListener,
     player_state: Arc<Mutex<PlayerState>>,
-) -> Result<(), String> {
+) -> Result<tokio::task::JoinHandle<()>, String> {
     let mut playback_notifications_stream = get_playback_notification_stream(player)
         .await
         .map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             let event = playback_notifications_stream.recv().await;
             match event {
@@ -205,5 +205,5 @@ pub async fn run_player_watch(
             }
         }
     });
-    Ok(())
+    Ok(handle)
 }

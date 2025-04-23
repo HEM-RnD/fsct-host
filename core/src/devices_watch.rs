@@ -117,10 +117,11 @@ async fn apply_player_state_on_device(device: &FsctDevice,
     Ok(())
 }
 
-pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>) -> Result<(), String>
+pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>)
+    -> Result<tokio::task::JoinHandle<()>, String>
 {
     let mut devices_plug_events_stream = nusb::watch_devices().map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
+    let join_handle = tokio::spawn(async move {
         let devices = list_devices().unwrap();
         for device in devices {
             let _ = try_initialize_device_and_add_to_list(&device, &fsct_devices, &current_metadata).await;
@@ -137,7 +138,7 @@ pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mu
             }
         }
     });
-    Ok(())
+    Ok(join_handle)
 }
 
 pub struct DevicesPlayerEventApplier {

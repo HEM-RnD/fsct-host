@@ -310,9 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { PlayerStatus, CurrentTextMetadata, NodePlayer, runFsct } = nativeBinding
+const { PlayerStatus, CurrentTextMetadata, NodePlayer, FsctService, LogLevel, initLogger } = nativeBinding
 
 module.exports.PlayerStatus = PlayerStatus
 module.exports.CurrentTextMetadata = CurrentTextMetadata
 module.exports.NodePlayer = NodePlayer
-module.exports.runFsct = runFsct
+module.exports.FsctService = FsctService
+module.exports.LogLevel = LogLevel
+module.exports.initLogger = initLogger
