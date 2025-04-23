@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>FSCT Service</title>
+    <organization>com.hem-e</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <script>
+        <postinstall file="./postinstall"/>
+    </script>
+    <pkg-ref id="com.hem-e.fsctservice.bin"/>
+    <pkg-ref id="com.hem-e.fsctservice.daemon"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="bin"/>
+            <line choice="daemon"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="bin" visible="false">
+        <pkg-ref id="com.hem-e.fsctservice.bin"/>
+    </choice>
+    <choice id="daemon" visible="false">
+        <pkg-ref id="com.hem-e.fsctservice.daemon"/>
+    </choice>
+    <pkg-ref id="com.hem-e.fsctservice.bin" version="0.2.0" onConclusion="none">bin.pkg</pkg-ref>
+    <pkg-ref id="com.hem-e.fsctservice.daemon" version="0.2.0" onConclusion="none">daemon.pkg</pkg-ref>
+</installer-gui-script>
