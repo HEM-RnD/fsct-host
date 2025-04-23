@@ -142,11 +142,27 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
     false
 }
 
+
+fn transform_event(event: PlayerEvent) -> PlayerEvent {
+    match event {
+        PlayerEvent::TimelineChanged(Some(timeline)) => {
+            // workaround for a situation where duration is (almost) 0
+            if timeline.duration <= Duration::from_millis(100) {
+                PlayerEvent::TimelineChanged(None)
+            } else {
+                PlayerEvent::TimelineChanged(Some(timeline))
+            }
+        }
+        other_event => other_event,
+    }
+}
+
 async fn process_player_event(
     event: PlayerEvent,
     player_event_listener: &impl PlayerEventListener,
     current_metadata: &Arc<Mutex<PlayerState>>,
 ) {
+    let event = transform_event(event);
     let has_changed = update_current_state_on_event(&event, &mut current_metadata.lock().unwrap());
     if !has_changed {
         return;
