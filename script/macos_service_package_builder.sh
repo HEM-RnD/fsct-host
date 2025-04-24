@@ -70,6 +70,12 @@ if [ ! -f "${INSTALLER_FILES_DIR}/service_setup_script.sh" ]; then
     exit 1
 fi
 
+# Check for preinstall script
+if [ ! -f "${INSTALLER_FILES_DIR}/preinstall_script.sh" ]; then
+    echo "File preinstall_script.sh not found in ${INSTALLER_FILES_DIR}!"
+    exit 1
+fi
+
 # Check for distribution.xml file
 if [ ! -f "${INSTALLER_FILES_DIR}/distribution.xml" ]; then
     echo "File distribution.xml not found in ${INSTALLER_FILES_DIR}!"
@@ -85,17 +91,22 @@ chmod +x "${SCRIPTS_DIR}/postinstall"
 echo "========================================"
 echo "Building component packages..."
 
-# Script building modification
 # Prepare scripts for the daemon component
 mkdir -p "${PACKAGE_DIR}/daemon_scripts"
 cp "${INSTALLER_FILES_DIR}/service_setup_script.sh" "${PACKAGE_DIR}/daemon_scripts/postinstall"
 chmod +x "${PACKAGE_DIR}/daemon_scripts/postinstall"
+
+# Prepare scripts for the bin component
+mkdir -p "${PACKAGE_DIR}/bin_scripts"
+cp "${INSTALLER_FILES_DIR}/preinstall_script.sh" "${PACKAGE_DIR}/bin_scripts/preinstall"
+chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 
 # Build component packages
 pkgbuild --root "${BIN_ROOT}" \
          --identifier "${IDENTIFIER}.bin" \
          --version "${VERSION}" \
          --install-location "/" \
+         --scripts "${PACKAGE_DIR}/bin_scripts" \
          "${BIN_PKG}"
 
 pkgbuild --root "${DAEMON_ROOT}" \
@@ -108,10 +119,7 @@ pkgbuild --root "${DAEMON_ROOT}" \
 echo "========================================"
 echo "Building the distribution package with productbuild..."
 
-# Copy the postinstall script to work with distribution.xml
-cp "${SCRIPTS_DIR}/postinstall" "${COMPONENT_PKGS_DIR}/"
-
-# Zbuduj końcowy pakiet
+# Build final package
 productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
              --package-path "${COMPONENT_PKGS_DIR}" \
              "${BUILD_DIR}/${PKG_NAME}"
