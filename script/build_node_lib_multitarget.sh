@@ -25,4 +25,4 @@ cp target/x86_64-unknown-linux-gnu/release/libfsct_node_lib.so ports/node/fsct-l
 cd ports/node/
 
 napi artifacts -d .
-napi prepublish
+npm publish --skip-gh-release
