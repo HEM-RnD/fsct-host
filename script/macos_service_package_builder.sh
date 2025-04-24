@@ -85,13 +85,13 @@ chmod +x "${SCRIPTS_DIR}/postinstall"
 echo "========================================"
 echo "Building component packages..."
 
-# Modyfikacja skryptu budującego
-# Przygotuj skrypty dla komponentu daemon
+# Script building modification
+# Prepare scripts for the daemon component
 mkdir -p "${PACKAGE_DIR}/daemon_scripts"
 cp "${INSTALLER_FILES_DIR}/service_setup_script.sh" "${PACKAGE_DIR}/daemon_scripts/postinstall"
 chmod +x "${PACKAGE_DIR}/daemon_scripts/postinstall"
 
-# Zbuduj pakiety komponentów
+# Build component packages
 pkgbuild --root "${BIN_ROOT}" \
          --identifier "${IDENTIFIER}.bin" \
          --version "${VERSION}" \
