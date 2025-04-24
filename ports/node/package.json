@@ -1,6 +1,6 @@
 {
   "name": "fsct-node-lib",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
@@ -10,12 +10,11 @@
       "additional": [
         "aarch64-unknown-linux-gnu",
         "arm-uknown-linux-gnueabihf",
-        "armv7-uknown-linux-gnueabihf",
         "x86_64-unknown-linux-gnu"
       ]
     }
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "ava": "^6.0.1"

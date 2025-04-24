@@ -1,6 +1,6 @@
 {
   "name": "fsct-node-lib-linux-arm-gnueabihf",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "os": [
     "linux"
   ],
@@ -11,7 +11,7 @@
   "files": [
     "fsct-node-lib.linux-arm-gnueabihf.node"
   ],
-  "license": "MIT",
+  "license": "UNLICENSED",
   "engines": {
     "node": ">= 10"
   }

@@ -1,5 +1,6 @@
 target
 Cargo.lock
+Cargo.toml
 .cargo
 .github
 npm
@@ -7,7 +8,10 @@ npm
 .prettierignore
 rustfmt.toml
 yarn.lock
+*.rs
+test_module.mjs
 *.node
 .yarn
+src
 __test__
 renovate.json
