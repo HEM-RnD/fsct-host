@@ -16,7 +16,24 @@ PKG_NAME="${APP_NAME}-${VERSION}.pkg"                  # Output package name
 INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
-DEVELOPER_ID="Developer ID Installer: Your Name (TeamID)"
+DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
+DEVELOPER_ID_INSTALLER="Developer ID Installer: HEM Sp. z o.o. (342MS6WA5D)"
+
+KEYCHAIN_PROFILE="APPLE_NOTARY_PROFILE"
+
+# Control flags
+SKIP_SIGNING=false
+SKIP_NOTARIZATION=false
+
+# Parse command line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --skip-signing) SKIP_SIGNING=true ;;
+        --skip-notarization) SKIP_NOTARIZATION=true ;;
+        *) echo "Unknown parameter: $1"; exit 1 ;;
+    esac
+    shift
+done
 
 # Temporary directory for building the package
 PACKAGE_DIR="${BUILD_DIR}/package"
@@ -50,6 +67,15 @@ mkdir -p "${BIN_ROOT}${INSTALL_DIR}" "${DAEMON_ROOT}${DAEMON_DIR}" "${SCRIPTS_DI
 # Copy the built executable and rename it to APP_NAME
 echo "Copying the binary..."
 cp "${BUILD_DIR}/${TARGET_NAME}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+
+# Sign the binary if signing is enabled
+if [ "$SKIP_SIGNING" = false ]; then
+    echo "========================================"
+    echo "Signing the binary..."
+    codesign --force --options runtime --sign "${DEVELOPER_ID_APP}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+    echo "Verifying binary signature..."
+    codesign --verify --verbose "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+fi
 
 # Check for required files
 echo "Checking for required installer files..."
@@ -102,36 +128,107 @@ cp "${INSTALLER_FILES_DIR}/preinstall_script.sh" "${PACKAGE_DIR}/bin_scripts/pre
 chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 
 # Build component packages
-pkgbuild --root "${BIN_ROOT}" \
-         --identifier "${IDENTIFIER}.bin" \
-         --version "${VERSION}" \
-         --install-location "/" \
-         --scripts "${PACKAGE_DIR}/bin_scripts" \
-         "${BIN_PKG}"
+if [ "$SKIP_SIGNING" = false ]; then
+    echo "Building and signing component packages..."
+    pkgbuild --root "${BIN_ROOT}" \
+             --identifier "${IDENTIFIER}.bin" \
+             --version "${VERSION}" \
+             --install-location "/" \
+             --scripts "${PACKAGE_DIR}/bin_scripts" \
+             --sign "${DEVELOPER_ID_INSTALLER}" \
+             "${BIN_PKG}"
 
-pkgbuild --root "${DAEMON_ROOT}" \
-         --identifier "${IDENTIFIER}.daemon" \
-         --version "${VERSION}" \
-         --install-location "/" \
-         --scripts "${PACKAGE_DIR}/daemon_scripts" \
-         "${DAEMON_PKG}"
+    pkgbuild --root "${DAEMON_ROOT}" \
+             --identifier "${IDENTIFIER}.daemon" \
+             --version "${VERSION}" \
+             --install-location "/" \
+             --scripts "${PACKAGE_DIR}/daemon_scripts" \
+             --sign "${DEVELOPER_ID_INSTALLER}" \
+             "${DAEMON_PKG}"
+else
+    echo "Building unsigned component packages..."
+    pkgbuild --root "${BIN_ROOT}" \
+             --identifier "${IDENTIFIER}.bin" \
+             --version "${VERSION}" \
+             --install-location "/" \
+             --scripts "${PACKAGE_DIR}/bin_scripts" \
+             "${BIN_PKG}"
+
+    pkgbuild --root "${DAEMON_ROOT}" \
+             --identifier "${IDENTIFIER}.daemon" \
+             --version "${VERSION}" \
+             --install-location "/" \
+             --scripts "${PACKAGE_DIR}/daemon_scripts" \
+             "${DAEMON_PKG}"
+fi
 
 echo "========================================"
 echo "Building the distribution package with productbuild..."
 
-# Build final package
-productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
-             --package-path "${COMPONENT_PKGS_DIR}" \
-             "${BUILD_DIR}/${PKG_NAME}"
+# Build final package with or without signing
+if [ "$SKIP_SIGNING" = false ]; then
+    productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
+                 --package-path "${COMPONENT_PKGS_DIR}" \
+                 --sign "${DEVELOPER_ID_INSTALLER}" \
+                 "${BUILD_DIR}/${PKG_NAME}"
+    
+    echo "Verifying package signature..."
+    pkgutil --check-signature "${BUILD_DIR}/${PKG_NAME}"
+else
+    productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
+                 --package-path "${COMPONENT_PKGS_DIR}" \
+                 "${BUILD_DIR}/${PKG_NAME}"
+fi
 
-# Uncomment the following to sign the package
-#echo "========================================"
-#echo "Code signing the package using codesign..."
-#codesign --sign "${DEVELOPER_ID}" --timestamp --options runtime "${BUILD_DIR}/${PKG_NAME}"
-#
-#echo "Verifying package signature..."
-#spctl -a -v --type install "${BUILD_DIR}/${PKG_NAME}"
+# Notarize the package if enabled
+if [ "$SKIP_NOTARIZATION" = false ] && [ "$SKIP_SIGNING" = false ]; then
+    echo "========================================"
+    echo "Submitting package for notarization..."
+    
+    # Create a temporary ZIP archive for notarization
+    NOTARIZE_ZIP="${BUILD_DIR}/${APP_NAME}-${VERSION}.zip"
+    ditto -c -k --keepParent "${BUILD_DIR}/${PKG_NAME}" "${NOTARIZE_ZIP}"
+    
+    # Submit for notarization
+    xcrun notarytool submit "${NOTARIZE_ZIP}" \
+        --keychain-profile "${KEYCHAIN_PROFILE}" \
+        --wait
+    
+    # Check notarization result - use JSON format for reliable parsing
+    NOTARIZATION_STATUS=$(xcrun notarytool history \
+    --keychain-profile "${KEYCHAIN_PROFILE}" \
+    --output-format json | grep -o '"status"[ ]*:[ ]*"[^"]*"' | head -n 1 | sed 's/.*"status"[ ]*:[ ]*"\([^"]*\)".*/\1/')
+    
+    echo "Notarization status: ${NOTARIZATION_STATUS}"
+    
+    if [ "${NOTARIZATION_STATUS}" = "Accepted" ]; then
+        echo "Notarization successful!"
+    else
+        echo "Notarization failed with status: ${NOTARIZATION_STATUS}"
+        exit 1
+    fi
+    
+    echo "Notarization successful!"
+    
+    # Staple the notarization ticket to the package
+    echo "Stapling notarization ticket to package..."
+    xcrun stapler staple "${BUILD_DIR}/${PKG_NAME}"
+    
+    # Verify stapling
+    xcrun stapler validate "${BUILD_DIR}/${PKG_NAME}"
+    
+    # Clean up
+    rm "${NOTARIZE_ZIP}"
+fi
 
 echo "========================================"
 echo "Done! Package created: ${BUILD_DIR}/${PKG_NAME}"
+if [ "$SKIP_SIGNING" = false ] && [ "$SKIP_NOTARIZATION" = false ]; then
+    echo "Package is signed and notarized"
+elif [ "$SKIP_SIGNING" = false ]; then
+    echo "Package is signed but not notarized"
+else
+    echo "Package is unsigned"
+    echo "WARNING: Unsigned packages will display security warnings during installation"
+fi
 echo "To install, use: sudo installer -pkg ${BUILD_DIR}/${PKG_NAME} -target /"
