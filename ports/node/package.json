@@ -35,9 +35,9 @@
     "version": "napi version"
   },
   "optionalDependencies": {
-    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.0",
-    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.0",
-    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.0"
+    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.1",
+    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.1",
+    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.1"
   },
   "publishConfig": {
     "access": "public"
