@@ -1,10 +1,10 @@
 {
-  "name": "fsct-node-lib",
+  "name": "@hemspzoo/fsct-lib",
   "version": "0.2.0",
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
-    "name": "fsct-node-lib",
+    "name": "fsct-lib",
     "triples": {
       "defaults": false,
       "additional": [
@@ -35,8 +35,11 @@
     "version": "napi version"
   },
   "optionalDependencies": {
-    "fsct-node-lib-linux-arm64-gnu": "0.0.0",
-    "fsct-node-lib-linux-arm-gnueabihf": "0.0.0",
-    "fsct-node-lib-linux-x64-gnu": "0.0.0"
+    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.0",
+    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.0",
+    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

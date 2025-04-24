@@ -1,5 +1,5 @@
 {
-  "name": "fsct-node-lib-linux-arm-gnueabihf",
+  "name": "@hemspzoo/fsct-lib-linux-arm-gnueabihf",
   "version": "0.2.0",
   "os": [
     "linux"
@@ -7,12 +7,15 @@
   "cpu": [
     "arm"
   ],
-  "main": "fsct-node-lib.linux-arm-gnueabihf.node",
+  "main": "fsct-lib.linux-arm-gnueabihf.node",
   "files": [
-    "fsct-node-lib.linux-arm-gnueabihf.node"
+    "fsct-lib.linux-arm-gnueabihf.node"
   ],
   "license": "UNLICENSED",
   "engines": {
     "node": ">= 10"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

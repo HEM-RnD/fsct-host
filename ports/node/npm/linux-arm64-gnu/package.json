@@ -1,5 +1,5 @@
 {
-  "name": "fsct-node-lib-linux-arm64-gnu",
+  "name": "@hemspzoo/fsct-lib-linux-arm64-gnu",
   "version": "0.2.0",
   "os": [
     "linux"
@@ -7,9 +7,9 @@
   "cpu": [
     "arm64"
   ],
-  "main": "fsct-node-lib.linux-arm64-gnu.node",
+  "main": "fsct-lib.linux-arm64-gnu.node",
   "files": [
-    "fsct-node-lib.linux-arm64-gnu.node"
+    "fsct-lib.linux-arm64-gnu.node"
   ],
   "license": "UNLICENSED",
   "engines": {
@@ -17,5 +17,8 @@
   },
   "libc": [
     "glibc"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
