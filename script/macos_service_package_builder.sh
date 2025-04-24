@@ -231,4 +231,4 @@ else
     echo "Package is unsigned"
     echo "WARNING: Unsigned packages will display security warnings during installation"
 fi
-echo "To install, use: sudo installer -pkg ${BUILD_DIR}/${PKG_NAME} -target /"
+echo "To install, use: sudo installer -pkg ${BUILD_DIR}/${PKG_NAME} -target LocalSystem"
