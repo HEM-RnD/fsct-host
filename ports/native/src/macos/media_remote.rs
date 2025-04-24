@@ -45,6 +45,7 @@ type MRMediaRemoteGetNowPlayingApplicationIsPlayingFn =
 type MRMediaRemoteRegisterForNowPlayingNotificationsFn = unsafe extern "C" fn(queue: dispatch_queue_t);
 type MRMediaRemoteUnregisterForNowPlayingNotificationsFn = unsafe extern "C" fn();
 
+#[allow(dead_code)]
 pub struct MediaRemoteFramework {
     bundle_ref: CFBundleRef,
     queue: Queue,
@@ -107,9 +108,12 @@ unsafe impl<T> Send for Desync<T> {}
 unsafe impl<T> Sync for Desync<T> {}
 
 unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> Result<*const c_void, String> {
-    let fn_name_cfstring = to_cfstring(fn_name)?;
-    let fn_pointer = core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name_cfstring);
-    CFRelease(fn_name_cfstring.as_void_ptr());
+    let fn_pointer = unsafe {
+        let fn_name_cfstring = to_cfstring(fn_name)?;
+        let fn_pointer = core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name_cfstring);
+        CFRelease(fn_name_cfstring.as_void_ptr());
+        fn_pointer
+    };
 
     if fn_pointer.is_null() {
         return Err(format!("Failed to get function `{fn_name}` pointer"));
@@ -187,6 +191,7 @@ impl MediaRemoteFramework {
         Ok(dict)
     }
 
+    #[allow(dead_code)]
     pub async fn is_playing(&self) -> Result<bool, String> {
         let get_now_playing_application_is_playing_fn = self.get_now_playing_application_is_playing_fn.clone();
         let queue = Desync(unsafe { self.queue.as_raw() });
