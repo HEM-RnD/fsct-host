@@ -5,7 +5,7 @@ use crate::player::{
 };
 use async_trait::async_trait;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ fn update_current_status(
     if new_state.status != current_state.status {
         current_state.status = new_state.status;
         tx.send(PlayerEvent::StatusChanged(new_state.status.clone()))
-          .unwrap_or_default();
+            .unwrap_or_default();
     }
 }
 
@@ -48,7 +48,7 @@ fn update_timeline(
     if new_state.timeline != current_state.timeline {
         current_state.timeline = new_state.timeline.clone();
         tx.send(PlayerEvent::TimelineChanged(new_state.timeline.clone()))
-          .unwrap_or_default();
+            .unwrap_or_default();
     }
 }
 
@@ -63,7 +63,7 @@ fn update_text(
     if new_text != current_text {
         *current_text = new_text.clone();
         tx.send(PlayerEvent::TextChanged((text_id, new_text.clone())))
-          .unwrap_or_default();
+            .unwrap_or_default();
     }
 }
 
@@ -119,14 +119,14 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
         PlayerEvent::StatusChanged(status) => {
             if *status != current_state.status {
                 current_state.status = status.clone();
-                info!("Status changed to {:?}", current_state.status);
+                debug!("Status changed to {:?}", current_state.status);
                 return true;
             }
         }
         PlayerEvent::TimelineChanged(timeline) => {
             if *timeline != current_state.timeline {
                 current_state.timeline = timeline.clone();
-                info!("Timeline changed to {:?}", current_state.timeline);
+                debug!("Timeline changed to {:?}", current_state.timeline);
                 return true;
             }
         }
@@ -134,7 +134,7 @@ fn update_current_state_on_event(event: &PlayerEvent, current_state: &mut Player
             let current_text = current_state.texts.get_mut_text(*text_id);
             if *text != *current_text {
                 *current_text = text.clone();
-                info!("Text {:?} changed to {:?}", text_id, text);
+                debug!("Text {:?} changed to {:?}", text_id, text);
                 return true;
             }
         }
@@ -176,11 +176,11 @@ async fn get_playback_notification_stream(
 ) -> Result<PlayerEventsReceiver, PlayerError> {
     match player.listen_to_player_notifications().await {
         Ok(listener) => {
-            info!("Player supports notification stream, Using it");
+            debug!("Player supports notification stream, Using it");
             Ok(listener)
         }
         Err(PlayerError::FeatureNotSupported) => {
-            info!(
+            debug!(
                 "Player doesn't support notification stream, Using polling metadata watch fallback"
             );
             Ok(create_polling_metadata_watch(player))

@@ -34,7 +34,7 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
         let enable = fsct_device.get_enable().await?;
         debug!("Enable: {}", enable);
     } else {
-        info!("FSCT is already enabled.");
+        debug!("FSCT is already enabled.");
     }
     Ok(fsct_device)
 }
@@ -42,7 +42,7 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
 async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
                                                devices: &DeviceMap,
                                                current_state: &Mutex<PlayerState>)
-    -> Result<(), String>
+                                               -> Result<(), String>
 {
     let fsct_device = match try_initialize_device(device_info).await {
         Ok(fsct_device) => fsct_device,
@@ -118,7 +118,7 @@ async fn apply_player_state_on_device(device: &FsctDevice,
 }
 
 pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>)
-    -> Result<tokio::task::JoinHandle<()>, String>
+                               -> Result<tokio::task::JoinHandle<()>, String>
 {
     let mut devices_plug_events_stream = nusb::watch_devices().map_err(|e| e.to_string())?;
     let join_handle = tokio::spawn(async move {
