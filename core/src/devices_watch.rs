@@ -56,10 +56,7 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
 
 async fn get_device_info_by_id(device_id: DeviceId) -> Option<nusb::DeviceInfo>
 {
-    match nusb::list_devices() {
-        Ok(mut list) => list.find(|device| device.id() == device_id),
-        Err(_) => return None
-    }
+    list_devices().ok()?.find(|device| device.id() == device_id)
 }
 
 async fn run_device_initialization(device_info: DeviceInfo,
