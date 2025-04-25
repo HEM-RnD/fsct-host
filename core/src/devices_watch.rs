@@ -17,11 +17,6 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
 {
     let fsct_device = create_and_configure_fsct_device(device_info).await?;
 
-    info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
-          device_info.product_string().unwrap_or("Unknown"),
-          device_info.vendor_id(),
-          device_info.product_id());
-
     let time_diff = fsct_device.time_diff();
     debug!("Time difference: {:?}", time_diff);
 
@@ -29,7 +24,7 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
     debug!("Enable: {}", enable);
 
     if !enable {
-        info!("Enabling FSCT...");
+        debug!("Enabling FSCT...");
         fsct_device.set_enable(true).await?;
         let enable = fsct_device.get_enable().await?;
         debug!("Enable: {}", enable);
@@ -44,14 +39,7 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
                                                current_state: &Mutex<PlayerState>)
                                                -> Result<(), String>
 {
-    let fsct_device = match try_initialize_device(device_info).await {
-        Ok(fsct_device) => fsct_device,
-        Err(e) => {
-            warn!("Failed to initialize device {:04x}:{:04x}: {}", device_info.vendor_id(),
-                  device_info.product_id(), e);
-            return Err(e);
-        }
-    };
+    let fsct_device = try_initialize_device(device_info).await?;
 
     let current_state = current_state.lock().unwrap().clone();
     apply_player_state_on_device(&fsct_device, &current_state).await?;
@@ -59,7 +47,7 @@ async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
     let mut fsct_devices = devices.lock().unwrap();
     let device_id = device_info.id();
     if fsct_devices.contains_key(&device_id) {
-        debug!("Device {:04x}:{:04x} is already in the list.", device_info.vendor_id(), device_info.product_id());
+        warn!("Device {:04x}:{:04x} is already in the list.", device_info.vendor_id(), device_info.product_id());
         return Ok(());
     }
     fsct_devices.insert(device_id, Arc::new(fsct_device));
@@ -83,18 +71,20 @@ async fn run_device_initialization(device_info: DeviceInfo,
         let retry_period = Duration::from_millis(100);
         let retry_timout_timepoint = std::time::Instant::now() + retry_timeout;
 
+        let mut res = Ok(());
+
         while std::time::Instant::now() < retry_timout_timepoint {
             if let Some(device_info) = get_device_info_by_id(device_info.id()).await {
                 //todo distinguish access problems from lack of FSCT features!!!
 
-                let res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
+                res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
                 if res.is_ok() {
                     return;
                 }
             }
             tokio::time::sleep(retry_period).await;
         }
-        warn!("Device {:04x}:{:04x} omitted after many retries.", device_info.vendor_id(), device_info.product_id());
+        log_device_initialize_result(res, &device_info);
     });
 }
 
@@ -117,14 +107,26 @@ async fn apply_player_state_on_device(device: &FsctDevice,
     Ok(())
 }
 
+fn log_device_initialize_result(result: Result<(), String>, device_info: &DeviceInfo) {
+    match result {
+        Ok(_) => info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
+                      device_info.product_string().unwrap_or("Unknown"),
+                      device_info.vendor_id(),
+                      device_info.product_id()),
+        Err(e) => warn!("Failed to initialize device {:04x}:{:04x}: {}", device_info.vendor_id(),
+                      device_info.product_id(), e),
+    }
+}
+
 pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>)
                                -> Result<tokio::task::JoinHandle<()>, String>
 {
     let mut devices_plug_events_stream = nusb::watch_devices().map_err(|e| e.to_string())?;
     let join_handle = tokio::spawn(async move {
         let devices = list_devices().unwrap();
-        for device in devices {
-            let _ = try_initialize_device_and_add_to_list(&device, &fsct_devices, &current_metadata).await;
+        for device_info in devices {
+            let res = try_initialize_device_and_add_to_list(&device_info, &fsct_devices, &current_metadata).await;
+            log_device_initialize_result(res, &device_info);
         }
         while let Some(event) = devices_plug_events_stream.next().await {
             match event {
