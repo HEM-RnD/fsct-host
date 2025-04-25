@@ -16,6 +16,7 @@ fsct_core.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 log = "0.4.25"
+systemd-journal-logger = "2.2.1"
 
 [build-dependencies]
 napi-build = "2.0.1"

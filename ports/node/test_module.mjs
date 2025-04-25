@@ -1,10 +1,19 @@
-import {LogLevel, initLogger, FsctService, NodePlayer, PlayerStatus, CurrentTextMetadata} from './index.js'
+import {
+    LogLevelFilter,
+    setLogLevel,
+    initSystemdLogger,
+    FsctService,
+    NodePlayer,
+    PlayerStatus,
+    CurrentTextMetadata
+} from './index.js'
 
 
 const player = new NodePlayer();
 const fsctService = new FsctService();
 
-initLogger(LogLevel.Info);
+initSystemdLogger("fsct-test");
+setLogLevel(LogLevelFilter.Info);
 
 console.log("Starting FSCT")
 await fsctService.runFsct(player);

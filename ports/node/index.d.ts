@@ -33,14 +33,17 @@ export const enum CurrentTextMetadata {
   Album = 'Album',
   Genre = 'Genre'
 }
-export const enum LogLevel {
+export const enum LogLevelFilter {
   Trace = 0,
   Debug = 1,
   Info = 2,
   Warn = 3,
-  Error = 4
+  Error = 4,
+  Off = 5
 }
-export declare function initLogger(level: LogLevel): void
+export declare function initStdoutLogger(): void
+export declare function initSystemdLogger(syslogIdentifier: string): void
+export declare function setLogLevel(level: LogLevelFilter): void
 export declare class NodePlayer {
   constructor()
   setStatus(status: PlayerStatus): void

@@ -133,7 +133,7 @@ async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceAbortHandle> {
         napi::Error::from_reason(e.to_string()))?;
     let player_watch_handle = run_player_watch(Player::from_arc(player.player_impl.clone()), player_event_listener,
                                                player_state).await
-                                                            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(FsctServiceAbortHandle {
         device_watch_handle: device_watch_handle.abort_handle(),
         player_watch_handle: player_watch_handle.abort_handle(),
@@ -147,29 +147,52 @@ pub struct FsctService {
 }
 
 #[napi]
-pub enum LogLevel {
+pub enum LogLevelFilter {
     Trace,
     Debug,
     Info,
     Warn,
     Error,
+    Off,
 }
 
-impl From<LogLevel> for log::Level {
-    fn from(level: LogLevel) -> Self {
+impl From<LogLevelFilter> for log::LevelFilter {
+    fn from(level: LogLevelFilter) -> Self {
         match level {
-            LogLevel::Trace => log::Level::Trace,
-            LogLevel::Debug => log::Level::Debug,
-            LogLevel::Info => log::Level::Info,
-            LogLevel::Warn => log::Level::Warn,
-            LogLevel::Error => log::Level::Error,
+            LogLevelFilter::Trace => log::LevelFilter::Trace,
+            LogLevelFilter::Debug => log::LevelFilter::Debug,
+            LogLevelFilter::Info => log::LevelFilter::Info,
+            LogLevelFilter::Warn => log::LevelFilter::Warn,
+            LogLevelFilter::Error => log::LevelFilter::Error,
+            LogLevelFilter::Off => log::LevelFilter::Off,
         }
     }
 }
+
 #[napi]
-pub fn init_logger(level: LogLevel) -> Result<(), napi::Error>
-{
-    simple_logger::init_with_level(level.into()).map_err(|e| napi::Error::from_reason(e.to_string()))
+pub fn init_stdout_logger() -> Result<(), napi::Error> {
+    simple_logger::SimpleLogger::new().init().map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[allow(unreachable_code)]
+#[napi]
+pub fn init_systemd_logger(syslog_identifier: String) -> Result<(), napi::Error> {
+    #[cfg(target_os = "linux")]
+    {
+        use systemd_journal_logger::JournalLog;
+
+        return JournalLog::new()?
+            .with_syslog_identifier(syslog_identifier)
+            .install().map_err(|e| napi::Error::from_reason(e.to_string()));
+    }
+
+    Err(napi::Error::from_reason("systemd logger not supported on this platform"))
+}
+
+
+#[napi]
+pub fn set_log_level(level: LogLevelFilter) {
+    log::set_max_level(level.into());
 }
 
 #[napi]
