@@ -112,7 +112,7 @@ impl eframe::App for PlayerApp {
     }
 }
 
-pub async fn run_gui(player: Player) -> Result<(), String> {
+pub async fn run_gui(player: Player) -> anyhow::Result<()> {
     let player_state = Arc::new(Mutex::new(PlayerState::default()));
 
 
@@ -131,5 +131,5 @@ pub async fn run_gui(player: Player) -> Result<(), String> {
             let runtime_handle = tokio::runtime::Handle::current();
             Ok(Box::new(PlayerApp::new(player, player_state, runtime_handle)))
         }),
-    ).map_err(|e| e.to_string())
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))
 }

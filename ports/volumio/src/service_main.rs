@@ -4,14 +4,13 @@ use log::info;
 use fsct_volumio_port::create_rest_api_volumio_player;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), String> {
+async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let url = std::env::var("FSCT_VOLUMIO_URL").unwrap_or("http://localhost:3000/".to_string());
     info!("Using volumio url: {}", url);
 
-    let platform_global_player = create_rest_api_volumio_player(url.as_str()).await.map_err
-    (|e| e.to_string())?;
+    let platform_global_player = create_rest_api_volumio_player(url.as_str()).await?;
     run_service(platform_global_player).await?;
 
     tokio::signal::ctrl_c()

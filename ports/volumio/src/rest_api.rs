@@ -16,11 +16,11 @@ impl RestApiVolumioPlayer {
     async fn get_state(&self) -> Result<serde_json::Value, PlayerError>
     {
         let info_url = self.url.join("api/v1/getState").unwrap();
-        let response = reqwest::get(info_url).await.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
-        let response = response.error_for_status().map_err(|e| PlayerError::UnknownError(e.to_string()))?;
-        let response_text = response.text().await.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+        let response = reqwest::get(info_url).await.map_err(|e| PlayerError::Other(e.into()))?;
+        let response = response.error_for_status().map_err(|e| PlayerError::Other(e.into()))?;
+        let response_text = response.text().await.map_err(|e| PlayerError::Other(e.into()))?;
         println!("Response: {}", response_text);
-        let json_value = serde_json::from_str(&response_text).map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+        let json_value = serde_json::from_str(&response_text).map_err(|e| PlayerError::Other(e.into()))?;
         Ok(json_value)
     }
 
@@ -29,8 +29,8 @@ impl RestApiVolumioPlayer {
     async fn send_command(&self, command: &str) -> Result<(), PlayerError>
     {
         let info_url = self.url.join(format!("api/v1/commands/?cmd={command}").as_str()).unwrap();
-        let response = reqwest::get(info_url).await.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
-        let _response = response.error_for_status().map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+        let response = reqwest::get(info_url).await.map_err(|e| PlayerError::Other(e.into()))?;
+        let _response = response.error_for_status().map_err(|e| PlayerError::Other(e.into()))?;
         Ok(())
     }
 }

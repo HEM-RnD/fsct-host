@@ -1309,6 +1309,7 @@ dependencies = [
 name = "fsct_gui"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "eframe",
  "fsct_core",
  "tokio",
@@ -1338,6 +1339,7 @@ dependencies = [
 name = "fsct_volumio_port"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "env_logger",
  "fsct_core",

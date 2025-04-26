@@ -17,7 +17,7 @@ pub struct MacOSPlaybackManager {
 
 impl MacOSPlaybackManager {
     pub fn new() -> Result<Self, PlayerError> {
-        let media_remote = Arc::new(MediaRemoteFramework::load().map_err(|e| PlayerError::UnknownError(e))?);
+        let media_remote = Arc::new(MediaRemoteFramework::load().map_err(|e| PlayerError::Other(e))?);
         Ok(MacOSPlaybackManager { media_remote })
     }
 }
@@ -91,8 +91,7 @@ impl PlayerInterface for MacOSPlaybackManager {
         let now_playing_info = self
             .media_remote
             .get_now_playing_info()
-            .await
-            .map_err(|e| PlayerError::UnknownError(e))?;
+            .await?;
 
         let status = get_status(&now_playing_info);
         let texts = get_current_track(&now_playing_info);

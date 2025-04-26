@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::mem::transmute;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
+use anyhow::{anyhow, bail};
 
 /// ObjectiveC declarations:
 /// typedef void (^MRMediaRemoteGetNowPlayingInfoCompletion)(CFDictionaryRef information);
@@ -38,9 +39,9 @@ use std::sync::{Arc, Mutex};
 /// });
 type MRMediaRemoteGetNowPlayingInfoFn = unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationPIDFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 type MRMediaRemoteGetNowPlayingApplicationIsPlayingFn =
-    unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
+unsafe extern "C" fn(queue: dispatch_queue_t, completion: *mut c_void);
 
 type MRMediaRemoteRegisterForNowPlayingNotificationsFn = unsafe extern "C" fn(queue: dispatch_queue_t);
 type MRMediaRemoteUnregisterForNowPlayingNotificationsFn = unsafe extern "C" fn();
@@ -56,7 +57,7 @@ pub struct MediaRemoteFramework {
     unregister_for_now_playing_notifications_fn: MRMediaRemoteUnregisterForNowPlayingNotificationsFn,
 }
 
-fn to_cfstring(s: &str) -> Result<CFStringRef, String> {
+fn to_cfstring(s: &str) -> anyhow::Result<CFStringRef> {
     unsafe {
         let cf_string = CFStringCreateWithCString(
             kCFAllocatorDefault,
@@ -64,14 +65,14 @@ fn to_cfstring(s: &str) -> Result<CFStringRef, String> {
             core_foundation_sys::string::kCFStringEncodingUTF8,
         );
         if cf_string.is_null() {
-            return Err(format!("Can't create CFString for {}", s));
+            return Err(anyhow!("Can't create CFString for {}", s));
         }
         Ok(cf_string)
     }
 }
 
 #[allow(non_snake_case)]
-fn load_using_cfbundle() -> Result<CFBundleRef, String> {
+fn load_using_cfbundle() -> anyhow::Result<CFBundleRef> {
     unsafe {
         let c_path = "/System/Library/PrivateFrameworks/MediaRemote.framework\0";
 
@@ -86,14 +87,14 @@ fn load_using_cfbundle() -> Result<CFBundleRef, String> {
         CFRelease(cf_string_path.as_void_ptr());
 
         if cf_url.is_null() {
-            return Err("CFURL for the framework path was not created".into());
+            bail!("CFURL for the framework path was not created");
         }
 
         let bundle_ref = CFBundleCreate(kCFAllocatorDefault, cf_url);
         CFRelease(cf_url.as_void_ptr());
 
         if bundle_ref.is_null() {
-            return Err("Failed to load MediaRemote.framework as CFBundle".into());
+            bail!("Failed to load MediaRemote.framework as CFBundle");
         }
 
         Ok(bundle_ref)
@@ -107,7 +108,7 @@ struct Desync<T>(T);
 unsafe impl<T> Send for Desync<T> {}
 unsafe impl<T> Sync for Desync<T> {}
 
-unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> Result<*const c_void, String> {
+unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> anyhow::Result<*const c_void> {
     let fn_pointer = unsafe {
         let fn_name_cfstring = to_cfstring(fn_name)?;
         let fn_pointer = core_foundation_sys::bundle::CFBundleGetFunctionPointerForName(bundle_ref, fn_name_cfstring);
@@ -116,14 +117,14 @@ unsafe fn load_function(bundle_ref: CFBundleRef, fn_name: &str) -> Result<*const
     };
 
     if fn_pointer.is_null() {
-        return Err(format!("Failed to get function `{fn_name}` pointer"));
+        bail!("Failed to get function `{fn_name}` pointer");
     }
 
     Ok(fn_pointer)
 }
 
 impl MediaRemoteFramework {
-    pub fn load() -> Result<Self, String> {
+    pub fn load() -> anyhow::Result<Self> {
         let bundle_ref = load_using_cfbundle()?;
 
         unsafe {
@@ -163,7 +164,7 @@ impl MediaRemoteFramework {
         }
     }
 
-    pub async fn get_now_playing_info(&self) -> Result<HashMap<String, Box<dyn Any + Send>>, String> {
+    pub async fn get_now_playing_info(&self) -> anyhow::Result<HashMap<String, Box<dyn Any + Send>>> {
         let get_now_playing_info_fn = self.get_now_playing_info_fn.clone();
         let queue = Desync(unsafe { self.queue.as_raw() });
 
@@ -186,13 +187,13 @@ impl MediaRemoteFramework {
             });
             unsafe { get_now_playing_info_fn(queue.0, RcBlock::as_ptr(&block) as *mut c_void) };
         }
-        let dict = rx.await.unwrap();
+        let dict = rx.await?;
 
         Ok(dict)
     }
 
     #[allow(dead_code)]
-    pub async fn is_playing(&self) -> Result<bool, String> {
+    pub async fn is_playing(&self) -> anyhow::Result<bool> {
         let get_now_playing_application_is_playing_fn = self.get_now_playing_application_is_playing_fn.clone();
         let queue = Desync(unsafe { self.queue.as_raw() });
         let queue = queue;
@@ -208,7 +209,7 @@ impl MediaRemoteFramework {
             });
             unsafe { get_now_playing_application_is_playing_fn(queue.0, RcBlock::as_ptr(&block) as *mut c_void) };
         }
-        let is_playing = rx.await.unwrap();
+        let is_playing = rx.await?;
         Ok(is_playing)
     }
 }

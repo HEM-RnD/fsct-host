@@ -36,7 +36,7 @@ fn update_current_status(
     if new_state.status != current_state.status {
         current_state.status = new_state.status;
         tx.send(PlayerEvent::StatusChanged(new_state.status.clone()))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -48,7 +48,7 @@ fn update_timeline(
     if new_state.timeline != current_state.timeline {
         current_state.timeline = new_state.timeline.clone();
         tx.send(PlayerEvent::TimelineChanged(new_state.timeline.clone()))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -63,7 +63,7 @@ fn update_text(
     if new_text != current_text {
         *current_text = new_text.clone();
         tx.send(PlayerEvent::TextChanged((text_id, new_text.clone())))
-            .unwrap_or_default();
+          .unwrap_or_default();
     }
 }
 
@@ -193,10 +193,8 @@ pub async fn run_player_watch(
     player: Player,
     player_event_listener: impl PlayerEventListener,
     player_state: Arc<Mutex<PlayerState>>,
-) -> Result<tokio::task::JoinHandle<()>, String> {
-    let mut playback_notifications_stream = get_playback_notification_stream(player)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<tokio::task::JoinHandle<()>, anyhow::Error> {
+    let mut playback_notifications_stream = get_playback_notification_stream(player).await?;
     let handle = tokio::spawn(async move {
         loop {
             let event = playback_notifications_stream.recv().await;

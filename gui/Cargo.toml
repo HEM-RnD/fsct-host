@@ -9,3 +9,4 @@ description.workspace = true
 eframe = "0.31.1"
 fsct_core.workspace = true
 tokio.workspace = true
+anyhow.workspace = true

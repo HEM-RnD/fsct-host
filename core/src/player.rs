@@ -1,26 +1,23 @@
 use crate::definitions::FsctStatus;
 use crate::definitions::*;
 use async_trait::async_trait;
-use std::fmt;
 use std::slice::Iter;
 use std::sync::Arc;
+use thiserror::Error;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Error)]
 pub enum PlayerError {
+    #[error("Permission denied")]
     PermissionDenied,
+
+    #[error("Feature not supported")]
     FeatureNotSupported,
-    UnknownError(String),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
-impl fmt::Display for PlayerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PermissionDenied => write!(f, "Permission denied"),
-            Self::FeatureNotSupported => write!(f, "Feature not supported"),
-            Self::UnknownError(e) => write!(f, "Unknown error: {}", e),
-        }
-    }
-}
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct TrackMetadata {
     pub title: Option<String>,  //CurrentTitle

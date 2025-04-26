@@ -4,7 +4,7 @@ use fsct_gui::run_gui;
 
 
 #[tokio::main]
-async fn main() -> Result<(), String> {
+async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let player = initialize_native_platform_player().await?;

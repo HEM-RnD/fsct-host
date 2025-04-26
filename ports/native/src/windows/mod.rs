@@ -18,7 +18,7 @@ trait IntoPlayerResult<T> {
 
 impl<T> IntoPlayerResult<T> for Result<T, WindowsError> {
     fn into_player_error(self) -> Result<T, PlayerError> {
-        self.map_err(|e| PlayerError::UnknownError(e.to_string()))
+        self.map_err(|e| PlayerError::Other(e.into()))
     }
 }
 
@@ -30,20 +30,17 @@ const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
 impl WindowsPlatformGlobalSessionManager {
     pub async fn new() -> Result<Self, PlayerError> {
-        let session_manager_result = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .map_err(|e| PlayerError::UnknownError(e.to_string()))?
-            .await;
-
-
-        let session_manager = session_manager_result.map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+        let session_manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+            .into_player_error()?
+            .await
+            .into_player_error()?;
 
         Ok(Self { session_manager })
     }
 
     async fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
         let session = self.session_manager
-                          .GetCurrentSession()
-                          .map_err(|e| PlayerError::UnknownError(e.to_string()))?;
+                          .GetCurrentSession().into_player_error()?;
         Ok(session)
     }
 
