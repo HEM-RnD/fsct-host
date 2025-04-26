@@ -1,5 +1,5 @@
 use nusb::DeviceInfo;
-use crate::usb::errors::{FsctDeviceError, IoErrorOrAny};
+use crate::usb::errors::{DeviceDiscoveryError};
 
 pub mod descriptors;
 pub mod fsct_bos_finder;
@@ -12,30 +12,30 @@ pub mod errors;
 
 const FSCT_SUPPORTED_PROTOCOL_VERSION: u8 = 0x01;
 
-fn check_fsct_interface_protocol(device_info: &DeviceInfo, fsct_interface_number: u8) -> Result<(), FsctDeviceError> {
+fn check_fsct_interface_protocol(device_info: &DeviceInfo, fsct_interface_number: u8) -> Result<(), DeviceDiscoveryError> {
     let protocol = device_info
         .interfaces()
         .find(|i| i.interface_number() == fsct_interface_number)
         .map(|v| v.protocol())
-        .ok_or(FsctDeviceError::InterfaceNotFound)?;
+        .ok_or(DeviceDiscoveryError::InterfaceNotFound)?;
 
 
     if protocol == FSCT_SUPPORTED_PROTOCOL_VERSION {
         Ok(())
     } else {
-        Err(FsctDeviceError::ProtocolVersionNotSupported(protocol))
+        Err(DeviceDiscoveryError::ProtocolVersionNotSupported(protocol))
     }
 }
 
 
-pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> Result<nusb::Interface, IoErrorOrAny>
+pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> Result<nusb::Interface, DeviceDiscoveryError>
 {
     let device = device_info.open()?;
     let interface = device.claim_interface(interface_number)?;
     Ok(interface)
 }
 
-pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, IoErrorOrAny> {
+pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, DeviceDiscoveryError> {
     let fsct_vendor_subclass_number = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(device_info)?;
 
     let fsct_interface_number = find_fsct_interface_number(device_info, fsct_vendor_subclass_number)?;
@@ -49,7 +49,7 @@ pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Resul
 }
 
 pub fn find_fsct_interface_number(device: &DeviceInfo,
-                                  fsct_vendor_subclass_number: u8) -> Result<u8, FsctDeviceError>
+                                  fsct_vendor_subclass_number: u8) -> Result<u8, DeviceDiscoveryError>
 {
     let interfaces = device.interfaces();
     for interface in interfaces {
@@ -57,5 +57,5 @@ pub fn find_fsct_interface_number(device: &DeviceInfo,
             return Ok(interface.interface_number());
         }
     }
-    Err(FsctDeviceError::InterfaceNotFound)
+    Err(DeviceDiscoveryError::InterfaceNotFound)
 }

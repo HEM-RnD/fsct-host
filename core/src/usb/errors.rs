@@ -13,6 +13,41 @@ pub enum IoErrorOrAny
     Or(#[from] anyhow::Error),
 }
 
+
+#[derive(Error, Debug)]
+pub enum DeviceDiscoveryError
+{
+    #[error("IO error -> {0}")]
+    IoError(#[from] io::Error),
+
+    #[error("No interface found")]
+    InterfaceNotFound,
+
+    #[error("Protocol version {0} not supported")]
+    ProtocolVersionNotSupported(u8),
+
+    #[error("Device initialization error -> {0}")]
+    DeviceInitializationError(FsctDeviceError),
+
+    #[error(transparent)]
+    Or(#[from] anyhow::Error),
+}
+
+impl From<FsctDeviceError> for DeviceDiscoveryError {
+    fn from(error: FsctDeviceError) -> Self {
+        DeviceDiscoveryError::DeviceInitializationError(error.into())
+    }
+}
+
+impl From<IoErrorOrAny> for DeviceDiscoveryError {
+    fn from(error: IoErrorOrAny) -> Self {
+        match error {
+            IoErrorOrAny::IoError(error) => DeviceDiscoveryError::IoError(error),
+            IoErrorOrAny::Or(error) => DeviceDiscoveryError::Or(error),
+        }
+    }
+}
+
 impl From<BosError> for IoErrorOrAny {
     fn from(error: BosError) -> Self {
         IoErrorOrAny::Or(error.into())
@@ -86,12 +121,6 @@ pub enum DescriptorError {
 
 #[derive(Error, Debug)]
 pub enum FsctDeviceError {
-    #[error("Interface not found")]
-    InterfaceNotFound,
-
-    #[error("Protocol version {0} not supported")]
-    ProtocolVersionNotSupported(u8),
-
     #[error("Time is not synchronized")]
     TimeNotSynchronized,
 

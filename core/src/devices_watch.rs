@@ -9,12 +9,12 @@ use futures::StreamExt;
 use crate::player::{PlayerEvent, PlayerState};
 use crate::player_watch::PlayerEventListener;
 use crate::usb::create_and_configure_fsct_device;
-use crate::usb::errors::{IoErrorOrAny};
+use crate::usb::errors::{DeviceDiscoveryError};
 use crate::usb::fsct_device::FsctDevice;
 
 pub type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
 
-async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, IoErrorOrAny>
+async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, DeviceDiscoveryError>
 {
     let fsct_device = create_and_configure_fsct_device(device_info).await?;
 
@@ -38,7 +38,7 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, I
 async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
                                                devices: &DeviceMap,
                                                current_state: &Mutex<PlayerState>)
-    -> Result<(), IoErrorOrAny>
+    -> Result<(), DeviceDiscoveryError>
 {
     let fsct_device = try_initialize_device(device_info).await?;
 
@@ -76,7 +76,8 @@ async fn run_device_initialization(device_info: DeviceInfo,
                 res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
                 match res {
                     Ok(_) => break,
-                    Err(IoErrorOrAny::Or(_)) => break,
+                    Err(DeviceDiscoveryError::Or(_)) => break,
+                    Err(DeviceDiscoveryError::ProtocolVersionNotSupported(_)) => break,
                     _ => ()
                 }
             }
@@ -105,7 +106,7 @@ async fn apply_player_state_on_device(device: &FsctDevice,
     Ok(())
 }
 
-fn log_device_initialize_result(result: Result<(), IoErrorOrAny>, device_info: &DeviceInfo) {
+fn log_device_initialize_result(result: Result<(), DeviceDiscoveryError>, device_info: &DeviceInfo) {
     match result {
         Ok(_) => info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
                       device_info.product_string().unwrap_or("Unknown"),
