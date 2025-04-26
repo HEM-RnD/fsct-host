@@ -1,5 +1,5 @@
 use nusb::DeviceInfo;
-use crate::usb::errors::{FsctDeviceError, IoErrorOr};
+use crate::usb::errors::{FsctDeviceError, IoErrorOrAny};
 
 pub mod descriptors;
 pub mod fsct_bos_finder;
@@ -28,14 +28,14 @@ fn check_fsct_interface_protocol(device_info: &DeviceInfo, fsct_interface_number
 }
 
 
-pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> Result<nusb::Interface, IoErrorOr<FsctDeviceError>>
+pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> Result<nusb::Interface, IoErrorOrAny>
 {
     let device = device_info.open()?;
     let interface = device.claim_interface(interface_number)?;
     Ok(interface)
 }
 
-pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, IoErrorOr<FsctDeviceError>> {
+pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, IoErrorOrAny> {
     let fsct_vendor_subclass_number = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(device_info)?;
 
     let fsct_interface_number = descriptor_utils::find_fsct_interface_number(device_info, fsct_vendor_subclass_number)?;

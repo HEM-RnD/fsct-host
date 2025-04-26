@@ -12,7 +12,7 @@ struct BosDescriptor {
     bNumDeviceCaps: u8,
 }
 
-use crate::usb::errors::{BosError, IoErrorOr};
+use crate::usb::errors::{BosError, IoErrorOrAny};
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
@@ -195,7 +195,7 @@ fn get_fsct_vendor_subclass_number(
 
 pub fn get_fsct_vendor_subclass_number_from_device(
     device: &DeviceInfo,
-) -> Result<u8, IoErrorOr<BosError>> {
+) -> Result<u8, IoErrorOrAny> {
     if device.usb_version() <= 0x0200 {
         return Err(BosError::NotAvailable(device.usb_version()).into());
     }

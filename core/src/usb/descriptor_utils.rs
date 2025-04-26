@@ -4,11 +4,11 @@ use nusb::{DeviceInfo, Interface};
 use log::warn;
 use nusb::transfer::{ControlIn, ControlType, Recipient};
 use crate::usb::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor, FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
-use crate::usb::errors::{DescriptorError, IoErrorOr};
+use crate::usb::errors::{DescriptorError, IoErrorOrAny};
 
 async fn get_interface_descriptor(interface: &Interface,
                                   descriptor_number: u8,
-                                  length: u16) -> Result<Vec<u8>, IoErrorOr<DescriptorError>>
+                                  length: u16) -> Result<Vec<u8>, IoErrorOrAny>
 {
     let interface_number = interface.interface_number();
     let control_in = ControlIn {
@@ -23,12 +23,12 @@ async fn get_interface_descriptor(interface: &Interface,
         .control_in(control_in)
         .await
         .into_result()
-        .map_err(|e| IoErrorOr::IoError(e.into()))
+        .map_err(|e| IoErrorOrAny::IoError(e.into()))
 }
 
 const FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE: usize = size_of::<FsctFunctionalityDescriptor>();
 
-async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, IoErrorOr<DescriptorError>>
+async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, IoErrorOrAny>
 {
     let descriptor = get_interface_descriptor(
         interface,
@@ -64,7 +64,7 @@ pub enum FsctDescriptorSet {
     TextMetadata(FsctTextMetadataDescriptor),
 }
 
-pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, IoErrorOr<DescriptorError>>
+pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, IoErrorOrAny>
 {
     let raw_descriptor = get_fsct_functionality_descriptor_set_raw(interface).await?;
     let descriptors = Descriptors(&raw_descriptor);
@@ -73,17 +73,17 @@ pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Res
         match descriptor.descriptor_type() {
             FSCT_FUNCTIONALITY_DESCRIPTOR_ID => {
                 let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()
-                    .map_err(|_| DescriptorError::NotFsctFunctionalityDescriptor)?;
+                                                                             .map_err(|_| DescriptorError::NotFsctFunctionalityDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::Functionality(fsct_descriptor));
             }
             FSCT_IMAGE_METADATA_DESCRIPTOR_ID => {
                 let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()
-                    .map_err(|_| DescriptorError::NotFsctImageMetadataDescriptor)?;
+                                                                             .map_err(|_| DescriptorError::NotFsctImageMetadataDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::ImageMetadata(fsct_descriptor));
             }
             FSCT_TEXT_METADATA_DESCRIPTOR_ID => {
                 let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()
-                    .map_err(|_| DescriptorError::NotFsctTextMetadataDescriptor)?;
+                                                                            .map_err(|_| DescriptorError::NotFsctTextMetadataDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::TextMetadata(fsct_descriptor));
             }
             _ => {}
