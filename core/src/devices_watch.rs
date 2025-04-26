@@ -9,11 +9,12 @@ use futures::StreamExt;
 use crate::player::{PlayerEvent, PlayerState};
 use crate::player_watch::PlayerEventListener;
 use crate::usb::create_and_configure_fsct_device;
+use crate::usb::errors::{FsctDeviceError, IoErrorOr};
 use crate::usb::fsct_device::FsctDevice;
 
 pub type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
 
-async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, String>
+async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, IoErrorOr<FsctDeviceError>>
 {
     let fsct_device = create_and_configure_fsct_device(device_info).await?;
 
@@ -37,7 +38,7 @@ async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, S
 async fn try_initialize_device_and_add_to_list(device_info: &DeviceInfo,
                                                devices: &DeviceMap,
                                                current_state: &Mutex<PlayerState>)
-                                               -> Result<(), String>
+                                               -> Result<(), IoErrorOr<FsctDeviceError>>
 {
     let fsct_device = try_initialize_device(device_info).await?;
 
@@ -72,11 +73,11 @@ async fn run_device_initialization(device_info: DeviceInfo,
 
         while std::time::Instant::now() < retry_timout_timepoint {
             if let Some(device_info) = get_device_info_by_id(device_info.id()).await {
-                //todo distinguish access problems from lack of FSCT features!!!
-
                 res = try_initialize_device_and_add_to_list(&device_info, &devices, &current_metadata).await;
-                if res.is_ok() {
-                    return;
+                match res {
+                    Ok(_) => break,
+                    Err(IoErrorOr::Or(_)) => break,
+                    _ => ()
                 }
             }
             tokio::time::sleep(retry_period).await;
@@ -104,7 +105,7 @@ async fn apply_player_state_on_device(device: &FsctDevice,
     Ok(())
 }
 
-fn log_device_initialize_result(result: Result<(), String>, device_info: &DeviceInfo) {
+fn log_device_initialize_result(result: Result<(), IoErrorOr<FsctDeviceError>>, device_info: &DeviceInfo) {
     match result {
         Ok(_) => info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
                       device_info.product_string().unwrap_or("Unknown"),

@@ -14,6 +14,8 @@ futures = "0.3"
 env_logger = "0.11"
 fsct_core = { path = "core" }
 log = "0.4.25"
+thiserror = "2.0.12"
+anyhow = "1.0.98"
 
 
 [profile.release]

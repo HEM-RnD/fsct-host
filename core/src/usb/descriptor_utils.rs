@@ -1,12 +1,14 @@
+use std::mem::size_of;
 use nusb::descriptors::Descriptor;
 use nusb::{DeviceInfo, Interface};
 use log::warn;
 use nusb::transfer::{ControlIn, ControlType, Recipient};
 use crate::usb::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor, FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
+use crate::usb::errors::{DescriptorError, IoErrorOr};
 
 async fn get_interface_descriptor(interface: &Interface,
                                   descriptor_number: u8,
-                                  length: u16) -> Result<Vec<u8>, String>
+                                  length: u16) -> Result<Vec<u8>, IoErrorOr<DescriptorError>>
 {
     let interface_number = interface.interface_number();
     let control_in = ControlIn {
@@ -21,12 +23,12 @@ async fn get_interface_descriptor(interface: &Interface,
         .control_in(control_in)
         .await
         .into_result()
-        .map_err(|e| format!("Failed to get interface descriptor: {}", e))
+        .map_err(|e| IoErrorOr::IoError(e.into()))
 }
 
 const FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE: usize = size_of::<FsctFunctionalityDescriptor>();
 
-async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, String>
+async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, IoErrorOr<DescriptorError>>
 {
     let descriptor = get_interface_descriptor(
         interface,
@@ -36,16 +38,16 @@ async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Res
         .await?;
 
     if descriptor.len() < FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE {
-        return Err("FSCT functionality descriptor too short".to_string());
+        return Err(DescriptorError::TooShort.into());
     }
     let fsct_functionality_descriptor: FsctFunctionalityDescriptor = unsafe {
         *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(descriptor.as_ptr())
     };
     if fsct_functionality_descriptor.bLength != FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE as u8 {
-        return Err("FSCT functionality descriptor too short".to_string());
+        return Err(DescriptorError::TooShort.into());
     }
     if fsct_functionality_descriptor.wTotalLength < FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE as u16 {
-        return Err("FSCT functionality descriptor too short".to_string());
+        return Err(DescriptorError::TooShort.into());
     }
     get_interface_descriptor(
         interface,
@@ -62,7 +64,7 @@ pub enum FsctDescriptorSet {
     TextMetadata(FsctTextMetadataDescriptor),
 }
 
-pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, String>
+pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, IoErrorOr<DescriptorError>>
 {
     let raw_descriptor = get_fsct_functionality_descriptor_set_raw(interface).await?;
     let descriptors = Descriptors(&raw_descriptor);
@@ -70,15 +72,18 @@ pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Res
     for descriptor in descriptors {
         match descriptor.descriptor_type() {
             FSCT_FUNCTIONALITY_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()?;
+                let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()
+                    .map_err(|_| DescriptorError::NotFsctFunctionalityDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::Functionality(fsct_descriptor));
             }
             FSCT_IMAGE_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()?;
+                let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()
+                    .map_err(|_| DescriptorError::NotFsctImageMetadataDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::ImageMetadata(fsct_descriptor));
             }
             FSCT_TEXT_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()?;
+                let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()
+                    .map_err(|_| DescriptorError::NotFsctTextMetadataDescriptor)?;
                 fsct_descriptors.push(FsctDescriptorSet::TextMetadata(fsct_descriptor));
             }
             _ => {}
@@ -88,15 +93,15 @@ pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Res
 }
 
 pub fn find_fsct_interface_number(device: &DeviceInfo,
-                                  fsct_vendor_subclass_number: u8) -> Option<u8>
+                                  fsct_vendor_subclass_number: u8) -> Result<u8, DescriptorError>
 {
     let interfaces = device.interfaces();
     for interface in interfaces {
         if interface.class() == 0xFF && interface.subclass() == fsct_vendor_subclass_number {
-            return Some(interface.interface_number());
+            return Ok(interface.interface_number());
         }
     }
-    None
+    Err(DescriptorError::InterfaceNotFound)
 }
 
 // Copied from nusb::descriptors::Descriptors, because it is not public
@@ -145,13 +150,13 @@ impl<'a> Iterator for Descriptors<'a> {
 }
 
 impl TryFrom<Descriptor<'_>> for FsctFunctionalityDescriptor {
-    type Error = String;
+    type Error = DescriptorError;
     fn try_from(value: Descriptor<'_>) -> Result<Self, Self::Error> {
         if value.descriptor_type() != FSCT_FUNCTIONALITY_DESCRIPTOR_ID {
-            return Err("Not an FSCT functionality descriptor".to_string());
+            return Err(DescriptorError::NotFsctFunctionalityDescriptor);
         }
         if value.len() != FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE {
-            return Err("FSCT functionality descriptor too short".to_string());
+            return Err(DescriptorError::TooShort);
         }
         let fsct_functionality_descriptor: FsctFunctionalityDescriptor = unsafe {
             *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(value.as_ptr())
@@ -161,13 +166,13 @@ impl TryFrom<Descriptor<'_>> for FsctFunctionalityDescriptor {
 }
 
 impl TryFrom<Descriptor<'_>> for FsctImageMetadataDescriptor {
-    type Error = String;
+    type Error = DescriptorError;
     fn try_from(value: Descriptor<'_>) -> Result<Self, Self::Error> {
         if value.descriptor_type() != FSCT_IMAGE_METADATA_DESCRIPTOR_ID {
-            return Err("Not an FSCT image metadata descriptor".to_string());
+            return Err(DescriptorError::NotFsctImageMetadataDescriptor);
         }
         if value.len() != size_of::<FsctImageMetadataDescriptor>() {
-            return Err("FSCT image metadata descriptor too short".to_string());
+            return Err(DescriptorError::TooShort);
         }
         let fsct_image_metadata_descriptor: FsctImageMetadataDescriptor = unsafe {
             *std::mem::transmute::<*const u8, &FsctImageMetadataDescriptor>(value.as_ptr())
@@ -179,13 +184,13 @@ impl TryFrom<Descriptor<'_>> for FsctImageMetadataDescriptor {
 const FSCT_TEXT_METADATA_DESCRIPTOR_HEADER_SIZE: usize = size_of::<FsctTextMetadataDescriptorHeader>();
 
 impl TryFrom<Descriptor<'_>> for FsctTextMetadataDescriptor {
-    type Error = String;
+    type Error = DescriptorError;
     fn try_from(value: Descriptor<'_>) -> Result<Self, Self::Error> {
         if value.descriptor_type() != FSCT_TEXT_METADATA_DESCRIPTOR_ID {
-            return Err("Not an FSCT text metadata descriptor".to_string());
+            return Err(DescriptorError::NotFsctTextMetadataDescriptor);
         }
         if value.len() < FSCT_TEXT_METADATA_DESCRIPTOR_HEADER_SIZE {
-            return Err("FSCT text metadata descriptor too short".to_string());
+            return Err(DescriptorError::TooShort);
         }
         let fsct_text_metadata_descriptor_header: &FsctTextMetadataDescriptorHeader = unsafe {
             &std::mem::transmute::<*const u8, &FsctTextMetadataDescriptorHeader>(value.as_ptr())
@@ -202,7 +207,7 @@ impl TryFrom<Descriptor<'_>> for FsctTextMetadataDescriptor {
         let mut remaining_data = &value.iter().as_slice()[FSCT_TEXT_METADATA_DESCRIPTOR_HEADER_SIZE..];
         while !remaining_data.is_empty() {
             if remaining_data.len() < size_of::<FsctTextMetadataDescriptorMultiPart>() {
-                return Err("FSCT text metadata descriptor too short".to_string());
+                return Err(DescriptorError::TooShort);
             }
             let fsct_text_metadata_descriptor_multi_part: &FsctTextMetadataDescriptorMultiPart = unsafe {
                 &std::mem::transmute::<*const u8, &FsctTextMetadataDescriptorMultiPart>(remaining_data.as_ptr())

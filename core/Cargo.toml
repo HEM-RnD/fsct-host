@@ -12,3 +12,5 @@ bitflags = "2.8.0"
 futures.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
