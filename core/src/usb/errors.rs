@@ -16,8 +16,11 @@ where
 
 #[derive(Error, Debug)]
 pub enum BosError {
-    #[error("BOS descriptor not found")]
-    NotFound,
+    #[error("BOS descriptor not available, unsupported usb version {:2x}.{:02x}", .0 >> 8, .0 & 0xff)]
+    NotAvailable(u16),
+
+    #[error("Fsct capability not available")]
+    NotFsctCapability,
 
     #[error("Data is too short to parse {name}: expected {expected}, got {actual} bytes")]
     TooShort {
@@ -63,7 +66,7 @@ pub enum DescriptorError {
 
 #[derive(Error, Debug)]
 pub enum FsctDeviceError {
-    #[error("Failed to get BOS descriptor: {0}")]
+    #[error("Can't recognize FSCT capability, {0}")]
     BosError(#[from] BosError),
 
     #[error("Failed to get FSCT descriptor: {0}")]
@@ -74,9 +77,6 @@ pub enum FsctDeviceError {
 
     #[error("Protocol version {0} not supported")]
     ProtocolVersionNotSupported(u8),
-
-    #[error("BOS FSCT capability not available")]
-    BosFsctCapabilityNotAvailable,
 
     #[error("Other error: {0}")]
     OtherError(String),

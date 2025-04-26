@@ -36,8 +36,7 @@ pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> R
 }
 
 pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, IoErrorOr<FsctDeviceError>> {
-    let fsct_vendor_subclass_number = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(device_info)?
-        .ok_or(FsctDeviceError::BosFsctCapabilityNotAvailable)?;
+    let fsct_vendor_subclass_number = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(device_info)?;
 
     let fsct_interface_number = descriptor_utils::find_fsct_interface_number(device_info, fsct_vendor_subclass_number)?;
     check_fsct_interface_protocol(device_info, fsct_interface_number)?;

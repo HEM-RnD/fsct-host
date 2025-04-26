@@ -162,7 +162,7 @@ struct FSCTCapability {
 
 fn get_fsct_capability(
     platform_capabilities: Vec<PlatformCapability>,
-) -> Result<Option<FSCTCapability>, BosError> {
+) -> Result<FSCTCapability, BosError> {
     for capability in platform_capabilities {
         if capability.uuid == FSCT_UUID {
             if capability.data.len() < std::mem::size_of::<FSCTCapabilityDesc>() {
@@ -175,32 +175,29 @@ fn get_fsct_capability(
                 let capability_descriptor_version = fsct_capability.capabilityDescriptorVersion;
                 return Err(BosError::FsctCapabilityVersionMismatch { expected: FSCT_CAPABILITY_DESCRIPTOR_VERSION, actual: capability_descriptor_version });
             }
-            return Ok(Some(FSCTCapability {
+            return Ok(FSCTCapability {
                 vendor_sub_class_number: fsct_capability.vendorSubClassNumber,
                 version: (
                     (fsct_capability.capabilityDescriptorVersion >> 8) as u8,
                     fsct_capability.capabilityDescriptorVersion as u8,
                 ),
-            }));
+            });
         }
     }
-    Ok(None)
+    Err(BosError::NotFsctCapability)
 }
 
 fn get_fsct_vendor_subclass_number(
     platform_capabilities: Vec<PlatformCapability>,
-) -> Result<Option<u8>, BosError> {
-    match get_fsct_capability(platform_capabilities)? {
-        Some(fsct_capability) => Ok(Some(fsct_capability.vendor_sub_class_number)),
-        None => Ok(None),
-    }
+) -> Result<u8, BosError> {
+    Ok(get_fsct_capability(platform_capabilities)?.vendor_sub_class_number)
 }
 
 pub fn get_fsct_vendor_subclass_number_from_device(
     device: &DeviceInfo,
-) -> Result<Option<u8>, IoErrorOr<BosError>> {
+) -> Result<u8, IoErrorOr<BosError>> {
     if device.usb_version() <= 0x0200 {
-        return Ok(None);
+        return Err(BosError::NotAvailable(device.usb_version()).into());
     }
 
     let handle = device.open()?;
@@ -217,10 +214,7 @@ pub fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
         .unwrap();
     for device in devices {
         let result = get_fsct_vendor_subclass_number_from_device(&device);
-        if result.is_err() {
-            continue;
-        }
-        if let Some(_fsct_vendor_subclass_number) = result.unwrap() {
+        if let Ok(_fsct_vendor_subclass_number) = result {
             return Some(device);
         }
     }
