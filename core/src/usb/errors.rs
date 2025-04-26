@@ -1,5 +1,5 @@
 use std::io;
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow};
 use thiserror::Error;
 
 
@@ -82,9 +82,6 @@ pub enum DescriptorError {
 
     #[error("Descriptor is too short")]
     TooShort,
-
-    #[error("Interface not found")]
-    InterfaceNotFound,
 }
 
 #[derive(Error, Debug)]

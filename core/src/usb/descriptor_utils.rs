@@ -1,6 +1,6 @@
 use std::mem::size_of;
 use nusb::descriptors::Descriptor;
-use nusb::{DeviceInfo, Interface};
+use nusb::{Interface};
 use log::warn;
 use nusb::transfer::{ControlIn, ControlType, Recipient};
 use crate::usb::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor, FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
@@ -72,36 +72,21 @@ pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Res
     for descriptor in descriptors {
         match descriptor.descriptor_type() {
             FSCT_FUNCTIONALITY_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()
-                                                                             .map_err(|_| DescriptorError::NotFsctFunctionalityDescriptor)?;
+                let fsct_descriptor: FsctFunctionalityDescriptor = descriptor.try_into()?;
                 fsct_descriptors.push(FsctDescriptorSet::Functionality(fsct_descriptor));
             }
             FSCT_IMAGE_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()
-                                                                             .map_err(|_| DescriptorError::NotFsctImageMetadataDescriptor)?;
+                let fsct_descriptor: FsctImageMetadataDescriptor = descriptor.try_into()?;
                 fsct_descriptors.push(FsctDescriptorSet::ImageMetadata(fsct_descriptor));
             }
             FSCT_TEXT_METADATA_DESCRIPTOR_ID => {
-                let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()
-                                                                            .map_err(|_| DescriptorError::NotFsctTextMetadataDescriptor)?;
+                let fsct_descriptor: FsctTextMetadataDescriptor = descriptor.try_into()?;
                 fsct_descriptors.push(FsctDescriptorSet::TextMetadata(fsct_descriptor));
             }
             _ => {}
         }
     }
     Ok(fsct_descriptors)
-}
-
-pub fn find_fsct_interface_number(device: &DeviceInfo,
-                                  fsct_vendor_subclass_number: u8) -> Result<u8, DescriptorError>
-{
-    let interfaces = device.interfaces();
-    for interface in interfaces {
-        if interface.class() == 0xFF && interface.subclass() == fsct_vendor_subclass_number {
-            return Ok(interface.interface_number());
-        }
-    }
-    Err(DescriptorError::InterfaceNotFound)
 }
 
 // Copied from nusb::descriptors::Descriptors, because it is not public

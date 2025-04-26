@@ -9,7 +9,7 @@ use futures::StreamExt;
 use crate::player::{PlayerEvent, PlayerState};
 use crate::player_watch::PlayerEventListener;
 use crate::usb::create_and_configure_fsct_device;
-use crate::usb::errors::{FsctDeviceError, IoErrorOrAny};
+use crate::usb::errors::{IoErrorOrAny};
 use crate::usb::fsct_device::FsctDevice;
 
 pub type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;

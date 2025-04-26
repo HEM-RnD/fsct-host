@@ -38,7 +38,7 @@ pub async fn open_interface(device_info: &DeviceInfo, interface_number: u8) -> R
 pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Result<fsct_device::FsctDevice, IoErrorOrAny> {
     let fsct_vendor_subclass_number = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(device_info)?;
 
-    let fsct_interface_number = descriptor_utils::find_fsct_interface_number(device_info, fsct_vendor_subclass_number)?;
+    let fsct_interface_number = find_fsct_interface_number(device_info, fsct_vendor_subclass_number)?;
     check_fsct_interface_protocol(device_info, fsct_interface_number)?;
     let interface = open_interface(&device_info, fsct_interface_number).await?;
     let fsct_descriptors = descriptor_utils::get_fsct_functionality_descriptor_set(&interface).await?;
@@ -46,4 +46,16 @@ pub async fn create_and_configure_fsct_device(device_info: &DeviceInfo) -> Resul
     let mut fsct_device = fsct_device::FsctDevice::new(fsct_interface);
     fsct_device.init(&fsct_descriptors).await?;
     Ok(fsct_device)
+}
+
+pub fn find_fsct_interface_number(device: &DeviceInfo,
+                                  fsct_vendor_subclass_number: u8) -> Result<u8, FsctDeviceError>
+{
+    let interfaces = device.interfaces();
+    for interface in interfaces {
+        if interface.class() == 0xFF && interface.subclass() == fsct_vendor_subclass_number {
+            return Ok(interface.interface_number());
+        }
+    }
+    Err(FsctDeviceError::InterfaceNotFound)
 }
