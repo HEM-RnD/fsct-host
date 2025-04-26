@@ -7,10 +7,10 @@ pub enum IoErrorOr<T>
 where
     T: Sized,
 {
-    #[error("IO error: {0}")]
+    #[error("IO error -> {0}")]
     IoError(#[from] io::Error),
 
-    #[error("Other error: {0}")]
+    #[error("{0}")]
     Or(T),
 }
 
