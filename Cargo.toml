@@ -3,7 +3,7 @@ resolver = "3"
 members = ["core", "gui", "ports/volumio", "ports/native", "ports/node"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.2"
 authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
 description = "Tools supporting Ferrum Streaming Control Technology"
 
