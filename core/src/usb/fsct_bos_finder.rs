@@ -207,16 +207,3 @@ pub fn get_fsct_vendor_subclass_number_from_device(
     let platform_caps = get_platform_capabilities(bos_desc)?;
     Ok(get_fsct_vendor_subclass_number(platform_caps)?)
 }
-
-pub fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
-    let devices = nusb::list_devices()
-        .map_err(|e| format!("Failed to list devices: {}", e))
-        .unwrap();
-    for device in devices {
-        let result = get_fsct_vendor_subclass_number_from_device(&device);
-        if let Ok(_fsct_vendor_subclass_number) = result {
-            return Some(device);
-        }
-    }
-    None
-}
