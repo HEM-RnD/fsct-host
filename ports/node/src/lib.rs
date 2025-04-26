@@ -133,7 +133,7 @@ async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceAbortHandle> {
         napi::Error::from_reason(e.to_string()))?;
     let player_watch_handle = run_player_watch(Player::from_arc(player.player_impl.clone()), player_event_listener,
                                                player_state).await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                                                            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(FsctServiceAbortHandle {
         device_watch_handle: device_watch_handle.abort_handle(),
         player_watch_handle: player_watch_handle.abort_handle(),
@@ -174,7 +174,7 @@ pub fn init_stdout_logger() -> Result<(), napi::Error> {
     simple_logger::SimpleLogger::new().init().map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-#[allow(unreachable_code)]
+#[allow(unreachable_code, unused_variables)]
 #[napi]
 pub fn init_systemd_logger(syslog_identifier: String) -> Result<(), napi::Error> {
     #[cfg(target_os = "linux")]

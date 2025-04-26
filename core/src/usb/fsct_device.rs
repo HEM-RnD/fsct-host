@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::definitions::TimelineInfo;
 use crate::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use crate::usb::descriptor_utils::FsctDescriptorSet;
+use crate::usb::errors::FsctDeviceError;
 use crate::usb::fsct_usb_interface::FsctUsbInterface;
 use crate::usb::requests::TrackProgressRequestData;
 
@@ -42,7 +43,7 @@ impl FsctDevice {
         fsct_device
     }
 
-    pub(super) async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), String> {
+    pub(super) async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), FsctDeviceError> {
         self.parse_descriptors(fsct_descriptors);
         if self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             self.synchronize_time().await?;
@@ -97,16 +98,16 @@ impl FsctDevice {
         self.state.lock().unwrap().time_diff
     }
 
-    async fn synchronize_time(&mut self) -> Result<(), String> {
+    async fn synchronize_time(&mut self) -> Result<(), FsctDeviceError> {
         let state = self.state.clone();
         let fsct_interface = self.fsct_interface.clone();
 
         Self::synchronize_time_impl(state, fsct_interface).await
     }
 
-    async fn synchronize_time_impl(state: Arc<Mutex<FsctDeviceSharedState>>, fsct_interface: Arc<FsctUsbInterface>) -> Result<(), String> {
+    async fn synchronize_time_impl(state: Arc<Mutex<FsctDeviceSharedState>>, fsct_interface: Arc<FsctUsbInterface>) -> Result<(), FsctDeviceError> {
         if !state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
-            return Err("Device does not support current playback progress, so it can't synchronize time".to_string());
+            return Err(FsctDeviceError::PlaybackProgressNotSupported);
         }
         let before = std::time::SystemTime::now();
         let timestamp_in_millis = fsct_interface.get_device_timestamp().await?;
@@ -115,35 +116,34 @@ impl FsctDevice {
         (std::time::UNIX_EPOCH).unwrap().as_millis()) / 2) as i128;
         let time_diff = mean_now - (timestamp_in_millis as i128);
         if time_diff > u64::MAX as i128 {
-            return Err("Time difference is too large".to_string());
+            return Err(FsctDeviceError::TimeDifferenceTooLarge);
         }
         if time_diff < 0 {
-            return Err("Time difference is negative".to_string());
+            return Err(FsctDeviceError::TimeDifferenceNegative);
         }
         state.lock().unwrap().time_diff = Some(Duration::from_millis(time_diff as u64));
         Ok(())
     }
 
-    pub async fn get_enable(&self) -> Result<bool, String> {
+    pub async fn get_enable(&self) -> Result<bool, FsctDeviceError> {
         self.fsct_interface.get_enable().await
     }
-    pub async fn set_enable(&self, enable: bool) -> Result<(), String> {
+    pub async fn set_enable(&self, enable: bool) -> Result<(), FsctDeviceError> {
         self.fsct_interface.set_enable(enable).await
     }
 
-    pub async fn set_progress(&self, progress: Option<TimelineInfo>) -> Result<(), String>
+    pub async fn set_progress(&self, progress: Option<TimelineInfo>) -> Result<(), FsctDeviceError>
     {
         if !self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             return Ok(()); // not supported, omitting
         }
-        let time_diff = self.state.lock().unwrap().time_diff.ok_or("Time is not synchronized")?;
+        let time_diff = self.state.lock().unwrap().time_diff.ok_or(FsctDeviceError::TimeNotSynchronized)?;
         match progress {
             None => self.fsct_interface.disable_track_progress().await,
             Some(progress) => {
                 let timestamp = std::time::SystemTime::now();
                 let duration_since_update_time = timestamp.duration_since(progress.update_time).map_err(
-                    |e| format!("Failed to get time difference.\
-                    It seems that timestamp is later than now. Error: {}", e)
+                    |e| FsctDeviceError::TimeDifferenceCalculationError(e.to_string())
                 )?;
 
                 let position = progress.position.as_secs_f64() + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
@@ -162,7 +162,7 @@ impl FsctDevice {
     }
 
 
-    pub async fn set_current_text(&self, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), String>
+    pub async fn set_current_text(&self, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), FsctDeviceError>
     {
         let supported_metadata =
             self.state.lock().unwrap().supported_current_texts.iter().find(|metadata| metadata.metadata == text_id).copied();
@@ -180,7 +180,7 @@ impl FsctDevice {
         }
     }
 
-    pub async fn set_status(&self, status: crate::definitions::FsctStatus) -> Result<(), String>
+    pub async fn set_status(&self, status: crate::definitions::FsctStatus) -> Result<(), FsctDeviceError>
     {
         self.fsct_interface.send_status(status).await
     }

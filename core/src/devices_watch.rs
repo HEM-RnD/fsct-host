@@ -86,7 +86,7 @@ async fn run_device_initialization(device_info: DeviceInfo,
     });
 }
 
-async fn apply_event_on_device(fsct_device: &FsctDevice, event: &PlayerEvent) -> Result<(), String> {
+async fn apply_event_on_device(fsct_device: &FsctDevice, event: &PlayerEvent) -> anyhow::Result<()> {
     match event {
         PlayerEvent::StatusChanged(status) => fsct_device.set_status(status.clone()).await?,
         PlayerEvent::TimelineChanged(timeline) => fsct_device.set_progress(timeline.clone()).await?,
@@ -96,7 +96,7 @@ async fn apply_event_on_device(fsct_device: &FsctDevice, event: &PlayerEvent) ->
 }
 
 async fn apply_player_state_on_device(device: &FsctDevice,
-                                      current_state: &PlayerState) -> Result<(), String> {
+                                      current_state: &PlayerState) -> anyhow::Result<()> {
     apply_event_on_device(device, &PlayerEvent::StatusChanged(current_state.status.clone())).await?;
     apply_event_on_device(device, &PlayerEvent::TimelineChanged(current_state.timeline.clone())).await?;
     for (text_id, text) in current_state.texts.iter() {
@@ -117,9 +117,9 @@ fn log_device_initialize_result(result: Result<(), IoErrorOrAny>, device_info: &
 }
 
 pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>)
-    -> Result<tokio::task::JoinHandle<()>, String>
+    -> Result<tokio::task::JoinHandle<()>, anyhow::Error>
 {
-    let mut devices_plug_events_stream = nusb::watch_devices().map_err(|e| e.to_string())?;
+    let mut devices_plug_events_stream = nusb::watch_devices()?;
     let join_handle = tokio::spawn(async move {
         let devices = list_devices().unwrap();
         for device_info in devices {

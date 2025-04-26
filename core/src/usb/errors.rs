@@ -91,4 +91,61 @@ pub enum FsctDeviceError {
 
     #[error("Protocol version {0} not supported")]
     ProtocolVersionNotSupported(u8),
+
+    #[error("Time is not synchronized")]
+    TimeNotSynchronized,
+
+    #[error("Time difference is too large")]
+    TimeDifferenceTooLarge,
+
+    #[error("Time difference is negative")]
+    TimeDifferenceNegative,
+
+    #[error("Failed to get time difference. It seems that timestamp is later than now. Error: {0}")]
+    TimeDifferenceCalculationError(String),
+
+    #[error("Device does not support current playback progress, so it can't synchronize time")]
+    PlaybackProgressNotSupported,
+
+    #[error("USB control transfer failed: {0}")]
+    UsbControlTransferError(#[source] anyhow::Error),
+
+    #[error("Expected {expected} bytes, got {actual}")]
+    DataSizeMismatch {
+        expected: usize,
+        actual: usize,
+    },
+}
+
+pub trait ToFsctDeviceError {
+    fn map_to_fsct_device_control_transfer_error(self) -> FsctDeviceError;
+}
+
+pub trait ToFsctDeviceResult<T> {
+    fn map_err_to_fsct_device_control_transfer_error(self) -> Result<T, FsctDeviceError>;
+}
+
+impl<E> ToFsctDeviceError for E
+where
+    E: Into<anyhow::Error>,
+{
+    fn map_to_fsct_device_control_transfer_error(self) -> FsctDeviceError {
+        FsctDeviceError::UsbControlTransferError(self.into())
+    }
+}
+
+// impl ToFsctDeviceError for anyhow::Error
+// {
+//     fn map_to_fsct_device_control_transfer_error(self) -> FsctDeviceError {
+//         FsctDeviceError::UsbControlTransferError(self)
+//     }
+// }
+
+impl<T, E> ToFsctDeviceResult<T> for Result<T, E>
+where
+    E: ToFsctDeviceError,
+{
+    fn map_err_to_fsct_device_control_transfer_error(self) -> Result<T, FsctDeviceError> {
+        self.map_err(|e| e.map_to_fsct_device_control_transfer_error())
+    }
 }

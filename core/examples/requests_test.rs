@@ -7,9 +7,8 @@ use fsct_core::definitions::FsctTextMetadata;
 use fsct_core::definitions::FsctStatus;
 
 #[tokio::main]
-async fn main() -> Result<(), String> {
-    let devices = list_devices()
-        .map_err(|e| format!("Failed to list devices: {}", e))?;
+async fn main() -> anyhow::Result<()> {
+    let devices = list_devices()?;
     for device in devices {
         let fsct_device = create_and_configure_fsct_device(&device).await;
         if let Err(error_string) = fsct_device {

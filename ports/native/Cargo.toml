@@ -10,6 +10,7 @@ fsct_core.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 env_logger.workspace = true
+anyhow.workspace = true
 
 [dev-dependencies]
 fsct_gui = { path = "../../gui" }

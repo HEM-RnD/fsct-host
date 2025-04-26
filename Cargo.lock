@@ -1318,6 +1318,7 @@ dependencies = [
 name = "fsct_native_port"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "block2 0.6.0",
  "core-foundation-sys",
