@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "gui", "ports/volumio", "ports/native", "ports/node"]
+members = ["core", "gui", "ports/native", "ports/node"]
 
 [workspace.package]
 version = "0.2.3"
