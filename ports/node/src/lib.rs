@@ -188,7 +188,8 @@ impl From<LogLevelFilter> for log::LevelFilter {
 
 #[napi]
 pub fn init_stdout_logger() -> Result<(), napi::Error> {
-    simple_logger::SimpleLogger::new().init().map_err(|e| napi::Error::from_reason(e.to_string()))
+    env_logger::init();
+    Ok(())
 }
 
 #[allow(unreachable_code, unused_variables)]

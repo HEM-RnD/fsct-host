@@ -5,7 +5,7 @@ edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
-
+publish.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
@@ -14,11 +14,11 @@ crate-type = ["cdylib"]
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
 napi = { version = "2.12.2", default-features = false, features = ["napi4", "tokio_rt"] }
 napi-derive = "2.12.2"
-simple_logger = "5.0.0"
 fsct_core.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 log = "0.4.25"
+env_logger.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 systemd-journal-logger = "2.2.1"

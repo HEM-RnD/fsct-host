@@ -1,0 +1,8 @@
+accepted = [
+    "MIT",
+    "ISC",
+    "Unicode-3.0"
+]
+
+private = { ignore = true }
+

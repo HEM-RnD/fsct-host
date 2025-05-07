@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "gui", "ports/native", "ports/node"]
+members = ["core", "ports/native", "ports/node"]
 
 [workspace.package]
 version = "0.2.4"
@@ -8,6 +8,7 @@ authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
 description = "Host implementation of Ferrum Streaming Control Technology™ (FSCT). Additional licensing terms apply as described in LICENSE-FSCT.md."
 license = "Apache-2.0"
 edition = "2024"
+publish = false
 
 [workspace.dependencies]
 async-trait = "0.1.88"
@@ -18,7 +19,6 @@ fsct_core = { path = "core" }
 log = "0.4.25"
 thiserror = "2.0.12"
 anyhow = "1.0.98"
-
 
 [profile.release]
 lto = true

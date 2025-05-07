@@ -1,0 +1,20 @@
+Ferrum Streaming Control Technology™ Host
+Copyright (c) 2025 HEM Sp. z o.o.
+
+This product includes software developed by HEM Sp. z o.o.
+
+This product implements Ferrum Streaming Control Technology™ (FSCT).
+Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o. All rights reserved.
+Use of the FSCT and trademark is governed by the Ferrum Streaming Control Technology™ License, included as LICENSE-FSCT.md.
+
+This product includes software developed by third parties.
+Portions of this software are licensed as follows:
+
+{{#each licenses}}
+{{#each used_by}}
+* [*{{crate.name}}*]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+version *{{crate.version}}* {{#if crate.authors}}by {{crate.authors}} {{else}}{{/if}}licensed on **{{../name}}**
+{{/each}}
+{{/each}}
+
+-------------------------------------------------------------------------------

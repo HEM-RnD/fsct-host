@@ -15,7 +15,7 @@
       ]
     }
   },
-  "license": "Apache-2.0",
+  "license": "Apache-2.0 AND MIT AND ISC AND Unicode-3.0",
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "ava": "^6.0.1"
@@ -36,9 +36,9 @@
     "version": "napi version"
   },
   "optionalDependencies": {
-    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.3",
-    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.3",
-    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.3"
+    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.4",
+    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.4",
+    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.4"
   },
   "publishConfig": {
     "access": "public"
