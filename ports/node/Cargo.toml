@@ -1,8 +1,11 @@
 [package]
 name = "fsct-node-lib"
-edition = "2024"
+description = "Node.js bindings to FSCT Host. Additional licensing terms apply as described in LICENSE-FSCT.md."
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
+license.workspace = true
+
 
 [lib]
 crate-type = ["cdylib"]

@@ -3,9 +3,11 @@ resolver = "3"
 members = ["core", "gui", "ports/native", "ports/node"]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
-description = "Tools supporting Ferrum Streaming Control Technology"
+description = "Host implementation of Ferrum Streaming Control Technology™ (FSCT). Additional licensing terms apply as described in LICENSE-FSCT.md."
+license = "Apache-2.0"
+edition = "2024"
 
 [workspace.dependencies]
 async-trait = "0.1.88"

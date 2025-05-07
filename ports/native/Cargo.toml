@@ -1,9 +1,12 @@
 [package]
 name = "fsct_native_port"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
-description.workspace = true
+license.workspace = true
+description = """FSCT Host native port which contains host OS bindings as well as service
+executables of Ferrum Streaming Control Technology™ (FSCT) host implementation.
+Additional licensing terms apply as described in LICENSE-FSCT.md."""
 
 [dependencies]
 fsct_core.workspace = true

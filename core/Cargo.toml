@@ -1,8 +1,10 @@
 [package]
 name = "fsct_core"
-edition = "2024"
+description = "FSCT Host core library which includes usb definitions and communication of Ferrum Streaming Control Technology™ (FSCT). Additional licensing terms apply as described in LICENSE-FSCT.md. "
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 log = "0.4.25"

@@ -1,9 +1,10 @@
 [package]
 name = "fsct_gui"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
-description.workspace = true
+license.workspace = true
+description = "GUI library for testing player bindings without connecting device."
 
 [dependencies]
 eframe = "0.31.1"
