@@ -1,6 +1,6 @@
 {
   "name": "@hemspzoo/fsct-lib-linux-x64-gnu",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "author": "HEM Sp. z o.o.",
   "os": [
     "linux"
@@ -10,9 +10,12 @@
   ],
   "main": "fsct-lib.linux-x64-gnu.node",
   "files": [
-    "fsct-lib.linux-x64-gnu.node"
+    "fsct-lib.linux-x64-gnu.node",
+    "NOTICE",
+    "LICENSE-FSCT.md",
+    "LICENSE.md"
   ],
-  "license": "Apache-2.0 AND MIT AND ISC AND Unicode-3.0 OR SEE LICENSE IN LICENSE.md",
+  "license": "Apache-2.0 AND MIT AND ISC AND Unicode-3.0 AND SEE LICENSE IN LICENSE.md",
   "engines": {
     "node": ">= 10"
   },
