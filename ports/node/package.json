@@ -1,9 +1,10 @@
 {
   "name": "@hemspzoo/fsct-lib",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "main": "index.js",
   "types": "index.d.ts",
   "author": "HEM Sp. z o.o.",
+  "repository": "https://github.com/HEM-RnD/fsct-host.git",
   "files": [
     "NOTICE",
     "LICENSE-FSCT.md",
@@ -41,9 +42,9 @@
     "version": "napi version"
   },
   "optionalDependencies": {
-    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.5",
-    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.5",
-    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.5"
+    "@hemspzoo/fsct-lib-linux-arm64-gnu": "0.2.6",
+    "@hemspzoo/fsct-lib-linux-arm-gnueabihf": "0.2.6",
+    "@hemspzoo/fsct-lib-linux-x64-gnu": "0.2.6"
   },
   "publishConfig": {
     "access": "public"

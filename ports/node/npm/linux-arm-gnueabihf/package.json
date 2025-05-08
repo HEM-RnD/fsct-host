@@ -1,7 +1,8 @@
 {
   "name": "@hemspzoo/fsct-lib-linux-arm-gnueabihf",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "author": "HEM Sp. z o.o.",
+  "repository": "https://github.com/HEM-RnD/fsct-host.git",
   "os": [
     "linux"
   ],

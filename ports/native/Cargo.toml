@@ -5,6 +5,8 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 publish.workspace = true
+readme.workspace = true
+repository.workspace = true
 description = """FSCT Host native port which contains host OS bindings as well as service
 executables of Ferrum Streaming Control Technology™ (FSCT) host implementation.
 Additional licensing terms apply as described in LICENSE-FSCT.md."""
