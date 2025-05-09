@@ -3,7 +3,7 @@ resolver = "3"
 members = ["core", "ports/native", "ports/node"]
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
 description = "Host implementation of Ferrum Streaming Control Technology™ (FSCT). Additional licensing terms apply as described in LICENSE-FSCT.md."
 license = "Apache-2.0"
