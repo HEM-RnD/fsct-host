@@ -17,7 +17,7 @@
 
 pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, TryFromFloatSecsError};
 
 #[napi(string_enum)]
 pub enum PlayerStatus {
@@ -62,14 +62,15 @@ pub struct TimelineInfo {
     pub rate: f64,
 }
 
-impl From<TimelineInfo> for FsctTimelineInfo {
-    fn from(value: TimelineInfo) -> Self {
-        FsctTimelineInfo {
-            position: Duration::from_secs_f64(value.position),
-            duration: Duration::from_secs_f64(value.duration),
+impl TryFrom<TimelineInfo> for FsctTimelineInfo {
+    type Error = TryFromFloatSecsError;
+    fn try_from(value: TimelineInfo) -> Result<Self, Self::Error> {
+        Ok(FsctTimelineInfo {
+            position: Duration::try_from_secs_f64(value.position)?,
+            duration: Duration::try_from_secs_f64(value.duration)?,
             update_time: SystemTime::now(),
             rate: value.rate,
-        }
+        })
     }
 }
 

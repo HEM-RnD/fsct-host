@@ -56,7 +56,7 @@ impl NodePlayerImpl {
     }
 
     fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
-        let timeline: Option<FsctTimelineInfo> = timeline.map(|v| v.into());
+        let timeline: Option<FsctTimelineInfo> = timeline.map(|v| v.try_into().ok()).flatten();
         self.current_state.lock().unwrap().timeline = timeline.clone();
 
         self.emit(PlayerEvent::TimelineChanged(timeline))
