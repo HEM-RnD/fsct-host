@@ -1,6 +1,6 @@
 {
   "name": "@hemspzoo/fsct-lib-linux-arm64-gnu",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "author": "HEM Sp. z o.o.",
   "repository": "https://github.com/HEM-RnD/fsct-host.git",
   "os": [

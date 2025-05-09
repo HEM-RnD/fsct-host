@@ -63,11 +63,14 @@ pub struct TimelineInfo {
 }
 
 impl TryFrom<TimelineInfo> for FsctTimelineInfo {
-    type Error = TryFromFloatSecsError;
+    type Error = napi::Error;
     fn try_from(value: TimelineInfo) -> Result<Self, Self::Error> {
+        if value.rate < 0.0 || value.rate.is_nan() || value.rate.is_infinite() {
+            return Err(napi::Error::from_reason("Invalid rate value"));
+        }
         Ok(FsctTimelineInfo {
-            position: Duration::try_from_secs_f64(value.position)?,
-            duration: Duration::try_from_secs_f64(value.duration)?,
+            position: Duration::try_from_secs_f64(value.position).map_err(|e| napi::Error::from_reason(e.to_string()))?,
+            duration: Duration::try_from_secs_f64(value.duration).map_err(|e| napi::Error::from_reason(e.to_string()))?,
             update_time: SystemTime::now(),
             rate: value.rate,
         })
