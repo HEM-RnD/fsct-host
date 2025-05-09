@@ -17,7 +17,7 @@
 
 pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
-use std::time::{Duration, SystemTime, TryFromFloatSecsError};
+use std::time::{Duration, SystemTime};
 
 #[napi(string_enum)]
 pub enum PlayerStatus {
