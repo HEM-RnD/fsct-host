@@ -34,7 +34,7 @@ No derivative, abbreviated, obfuscated, or alternative naming is permitted witho
 Software implementing Ferrum Streaming Control Technology™ must display the following notice prominently:
 
 > "Supports Ferrum Streaming Control Technology™."  
-> "Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o. All rights reserved."
+> "Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o."
 
 This must be shown:
 
@@ -53,7 +53,7 @@ For end-user devices or embeddable hardware modules implementing Ferrum Streamin
 - Documentation must also include:
 
   > "This device supports Ferrum Streaming Control Technology™.  
-  > Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o. All rights reserved."
+  > Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o."
 
 ### 2.4 Use of Trademark
 
@@ -116,4 +116,4 @@ By implementing or distributing Ferrum Streaming Control Technology™, you agre
 
 ---
 
-Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o. All rights reserved.
+Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o.
