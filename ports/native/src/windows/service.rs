@@ -40,9 +40,12 @@ use tokio::runtime::Runtime;
 use fsct_core::run_service;
 use crate::initialize_native_platform_player;
 
-pub const SERVICE_NAME: &str = "FsctNativeService";
-pub const SERVICE_DISPLAY_NAME: &str = "FSCT Native Service";
-pub const SERVICE_DESCRIPTION: &str = "Ferrum Streaming Control Technology Native Service";
+pub const SERVICE_NAME: &str = "FsctDriverService";
+pub const SERVICE_DISPLAY_NAME: &str = "FSCT Driver Service";
+pub const SERVICE_DESCRIPTION: &str = "Ferrum Streaming Control Technology Driver Service";
+
+fn get_service_type() -> ServiceType
+{ ServiceType::USER_OWN_PROCESS | ServiceType::INTERACTIVE_PROCESS }
 
 pub fn install_service() -> Result<()> {
     info!("Starting service installation");
@@ -83,7 +86,7 @@ pub fn install_service() -> Result<()> {
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: OsString::from(SERVICE_DISPLAY_NAME),
-        service_type: ServiceType::USER_OWN_PROCESS,
+        service_type: get_service_type(),
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: PathBuf::from(service_binary_path),
@@ -287,7 +290,7 @@ fn service_main(arguments: Vec<OsString>) {
     }
 }
 
-fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
+fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Create a channel to communicate with the service control handler
     let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
@@ -314,7 +317,7 @@ fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Tell the system that the service is running
     info!("Setting service status to Running");
     status_handle.set_service_status(ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
+        service_type: get_service_type(),
         current_state: ServiceState::Running,
         controls_accepted: ServiceControlAccept::STOP,
         exit_code: ServiceExitCode::Win32(0),
@@ -366,7 +369,7 @@ fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Tell the system that the service has stopped
     info!("Setting service status to Stopped");
     status_handle.set_service_status(ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
+        service_type: get_service_type(),
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
         exit_code: ServiceExitCode::Win32(0),
