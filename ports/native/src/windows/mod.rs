@@ -15,6 +15,8 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+pub mod service;
+
 use std::time::Duration;
 use async_trait::async_trait;
 use windows::{
@@ -167,5 +169,3 @@ fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportC
     }
     playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
 }
-
-

@@ -17,6 +17,8 @@ tokio.workspace = true
 async-trait.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
+log = "0.4"
+log4rs = "1.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.59", features = [
@@ -26,6 +28,7 @@ windows = { version = "0.59", features = [
     "Storage_Streams"
 ] }
 windows-core = "0.59.0"
+windows-service = "0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.0"
@@ -38,4 +41,3 @@ libc = "0.2.169"
 [[bin]]
 name = "fsct_native_service"
 path = "src/service_main.rs"
-

@@ -18,7 +18,7 @@
 use fsct_core::player::Player;
 
 #[cfg(target_os = "windows")]
-mod windows;
+pub mod windows;
 
 #[cfg(target_os = "macos")]
 mod macos;
