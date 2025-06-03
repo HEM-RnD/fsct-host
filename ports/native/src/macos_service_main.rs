@@ -15,21 +15,25 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-// This file conditionally includes the appropriate service main implementation
-// based on the target OS.
+use anyhow::anyhow;
+use env_logger::Env;
+use fsct_core::run_service;
+use fsct_native_port::initialize_native_platform_player;
 
-#[cfg(target_os = "macos")]
-mod macos_service_main;
+#[tokio::main(flavor = "current_thread")]
+pub(crate) async fn fsct_main() -> anyhow::Result<()> {
+    let env = Env::default()
+        .filter_or("FSCT_LOG", "info")
+        .write_style("FSCT_LOG_STYLE");
+    env_logger::init_from_env(env);
 
-#[cfg(target_os = "windows")]
-mod windows_service_main;
+    let platform_global_player = initialize_native_platform_player().await
+                                                                    .map_err(|e| anyhow!(e))?;
+    run_service(platform_global_player).await?;
 
-#[cfg(target_os = "macos")]
-fn main() -> anyhow::Result<()> {
-    macos_service_main::fsct_main()
-}
-
-#[cfg(target_os = "windows")]
-fn main() -> anyhow::Result<()> {
-    windows_service_main::fsct_main()
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for Ctrl+C signal");
+    println!("Exiting...");
+    Ok(())
 }

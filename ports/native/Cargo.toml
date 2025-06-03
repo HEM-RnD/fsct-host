@@ -38,3 +38,4 @@ libc = "0.2.169"
 [[bin]]
 name = "fsct_native_service"
 path = "src/service_main.rs"
+
