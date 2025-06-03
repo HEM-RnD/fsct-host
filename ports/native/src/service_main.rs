@@ -15,21 +15,11 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-// This file conditionally includes the appropriate service main implementation
+// This file calls the appropriate service main implementation from the library
 // based on the target OS.
 
-#[cfg(target_os = "macos")]
-mod macos_service_main;
+use fsct_native_port::run_service_main;
 
-#[cfg(target_os = "windows")]
-mod windows_service_main;
-
-#[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
-    macos_service_main::fsct_main()
-}
-
-#[cfg(target_os = "windows")]
-fn main() -> anyhow::Result<()> {
-    windows_service_main::fsct_main()
+    run_service_main()
 }

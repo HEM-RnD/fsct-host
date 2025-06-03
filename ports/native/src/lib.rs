@@ -21,7 +21,7 @@ use fsct_core::player::Player;
 pub mod windows;
 
 #[cfg(target_os = "macos")]
-mod macos;
+pub mod macos;
 
 #[allow(unreachable_code)]
 
@@ -41,4 +41,14 @@ pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
     {
         panic!("Unsupported platform");
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn run_service_main() -> anyhow::Result<()> {
+    crate::windows::service::fsct_main()
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_service_main() -> anyhow::Result<()> {
+    crate::macos::service::fsct_main()
 }

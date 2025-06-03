@@ -18,10 +18,10 @@
 use anyhow::anyhow;
 use env_logger::Env;
 use fsct_core::run_service;
-use fsct_native_port::initialize_native_platform_player;
+use crate::initialize_native_platform_player;
 
 #[tokio::main(flavor = "current_thread")]
-pub(crate) async fn fsct_main() -> anyhow::Result<()> {
+pub async fn fsct_main() -> anyhow::Result<()> {
     let env = Env::default()
         .filter_or("FSCT_LOG", "info")
         .write_style("FSCT_LOG_STYLE");

@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 mod media_remote;
+pub mod service;
 
 use media_remote::MediaRemoteFramework;
 
