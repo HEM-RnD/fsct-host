@@ -16,6 +16,8 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::ffi::OsString;
+use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
+use std::process;
 use windows_service::{
     service::{
         ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceType,
@@ -27,19 +29,21 @@ use windows_service::{
     define_windows_service,
 };
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use anyhow::Result;
-use log::{info, error, LevelFilter};
+use log::{info, error, warn, LevelFilter};
 use log4rs::{
     append::file::FileAppender,
     config::{Appender, Config, Root},
     encode::pattern::PatternEncoder,
 };
 use tokio::runtime::Runtime;
-use fsct_core::run_service;
+use tokio::task::JoinHandle;
+use fsct_core::{run_service, run_devices_watch, run_player_watch, DevicesPlayerEventApplier, player::Player};
 use crate::initialize_native_platform_player;
 use clap::{Parser, Subcommand};
+use windows_service::service::ServiceState as WinServiceState;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -80,6 +84,87 @@ enum ServiceCommands {
 pub const SERVICE_NAME: &str = "FsctDriverService";
 pub const SERVICE_DISPLAY_NAME: &str = "FSCT Driver Service";
 pub const SERVICE_DESCRIPTION: &str = "Ferrum Streaming Control Technology Driver Service";
+
+// Struct to hold the service state and abort handles
+struct FsctServiceState {
+    runtime: Runtime,
+    device_watch_handle: Option<JoinHandle<()>>,
+    player_watch_handle: Option<JoinHandle<()>>,
+    active_session_id: Option<u32>,
+    initial_session_id: Option<u32>,  // The session ID of the user who started the service
+    platform_player: Option<Player>,
+}
+
+impl FsctServiceState {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            runtime: Runtime::new()?,
+            device_watch_handle: None,
+            player_watch_handle: None,
+            active_session_id: None, // Will be set when service starts
+            initial_session_id: None, // Will be set when service starts
+            platform_player: None,
+        })
+    }
+
+    fn stop_service(&mut self) {
+        info!("Stopping service tasks");
+        if let Some(handle) = self.device_watch_handle.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.player_watch_handle.take() {
+            handle.abort();
+        }
+        self.platform_player = None;
+    }
+
+    async fn start_service(&mut self) -> Result<()> {
+        info!("Starting service tasks");
+        if self.device_watch_handle.is_some() || self.player_watch_handle.is_some() {
+            warn!("Service tasks are already running, stopping them first");
+            self.stop_service();
+        }
+
+        info!("Initializing native platform player");
+        let platform_player = match initialize_native_platform_player().await {
+            Ok(player) => player,
+            Err(e) => {
+                error!("Failed to initialize player: {}", e);
+                return Err(e.into());
+            }
+        };
+        self.platform_player = Some(platform_player.clone());
+
+        // Create shared state for devices and player state
+        let fsct_devices = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let player_state = Arc::new(Mutex::new(fsct_core::player::PlayerState::default()));
+
+        // Set up player event listener
+        let player_event_listener = DevicesPlayerEventApplier::new(fsct_devices.clone());
+
+        // Start devices watch
+        info!("Starting devices watch");
+        let device_watch_handle = run_devices_watch(fsct_devices.clone(), player_state.clone()).await?;
+        self.device_watch_handle = Some(device_watch_handle);
+
+        // Start player watch
+        info!("Starting player watch");
+        let player_watch_handle = run_player_watch(platform_player, player_event_listener, player_state).await?;
+        self.player_watch_handle = Some(player_watch_handle);
+
+        info!("Service tasks started successfully");
+        Ok(())
+    }
+
+    fn get_current_session_id(&self) -> Result<u32> {
+        // Get the current active session ID using the Windows API
+        let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+        if session_id == 0xFFFFFFFF {
+            return Err(anyhow::anyhow!("Failed to get active console session ID"));
+        }
+        Ok(session_id)
+    }
+}
 
 fn get_service_type() -> ServiceType
 { ServiceType::USER_OWN_PROCESS | ServiceType::INTERACTIVE_PROCESS }
@@ -206,7 +291,16 @@ fn get_log_dir() -> anyhow::Result<PathBuf> {
 
 fn init_logger() -> anyhow::Result<()> {
     let log_dir = get_log_dir()?;
-    let log_file = log_dir.join("fsct_service.log");
+
+    // Get the current session ID
+    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+    let log_file = if session_id != 0xFFFFFFFF {
+        // Include session ID in the log file name if running as a service
+        log_dir.join(format!("fsct_service_session_{}.log", session_id))
+    } else {
+        // Fallback to the default log file name if unable to get session ID
+        log_dir.join("fsct_service.log")
+    };
 
     // Create a file appender
     let file_appender = FileAppender::builder()
@@ -399,8 +493,9 @@ fn service_main(arguments: Vec<OsString>) {
 }
 
 fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
-    // Create a channel to communicate with the service control handler
+    // Create channels to communicate with the service control handler
     let (shutdown_tx, shutdown_rx) = mpsc::channel();
+    let (session_change_tx, session_change_rx) = mpsc::channel();
 
     // Register the service control handler
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -412,8 +507,13 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            ServiceControl::SessionChange(param) => {
+                info!("Received session change event: {:?}, session ID: {}", param.reason, param.notification.session_id);
+                let _ = session_change_tx.send(param);
+                ServiceControlHandlerResult::NoError
+            }
             _ => {
-                info!("Received unsupported control event");
+                info!("Received unsupported control event: {:?}", control_event);
                 ServiceControlHandlerResult::NotImplemented
             }
         }
@@ -427,7 +527,7 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     status_handle.set_service_status(ServiceStatus {
         service_type: get_service_type(),
         current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP,
+        controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SESSION_CHANGE,
         exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
@@ -440,36 +540,94 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        info!("Initializing native platform player");
-        let platform_global_player = match initialize_native_platform_player().await {
-            Ok(player) => player,
+        // Create a service state to manage the service tasks
+        let mut service_state = match FsctServiceState::new() {
+            Ok(state) => state,
             Err(e) => {
-                error!("Failed to initialize player: {}", e);
+                error!("Failed to create service state: {}", e);
                 return;
             }
         };
 
-        // Start the service
-        info!("Starting service");
-        if let Err(e) = run_service(platform_global_player).await {
-            error!("Service error: {}", e);
+        // Get the current session ID
+        let current_session_id = service_state.get_current_session_id().ok();
+        service_state.active_session_id = current_session_id;
+        service_state.initial_session_id = current_session_id;  // Store the initial session ID
+        info!("Initial session ID: {:?}", current_session_id);
+
+        // Start the service tasks
+        if let Err(e) = service_state.start_service().await {
+            error!("Failed to start service tasks: {}", e);
+            return;
         }
 
-        // Create a future that completes when a shutdown signal is received
-        let shutdown_future = async {
+        // Create channels for notifications
+        let (shutdown_notify_tx, mut shutdown_notify_rx) = tokio::sync::mpsc::channel(1);
+        let (session_change_notify_tx, mut session_change_notify_rx) = tokio::sync::mpsc::channel(10);
+
+        // Spawn a task to listen for the shutdown signal
+        tokio::spawn(async move {
             let _ = shutdown_rx.recv();
-        };
+            let _ = shutdown_notify_tx.send(()).await;
+        });
 
-        // Wait for the shutdown signal
-        info!("Waiting for shutdown signal");
-        tokio::select! {
-            _ = shutdown_future => {
-                info!("Received shutdown signal");
+        // Spawn a task to listen for session change events
+        let session_change_notify_tx_clone = session_change_notify_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(param) = session_change_rx.recv() {
+                if let Err(e) = session_change_notify_tx_clone.send(param).await {
+                    error!("Failed to forward session change event: {}", e);
+                }
             }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C signal");
+        });
+
+        // Wait for the shutdown signal or session change
+        info!("Waiting for shutdown signal or session change");
+        loop {
+            tokio::select! {
+                Some(_) = shutdown_notify_rx.recv() => {
+                    info!("Received shutdown signal");
+                    break;
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received Ctrl+C signal");
+                    break;
+                }
+                Some(param) = session_change_notify_rx.recv() => {
+                    let session_id = param.notification.session_id;
+                    info!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
+
+                    // Check if the session ID actually changed
+                    if service_state.active_session_id == Some(session_id) {
+                        info!("Session ID hasn't changed, skipping further processing");
+                        continue;
+                    }
+
+                    // Update the active session ID
+                    service_state.active_session_id = Some(session_id);
+                    info!("Active session changed to {}", session_id);
+
+                    // Check if the session ID matches the initial session ID
+                    if service_state.initial_session_id == Some(session_id) {
+                        // This is the session that started the service, start the service tasks
+                        info!("Session matches initial session, starting service tasks");
+                        if !service_state.device_watch_handle.is_some() {
+                            if let Err(e) = service_state.start_service().await {
+                                error!("Failed to start service tasks: {}", e);
+                            }
+                        }
+                    } else {
+                        // This is not the session that started the service, stop the service tasks
+                        info!("Session does not match initial session, stopping service tasks");
+                        service_state.stop_service();
+                    }
+                }
             }
         }
+
+        // Stop the service tasks
+        info!("Stopping service tasks");
+        service_state.stop_service();
 
         info!("Exiting service");
     });
