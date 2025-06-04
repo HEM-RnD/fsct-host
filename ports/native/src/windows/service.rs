@@ -50,6 +50,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Service management commands
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceCommands {
     /// Install the service
     Install {
         /// Enable verbose output
@@ -64,9 +73,8 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Run in standalone mode (for debugging)
-    #[command(name = "--standalone")]
-    Standalone,
+    /// Run as a service
+    Run,
 }
 
 pub const SERVICE_NAME: &str = "FsctDriverService";
@@ -119,7 +127,7 @@ pub fn install_service() -> Result<()> {
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: PathBuf::from(service_binary_path),
-        launch_arguments: vec![],
+        launch_arguments: vec![OsString::from("service"), OsString::from("run")],
         dependencies: vec![],
         account_name: None, // Run as LocalSystem
         account_password: None,
@@ -331,44 +339,48 @@ pub fn fsct_main() -> anyhow::Result<()> {
     // Check if a command was provided
     if let Some(command) = cli.command {
         match command {
-            Commands::Install { verbose } => {
-                // Initialize logger for install command
-                if let Err(e) = init_install_logger(verbose) {
-                    eprintln!("Failed to initialize logger: {}", e);
+            Commands::Service { command } => {
+                match command {
+                    ServiceCommands::Install { verbose } => {
+                        // Initialize logger for install command
+                        if let Err(e) = init_install_logger(verbose) {
+                            eprintln!("Failed to initialize logger: {}", e);
+                        }
+                        info!("Installing service");
+                        let result = install_service();
+                        if let Err(ref e) = result {
+                            error!("Failed to install service: {}", e);
+                        } else {
+                            info!("Service installed successfully");
+                        }
+                        return result;
+                    }
+                    ServiceCommands::Uninstall { verbose } => {
+                        // Initialize logger for uninstall command
+                        if let Err(e) = init_install_logger(verbose) {
+                            eprintln!("Failed to initialize logger: {}", e);
+                        }
+                        info!("Uninstalling service");
+                        let result = uninstall_service();
+                        if let Err(ref e) = result {
+                            error!("Failed to uninstall service: {}", e);
+                        } else {
+                            info!("Service uninstalled successfully");
+                        }
+                        return result;
+                    }
+                    ServiceCommands::Run => {
+                        // Run as a service
+                        service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
+                        return Ok(());
+                    }
                 }
-                info!("Installing service");
-                let result = install_service();
-                if let Err(ref e) = result {
-                    error!("Failed to install service: {}", e);
-                } else {
-                    info!("Service installed successfully");
-                }
-                return result;
-            }
-            Commands::Uninstall { verbose } => {
-                // Initialize logger for uninstall command
-                if let Err(e) = init_install_logger(verbose) {
-                    eprintln!("Failed to initialize logger: {}", e);
-                }
-                info!("Uninstalling service");
-                let result = uninstall_service();
-                if let Err(ref e) = result {
-                    error!("Failed to uninstall service: {}", e);
-                } else {
-                    info!("Service uninstalled successfully");
-                }
-                return result;
-            }
-            Commands::Standalone => {
-                // Run in standalone mode (for debugging)
-                return run_standalone();
             }
         }
     }
 
-    // If no arguments provided, run as a service
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
-    Ok(())
+    // If no arguments provided, run in standalone mode
+    run_standalone()
 }
 
 fn service_main(arguments: Vec<OsString>) {
