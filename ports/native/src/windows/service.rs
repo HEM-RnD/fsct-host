@@ -39,6 +39,35 @@ use log4rs::{
 use tokio::runtime::Runtime;
 use fsct_core::run_service;
 use crate::initialize_native_platform_player;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Install the service
+    Install {
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Uninstall the service
+    Uninstall {
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Run in standalone mode (for debugging)
+    #[command(name = "--standalone")]
+    Standalone,
+}
 
 pub const SERVICE_NAME: &str = "FsctDriverService";
 pub const SERVICE_DISPLAY_NAME: &str = "FSCT Driver Service";
@@ -154,7 +183,7 @@ pub fn uninstall_service() -> Result<()> {
 
 define_windows_service!(ffi_service_main, service_main);
 
-fn init_logger() -> anyhow::Result<()> {
+fn get_log_dir() -> anyhow::Result<PathBuf> {
     // Create a log directory in ProgramData
     let program_data = std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".to_string());
     let log_dir = PathBuf::from(program_data).join("FSCT");
@@ -164,6 +193,11 @@ fn init_logger() -> anyhow::Result<()> {
         std::fs::create_dir_all(&log_dir)?;
     }
 
+    Ok(log_dir)
+}
+
+fn init_logger() -> anyhow::Result<()> {
+    let log_dir = get_log_dir()?;
     let log_file = log_dir.join("fsct_service.log");
 
     // Create a file appender
@@ -183,13 +217,79 @@ fn init_logger() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn init_install_logger(verbose: bool) -> anyhow::Result<()> {
+    let log_dir = get_log_dir()?;
+    let log_file = log_dir.join("fsct_install.log");
+
+    // Create a file appender
+    let file_appender = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .build(log_file)?;
+
+    // Build the logger configuration
+    let mut config_builder = Config::builder()
+        .appender(Appender::builder().build("file", Box::new(file_appender)));
+
+    let mut root_builder = Root::builder().appender("file");
+
+    // Add console appender only if verbose is true
+    if verbose {
+        // Create a console appender
+        let console_appender = log4rs::append::console::ConsoleAppender::builder()
+            .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+            .build();
+
+        config_builder = config_builder
+            .appender(Appender::builder().build("console", Box::new(console_appender)));
+
+        root_builder = root_builder.appender("console");
+    }
+
+    let config = config_builder.build(root_builder.build(LevelFilter::Info))?;
+
+    // Initialize the logger
+    log4rs::init_config(config)?;
+
+    info!("Install logger initialized");
+    Ok(())
+}
+
+fn init_standalone_logger() -> anyhow::Result<()> {
+    let log_dir = get_log_dir()?;
+    let log_file = log_dir.join("fsct_standalone.log");
+
+    // Create a file appender
+    let file_appender = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .build(log_file)?;
+
+    // Create a console appender
+    let console_appender = log4rs::append::console::ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .build();
+
+    // Build the logger configuration with both file and console appenders
+    let config = Config::builder()
+        .appender(Appender::builder().build("file", Box::new(file_appender)))
+        .appender(Appender::builder().build("console", Box::new(console_appender)))
+        .build(Root::builder()
+            .appender("file")
+            .appender("console")
+            .build(LevelFilter::Info))?;
+
+    // Initialize the logger
+    log4rs::init_config(config)?;
+
+    info!("Standalone logger initialized");
+    Ok(())
+}
+
 // Function to run the service in standalone mode (for debugging)
 fn run_standalone() -> anyhow::Result<()> {
-    // Initialize console logger for standalone mode
-    env_logger::Builder::from_env(env_logger::Env::default()
-        .filter_or("FSCT_LOG", "info")
-        .write_style("FSCT_LOG_STYLE"))
-        .init();
+    // Initialize logger for standalone mode
+    if let Err(e) = init_standalone_logger() {
+        eprintln!("Failed to initialize logger: {}", e);
+    }
 
     info!("Starting in standalone mode");
 
@@ -225,14 +325,15 @@ fn run_standalone() -> anyhow::Result<()> {
 }
 
 pub fn fsct_main() -> anyhow::Result<()> {
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
+    // Parse command line arguments using clap
+    let cli = Cli::parse();
 
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "install" => {
+    // Check if a command was provided
+    if let Some(command) = cli.command {
+        match command {
+            Commands::Install { verbose } => {
                 // Initialize logger for install command
-                if let Err(e) = init_logger() {
+                if let Err(e) = init_install_logger(verbose) {
                     eprintln!("Failed to initialize logger: {}", e);
                 }
                 info!("Installing service");
@@ -244,9 +345,9 @@ pub fn fsct_main() -> anyhow::Result<()> {
                 }
                 return result;
             }
-            "uninstall" => {
+            Commands::Uninstall { verbose } => {
                 // Initialize logger for uninstall command
-                if let Err(e) = init_logger() {
+                if let Err(e) = init_install_logger(verbose) {
                     eprintln!("Failed to initialize logger: {}", e);
                 }
                 info!("Uninstalling service");
@@ -258,14 +359,9 @@ pub fn fsct_main() -> anyhow::Result<()> {
                 }
                 return result;
             }
-            "--standalone" => {
+            Commands::Standalone => {
                 // Run in standalone mode (for debugging)
                 return run_standalone();
-            }
-            _ => {
-                println!("Unknown command: {}", args[1]);
-                println!("Available commands: install, uninstall, --standalone");
-                return Ok(());
             }
         }
     }

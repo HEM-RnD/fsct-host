@@ -19,6 +19,7 @@ env_logger.workspace = true
 anyhow.workspace = true
 log = "0.4"
 log4rs = "1.2"
+clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.59", features = [
