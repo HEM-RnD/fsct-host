@@ -45,6 +45,13 @@ use crate::initialize_native_platform_player;
 use clap::{Parser, Subcommand};
 use windows_service::service::ServiceState as WinServiceState;
 
+// Define service events
+#[derive(Clone)]
+enum ServiceEvent {
+    Shutdown,
+    SessionChange(windows_service::service::SessionChangeParam),
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -493,23 +500,29 @@ fn service_main(arguments: Vec<OsString>) {
 }
 
 fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
-    // Create channels to communicate with the service control handler
-    let (shutdown_tx, shutdown_rx) = mpsc::channel();
-    let (session_change_tx, session_change_rx) = mpsc::channel();
+    // Create a Tokio runtime for async operations
+    info!("Creating Tokio runtime");
+    let rt = Runtime::new()?;
+
+    // Create a broadcast channel for events that can be used from both sync and async contexts
+    let (event_tx, _) = tokio::sync::broadcast::channel::<ServiceEvent>(10);
+
+    // Clone the sender for use in the service control handler
+    let event_tx_clone = event_tx.clone();
 
     // Register the service control handler
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
         match control_event {
             ServiceControl::Stop => {
-                // Send shutdown signal
+                // Send shutdown event
                 info!("Received stop control event");
-                let _ = shutdown_tx.send(());
+                let _ = event_tx_clone.send(ServiceEvent::Shutdown);
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             ServiceControl::SessionChange(param) => {
                 info!("Received session change event: {:?}, session ID: {}", param.reason, param.notification.session_id);
-                let _ = session_change_tx.send(param);
+                let _ = event_tx_clone.send(ServiceEvent::SessionChange(param));
                 ServiceControlHandlerResult::NoError
             }
             _ => {
@@ -534,10 +547,6 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         process_id: None,
     })?;
 
-    // Create a Tokio runtime for async operations
-    info!("Creating Tokio runtime");
-    let rt = Runtime::new()?;
-
     // Run the service in the Tokio runtime
     rt.block_on(async {
         // Create a service state to manage the service tasks
@@ -561,66 +570,61 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             return;
         }
 
-        // Create channels for notifications
-        let (shutdown_notify_tx, mut shutdown_notify_rx) = tokio::sync::mpsc::channel(1);
-        let (session_change_notify_tx, mut session_change_notify_rx) = tokio::sync::mpsc::channel(10);
+        // Create a receiver for the broadcast channel
+        let mut event_rx = event_tx.subscribe();
 
-        // Spawn a task to listen for the shutdown signal
+        // Also listen for Ctrl+C
+        let event_tx_ctrl_c = event_tx.clone();
         tokio::spawn(async move {
-            let _ = shutdown_rx.recv();
-            let _ = shutdown_notify_tx.send(()).await;
-        });
-
-        // Spawn a task to listen for session change events
-        let session_change_notify_tx_clone = session_change_notify_tx.clone();
-        tokio::spawn(async move {
-            while let Ok(param) = session_change_rx.recv() {
-                if let Err(e) = session_change_notify_tx_clone.send(param).await {
-                    error!("Failed to forward session change event: {}", e);
-                }
+            if let Ok(_) = tokio::signal::ctrl_c().await {
+                info!("Received Ctrl+C signal");
+                let _ = event_tx_ctrl_c.send(ServiceEvent::Shutdown);
             }
         });
 
-        // Wait for the shutdown signal or session change
-        info!("Waiting for shutdown signal or session change");
+        // Wait for events
+        info!("Waiting for service events");
         loop {
-            tokio::select! {
-                Some(_) = shutdown_notify_rx.recv() => {
-                    info!("Received shutdown signal");
-                    break;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Received Ctrl+C signal");
-                    break;
-                }
-                Some(param) = session_change_notify_rx.recv() => {
-                    let session_id = param.notification.session_id;
-                    info!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
+            match event_rx.recv().await {
+                Ok(event) => {
+                    match event {
+                        ServiceEvent::Shutdown => {
+                            info!("Processing shutdown event");
+                            break;
+                        },
+                        ServiceEvent::SessionChange(param) => {
+                            let session_id = param.notification.session_id;
+                            info!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
 
-                    // Check if the session ID actually changed
-                    if service_state.active_session_id == Some(session_id) {
-                        info!("Session ID hasn't changed, skipping further processing");
-                        continue;
-                    }
+                            // Check if the session ID actually changed
+                            if service_state.active_session_id == Some(session_id) {
+                                info!("Session ID hasn't changed, skipping further processing");
+                                continue;
+                            }
 
-                    // Update the active session ID
-                    service_state.active_session_id = Some(session_id);
-                    info!("Active session changed to {}", session_id);
+                            // Update the active session ID
+                            service_state.active_session_id = Some(session_id);
+                            info!("Active session changed to {}", session_id);
 
-                    // Check if the session ID matches the initial session ID
-                    if service_state.initial_session_id == Some(session_id) {
-                        // This is the session that started the service, start the service tasks
-                        info!("Session matches initial session, starting service tasks");
-                        if !service_state.device_watch_handle.is_some() {
-                            if let Err(e) = service_state.start_service().await {
-                                error!("Failed to start service tasks: {}", e);
+                            // Check if the session ID matches the initial session ID
+                            if service_state.initial_session_id == Some(session_id) {
+                                // This is the session that started the service, start the service tasks
+                                info!("Session matches initial session, starting service tasks");
+                                if !service_state.device_watch_handle.is_some() {
+                                    if let Err(e) = service_state.start_service().await {
+                                        error!("Failed to start service tasks: {}", e);
+                                    }
+                                }
+                            } else {
+                                // This is not the session that started the service, stop the service tasks
+                                info!("Session does not match initial session, stopping service tasks");
+                                service_state.stop_service();
                             }
                         }
-                    } else {
-                        // This is not the session that started the service, stop the service tasks
-                        info!("Session does not match initial session, stopping service tasks");
-                        service_state.stop_service();
                     }
+                },
+                Err(e) => {
+                    error!("Failed to receive event: {}", e);
                 }
             }
         }
