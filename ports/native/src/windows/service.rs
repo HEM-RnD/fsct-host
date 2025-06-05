@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use anyhow::Result;
-use log::{info, error, warn, LevelFilter};
+use log::{info, error, warn, debug, LevelFilter};
 use log4rs::{
     append::file::FileAppender,
     config::{Appender, Config, Root},
@@ -130,7 +130,7 @@ impl FsctServiceState {
             self.stop_service();
         }
 
-        info!("Initializing native platform player");
+        debug!("Initializing native platform player");
         let platform_player = match initialize_native_platform_player().await {
             Ok(player) => player,
             Err(e) => {
@@ -148,12 +148,12 @@ impl FsctServiceState {
         let player_event_listener = DevicesPlayerEventApplier::new(fsct_devices.clone());
 
         // Start devices watch
-        info!("Starting devices watch");
+        debug!("Starting devices watch");
         let device_watch_handle = run_devices_watch(fsct_devices.clone(), player_state.clone()).await?;
         self.device_watch_handle = Some(device_watch_handle);
 
         // Start player watch
-        info!("Starting player watch");
+        debug!("Starting player watch");
         let player_watch_handle = run_player_watch(platform_player, player_event_listener, player_state).await?;
         self.player_watch_handle = Some(player_watch_handle);
 
@@ -175,9 +175,9 @@ fn get_service_type() -> ServiceType
 { ServiceType::USER_OWN_PROCESS | ServiceType::INTERACTIVE_PROCESS }
 
 pub fn install_service() -> Result<()> {
-    info!("Starting service installation");
+    debug!("Starting service installation");
 
-    info!("Connecting to service manager");
+    debug!("Connecting to service manager");
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = match ServiceManager::local_computer(None::<&str>, manager_access) {
         Ok(manager) => manager,
@@ -188,7 +188,7 @@ pub fn install_service() -> Result<()> {
     };
 
     // Get the current executable path
-    info!("Getting current executable path");
+    debug!("Getting current executable path");
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(e) => {
@@ -206,10 +206,10 @@ pub fn install_service() -> Result<()> {
         }
     };
 
-    info!("Service binary path: {}", service_binary_path);
+    debug!("Service binary path: {}", service_binary_path);
 
     // Create the service info
-    info!("Creating service info");
+    debug!("Creating service info");
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: OsString::from(SERVICE_DISPLAY_NAME),
@@ -224,7 +224,7 @@ pub fn install_service() -> Result<()> {
     };
 
     // Create the service
-    info!("Creating service");
+    debug!("Creating service");
     let service = match service_manager.create_service(&service_info, ServiceAccess::CHANGE_CONFIG) {
         Ok(service) => service,
         Err(e) => {
@@ -234,7 +234,7 @@ pub fn install_service() -> Result<()> {
     };
 
     // Set the service description
-    info!("Setting service description");
+    debug!("Setting service description");
     if let Err(e) = service.set_description(SERVICE_DESCRIPTION) {
         error!("Failed to set service description: {}", e);
         return Err(e.into());
@@ -246,9 +246,9 @@ pub fn install_service() -> Result<()> {
 }
 
 pub fn uninstall_service() -> Result<()> {
-    info!("Starting service uninstallation");
+    debug!("Starting service uninstallation");
 
-    info!("Connecting to service manager");
+    debug!("Connecting to service manager");
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = match ServiceManager::local_computer(None::<&str>, manager_access) {
         Ok(manager) => manager,
@@ -258,7 +258,7 @@ pub fn uninstall_service() -> Result<()> {
         }
     };
 
-    info!("Opening service: {}", SERVICE_NAME);
+    debug!("Opening service: {}", SERVICE_NAME);
     let service_access = ServiceAccess::DELETE;
     let service = match service_manager.open_service(SERVICE_NAME, service_access) {
         Ok(service) => service,
@@ -269,7 +269,7 @@ pub fn uninstall_service() -> Result<()> {
     };
 
     // Delete the service
-    info!("Deleting service");
+    debug!("Deleting service");
     if let Err(e) = service.delete() {
         error!("Failed to delete service: {}", e);
         return Err(e.into());
@@ -315,12 +315,12 @@ fn init_logger() -> anyhow::Result<()> {
     // Build the logger configuration
     let config = Config::builder()
         .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .build(Root::builder().appender("file").build(LevelFilter::Info))?;
+        .build(Root::builder().appender("file").build(LevelFilter::Debug))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    info!("Logger initialized");
+    debug!("Logger initialized");
     Ok(())
 }
 
@@ -352,12 +352,12 @@ fn init_install_logger(verbose: bool) -> anyhow::Result<()> {
         root_builder = root_builder.appender("console");
     }
 
-    let config = config_builder.build(root_builder.build(LevelFilter::Info))?;
+    let config = config_builder.build(root_builder.build(LevelFilter::Debug))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    info!("Install logger initialized");
+    debug!("Install logger initialized");
     Ok(())
 }
 
@@ -382,12 +382,12 @@ fn init_standalone_logger() -> anyhow::Result<()> {
         .build(Root::builder()
             .appender("file")
             .appender("console")
-            .build(LevelFilter::Info))?;
+            .build(LevelFilter::Debug))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    info!("Standalone logger initialized");
+    debug!("Standalone logger initialized");
     Ok(())
 }
 
@@ -398,15 +398,15 @@ fn run_standalone() -> anyhow::Result<()> {
         eprintln!("Failed to initialize logger: {}", e);
     }
 
-    info!("Starting in standalone mode");
+    debug!("Starting in standalone mode");
 
     // Create a Tokio runtime for async operations
-    info!("Creating Tokio runtime");
+    debug!("Creating Tokio runtime");
     let rt = Runtime::new()?;
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        info!("Initializing native platform player");
+        debug!("Initializing native platform player");
         let platform_global_player = match initialize_native_platform_player().await {
             Ok(player) => player,
             Err(e) => {
@@ -416,18 +416,18 @@ fn run_standalone() -> anyhow::Result<()> {
         };
 
         // Start the service
-        info!("Starting service");
+        debug!("Starting service");
         if let Err(e) = run_service(platform_global_player).await {
             error!("Service error: {}", e);
         }
 
         // Wait for Ctrl+C
-        info!("Press Ctrl+C to exit");
+        debug!("Press Ctrl+C to exit");
         tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C signal");
         info!("Received Ctrl+C signal, exiting...");
     });
 
-    info!("Standalone mode exited");
+    debug!("Standalone mode exited");
     Ok(())
 }
 
@@ -445,7 +445,7 @@ pub fn fsct_main() -> anyhow::Result<()> {
                         if let Err(e) = init_install_logger(verbose) {
                             eprintln!("Failed to initialize logger: {}", e);
                         }
-                        info!("Installing service");
+                        debug!("Installing service");
                         let result = install_service();
                         if let Err(ref e) = result {
                             error!("Failed to install service: {}", e);
@@ -459,7 +459,7 @@ pub fn fsct_main() -> anyhow::Result<()> {
                         if let Err(e) = init_install_logger(verbose) {
                             eprintln!("Failed to initialize logger: {}", e);
                         }
-                        info!("Uninstalling service");
+                        debug!("Uninstalling service");
                         let result = uninstall_service();
                         if let Err(ref e) = result {
                             error!("Failed to uninstall service: {}", e);
@@ -499,7 +499,7 @@ fn service_main(arguments: Vec<OsString>) {
 
 fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Create a Tokio runtime for async operations
-    info!("Creating Tokio runtime");
+    debug!("Creating Tokio runtime");
     let rt = Runtime::new()?;
 
     // Create a broadcast channel for events that can be used from both sync and async contexts
@@ -513,28 +513,28 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         match control_event {
             ServiceControl::Stop => {
                 // Send shutdown event
-                info!("Received stop control event");
+                debug!("Received stop control event");
                 let _ = event_tx_clone.send(ServiceEvent::Shutdown);
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             ServiceControl::SessionChange(param) => {
-                info!("Received session change event: {:?}, session ID: {}", param.reason, param.notification.session_id);
+                debug!("Received session change event: {:?}, session ID: {}", param.reason, param.notification.session_id);
                 let _ = event_tx_clone.send(ServiceEvent::SessionChange(param));
                 ServiceControlHandlerResult::NoError
             }
             _ => {
-                info!("Received unsupported control event: {:?}", control_event);
+                debug!("Received unsupported control event: {:?}", control_event);
                 ServiceControlHandlerResult::NotImplemented
             }
         }
     };
 
-    info!("Registering service control handler");
+    debug!("Registering service control handler");
     let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
 
     // Tell the system that the service is running
-    info!("Setting service status to Running");
+    debug!("Setting service status to Running");
     status_handle.set_service_status(ServiceStatus {
         service_type: get_service_type(),
         current_state: ServiceState::Running,
@@ -579,31 +579,31 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         let event_tx_ctrl_c = event_tx.clone();
         tokio::spawn(async move {
             if let Ok(_) = tokio::signal::ctrl_c().await {
-                info!("Received Ctrl+C signal");
+                debug!("Received Ctrl+C signal");
                 let _ = event_tx_ctrl_c.send(ServiceEvent::Shutdown);
             }
         });
 
         // Wait for events
-        info!("Waiting for service events");
+        debug!("Waiting for service events");
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
                     match event {
                         ServiceEvent::Shutdown => {
-                            info!("Processing shutdown event");
+                            info!("Received shutdown event, stopping...");
                             break;
                         },
                         ServiceEvent::SessionChange(param) => {
                             let session_id = param.notification.session_id;
-                            info!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
+                            debug!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
 
                             // Handle session change based on both the reason and session ID
                             // We only care about events for the session assigned to this process (assigned_session_id)
 
                             // First, check if this event is for our assigned session
                             if service_state.assigned_session_id != Some(session_id) {
-                                info!("Event for session {} doesn't match our assigned session {:?}, ignoring", 
+                                debug!("Event for session {} doesn't match assigned session {:?}, ignoring",
                                       session_id, service_state.assigned_session_id);
                                 continue;
                             }
@@ -615,27 +615,42 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::ConsoleConnect |
                                 windows_service::service::SessionChangeReason::RemoteConnect |
                                 windows_service::service::SessionChangeReason::SessionLogon => {
-                                    info!("Our session {} is becoming active, starting service tasks", session_id);
                                     if !service_state.device_watch_handle.is_some() {
+                                        info!("This session ({}) is becoming active, starting service tasks", session_id);
                                         if let Err(e) = service_state.start_service().await {
                                             error!("Failed to start service tasks: {}", e);
                                         }
+                                    } else {
+                                        info!("This session ({}) is becoming active, but service has been already
+                                        started, ignoring...", session_id);
                                     }
                                 },
                                 // For session logoff events, we need to stop our service
                                 windows_service::service::SessionChangeReason::SessionLogoff => {
-                                    info!("Our session {} is logging off, stopping service tasks", session_id);
-                                    service_state.stop_service();
+                                    if service_state.device_watch_handle.is_some() {
+                                        info!("This session ({}) is logging off, stopping service tasks", session_id);
+                                        service_state.stop_service();
+                                    } else {
+                                        debug!("This session ({}) is logging off, but service is not started, can't \
+                                        stop it, ignoring...", session_id)
+                                    }
                                 },
                                 // For console disconnect events, we should stop our service
                                 windows_service::service::SessionChangeReason::ConsoleDisconnect |
                                 windows_service::service::SessionChangeReason::RemoteDisconnect => {
-                                    info!("Our session {} is disconnecting, stopping service tasks", session_id);
-                                    service_state.stop_service();
+                                    if service_state.device_watch_handle.is_some() {
+                                        info!("This session ({}) is disconnecting, stopping service tasks", session_id);
+                                        service_state.stop_service();
+                                    } else {
+                                        debug!("This session ({}) is disconnecting, but service is not started, can't \
+                                        stop it, ignoring...",
+                                            session_id)
+                                    }
                                 },
                                 // For other events, just log and continue
                                 _ => {
-                                    info!("Received event {:?} for our session {}, no action needed", param.reason, session_id);
+                                    debug!("Received event {:?} for this session ({}), no action needed", param.reason,
+                                        session_id);
                                     continue;
                                 }
                             }
@@ -649,14 +664,14 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         }
 
         // Stop the service tasks
-        info!("Stopping service tasks");
+        debug!("Stopping service tasks");
         service_state.stop_service();
 
         info!("Exiting service");
     });
 
     // Tell the system that the service has stopped
-    info!("Setting service status to Stopped");
+    debug!("Setting service status to Stopped");
     status_handle.set_service_status(ServiceStatus {
         service_type: get_service_type(),
         current_state: ServiceState::Stopped,
