@@ -372,7 +372,7 @@ fn init_logger(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Create a file appender
     let file_appender = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .encoder(Box::new(get_logger_pattern()))
         .build(log_file)?;
 
     // Get LevelFilter from LogLevel
