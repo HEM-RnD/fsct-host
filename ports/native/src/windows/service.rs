@@ -97,8 +97,7 @@ struct FsctServiceState {
     runtime: Runtime,
     device_watch_handle: Option<JoinHandle<()>>,
     player_watch_handle: Option<JoinHandle<()>>,
-    active_session_id: Option<u32>,
-    initial_session_id: Option<u32>,  // The session ID of the user who started the service
+    assigned_session_id: Option<u32>,  // The session ID of the user who the service is assigned to
     platform_player: Option<Player>,
 }
 
@@ -108,8 +107,7 @@ impl FsctServiceState {
             runtime: Runtime::new()?,
             device_watch_handle: None,
             player_watch_handle: None,
-            active_session_id: None, // Will be set when service starts
-            initial_session_id: None, // Will be set when service starts
+            assigned_session_id: None, // Will be set when service starts
             platform_player: None,
         })
     }
@@ -558,11 +556,15 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             }
         };
 
-        // Get the current session ID
+        // Get the current active console session ID
+        // This is the session ID of the user who is currently logged on to the physical console
         let current_session_id = service_state.get_current_session_id().ok();
-        service_state.active_session_id = current_session_id;
-        service_state.initial_session_id = current_session_id;  // Store the initial session ID
-        info!("Initial session ID: {:?}", current_session_id);
+        service_state.assigned_session_id = current_session_id;  // Store the assigned session ID
+        info!("Assigned session ID: {:?}", current_session_id);
+
+        // Note: The assigned session ID is the session ID of the user who is currently logged on to the physical console
+        // when the service starts. This is the session that the service is assigned to and should run for.
+        // We only start service tasks for this session and stop them for all other sessions.
 
         // Start the service tasks
         if let Err(e) = service_state.start_service().await {
@@ -596,29 +598,46 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                             let session_id = param.notification.session_id;
                             info!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
 
-                            // Check if the session ID actually changed
-                            if service_state.active_session_id == Some(session_id) {
-                                info!("Session ID hasn't changed, skipping further processing");
+                            // Handle session change based on both the reason and session ID
+                            // We only care about events for the session assigned to this process (assigned_session_id)
+
+                            // First, check if this event is for our assigned session
+                            if service_state.assigned_session_id != Some(session_id) {
+                                info!("Event for session {} doesn't match our assigned session {:?}, ignoring", 
+                                      session_id, service_state.assigned_session_id);
                                 continue;
                             }
 
-                            // Update the active session ID
-                            service_state.active_session_id = Some(session_id);
-                            info!("Active session changed to {}", session_id);
-
-                            // Check if the session ID matches the initial session ID
-                            if service_state.initial_session_id == Some(session_id) {
-                                // This is the session that started the service, start the service tasks
-                                info!("Session matches initial session, starting service tasks");
-                                if !service_state.device_watch_handle.is_some() {
-                                    if let Err(e) = service_state.start_service().await {
-                                        error!("Failed to start service tasks: {}", e);
+                            // Now handle events for our assigned session
+                            match param.reason {
+                                // For console connect, remote connect, and session logon events
+                                // These events indicate our session is becoming active
+                                windows_service::service::SessionChangeReason::ConsoleConnect |
+                                windows_service::service::SessionChangeReason::RemoteConnect |
+                                windows_service::service::SessionChangeReason::SessionLogon => {
+                                    info!("Our session {} is becoming active, starting service tasks", session_id);
+                                    if !service_state.device_watch_handle.is_some() {
+                                        if let Err(e) = service_state.start_service().await {
+                                            error!("Failed to start service tasks: {}", e);
+                                        }
                                     }
+                                },
+                                // For session logoff events, we need to stop our service
+                                windows_service::service::SessionChangeReason::SessionLogoff => {
+                                    info!("Our session {} is logging off, stopping service tasks", session_id);
+                                    service_state.stop_service();
+                                },
+                                // For console disconnect events, we should stop our service
+                                windows_service::service::SessionChangeReason::ConsoleDisconnect |
+                                windows_service::service::SessionChangeReason::RemoteDisconnect => {
+                                    info!("Our session {} is disconnecting, stopping service tasks", session_id);
+                                    service_state.stop_service();
+                                },
+                                // For other events, just log and continue
+                                _ => {
+                                    info!("Received event {:?} for our session {}, no action needed", param.reason, session_id);
+                                    continue;
                                 }
-                            } else {
-                                // This is not the session that started the service, stop the service tasks
-                                info!("Session does not match initial session, stopping service tasks");
-                                service_state.stop_service();
                             }
                         }
                     }
