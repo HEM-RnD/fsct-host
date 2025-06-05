@@ -17,7 +17,6 @@
 
 use std::ffi::OsString;
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
-use std::process;
 use windows_service::{
     service::{
         ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceType,
@@ -29,9 +28,9 @@ use windows_service::{
     define_windows_service,
 };
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use log::{info, error, warn, debug, LevelFilter};
 use log4rs::{
     append::file::FileAppender,
@@ -42,8 +41,57 @@ use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 use fsct_core::{run_service, run_devices_watch, run_player_watch, DevicesPlayerEventApplier, player::Player};
 use crate::initialize_native_platform_player;
-use clap::{Parser, Subcommand};
-use windows_service::service::ServiceState as WinServiceState;
+use clap::{Parser, Subcommand, ValueEnum};
+use std::str::FromStr;
+
+// Define log levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    fn to_level_filter(&self) -> LevelFilter {
+        match self {
+            LogLevel::Trace => LevelFilter::Trace,
+            LogLevel::Debug => LevelFilter::Debug,
+            LogLevel::Info => LevelFilter::Info,
+            LogLevel::Warn => LevelFilter::Warn,
+            LogLevel::Error => LevelFilter::Error,
+        }
+    }
+}
+
+impl FromStr for LogLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "trace" => Ok(LogLevel::Trace),
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            _ => Err(format!("Invalid log level: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogLevel::Trace => write!(f, "trace"),
+            LogLevel::Debug => write!(f, "debug"),
+            LogLevel::Info => write!(f, "info"),
+            LogLevel::Warn => write!(f, "warn"),
+            LogLevel::Error => write!(f, "error"),
+        }
+    }
+}
 
 // Define service events
 #[derive(Clone)]
@@ -55,6 +103,10 @@ enum ServiceEvent {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    /// Set the log level
+    #[arg(short, long, value_enum, default_value_t = LogLevel::Info)]
+    log_level: LogLevel,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -75,6 +127,9 @@ enum ServiceCommands {
         /// Enable verbose output
         #[arg(short, long)]
         verbose: bool,
+
+        #[arg(short, long, value_enum)]
+        service_log_level: Option<LogLevel>,
     },
 
     /// Uninstall the service
@@ -94,7 +149,6 @@ pub const SERVICE_DESCRIPTION: &str = "Ferrum Streaming Control Technology Drive
 
 // Struct to hold the service state and abort handles
 struct FsctServiceState {
-    runtime: Runtime,
     device_watch_handle: Option<JoinHandle<()>>,
     player_watch_handle: Option<JoinHandle<()>>,
     assigned_session_id: Option<u32>,  // The session ID of the user who the service is assigned to
@@ -104,7 +158,6 @@ struct FsctServiceState {
 impl FsctServiceState {
     fn new() -> Result<Self> {
         Ok(Self {
-            runtime: Runtime::new()?,
             device_watch_handle: None,
             player_watch_handle: None,
             assigned_session_id: None, // Will be set when service starts
@@ -174,7 +227,7 @@ impl FsctServiceState {
 fn get_service_type() -> ServiceType
 { ServiceType::USER_OWN_PROCESS | ServiceType::INTERACTIVE_PROCESS }
 
-pub fn install_service() -> Result<()> {
+fn install_service(log_level: Option<LogLevel>) -> Result<()> {
     debug!("Starting service installation");
 
     debug!("Connecting to service manager");
@@ -207,6 +260,11 @@ pub fn install_service() -> Result<()> {
     };
 
     debug!("Service binary path: {}", service_binary_path);
+    let mut launch_arguments =  vec![];
+    if let Some(log_level) = log_level {
+        launch_arguments.extend_from_slice(&[OsString::from("--log-level"), OsString::from(log_level.to_string())])
+    };
+    launch_arguments.extend_from_slice(&[OsString::from("service"), OsString::from("run")]);
 
     // Create the service info
     debug!("Creating service info");
@@ -217,7 +275,7 @@ pub fn install_service() -> Result<()> {
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: PathBuf::from(service_binary_path),
-        launch_arguments: vec![OsString::from("service"), OsString::from("run")],
+        launch_arguments,
         dependencies: vec![],
         account_name: None, // Run as LocalSystem
         account_password: None,
@@ -245,7 +303,7 @@ pub fn install_service() -> Result<()> {
     Ok(())
 }
 
-pub fn uninstall_service() -> Result<()> {
+fn uninstall_service() -> Result<()> {
     debug!("Starting service uninstallation");
 
     debug!("Connecting to service manager");
@@ -294,7 +352,12 @@ fn get_log_dir() -> anyhow::Result<PathBuf> {
     Ok(log_dir)
 }
 
-fn init_logger() -> anyhow::Result<()> {
+fn get_logger_pattern() -> PatternEncoder
+{
+    PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} - {l} - {m}\n")
+}
+
+fn init_logger(log_level: LogLevel) -> anyhow::Result<()> {
     let log_dir = get_log_dir()?;
 
     // Get the current session ID
@@ -312,26 +375,32 @@ fn init_logger() -> anyhow::Result<()> {
         .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
         .build(log_file)?;
 
+    // Get LevelFilter from LogLevel
+    let level_filter = log_level.to_level_filter();
+
     // Build the logger configuration
     let config = Config::builder()
         .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .build(Root::builder().appender("file").build(LevelFilter::Debug))?;
+        .build(Root::builder().appender("file").build(level_filter))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    debug!("Logger initialized");
+    debug!("Logger initialized with level: {}", log_level);
     Ok(())
 }
 
-fn init_install_logger(verbose: bool) -> anyhow::Result<()> {
+fn init_install_logger(verbose: bool, log_level: LogLevel) -> anyhow::Result<()> {
     let log_dir = get_log_dir()?;
     let log_file = log_dir.join("fsct_install.log");
 
     // Create a file appender
     let file_appender = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .encoder(Box::new(get_logger_pattern()))
         .build(log_file)?;
+
+    // Get LevelFilter from LogLevel
+    let level_filter = log_level.to_level_filter();
 
     // Build the logger configuration
     let mut config_builder = Config::builder()
@@ -343,7 +412,7 @@ fn init_install_logger(verbose: bool) -> anyhow::Result<()> {
     if verbose {
         // Create a console appender
         let console_appender = log4rs::append::console::ConsoleAppender::builder()
-            .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+            .encoder(Box::new(get_logger_pattern()))
             .build();
 
         config_builder = config_builder
@@ -352,28 +421,31 @@ fn init_install_logger(verbose: bool) -> anyhow::Result<()> {
         root_builder = root_builder.appender("console");
     }
 
-    let config = config_builder.build(root_builder.build(LevelFilter::Debug))?;
+    let config = config_builder.build(root_builder.build(level_filter))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    debug!("Install logger initialized");
+    debug!("Install logger initialized with level: {}", log_level);
     Ok(())
 }
 
-fn init_standalone_logger() -> anyhow::Result<()> {
+fn init_standalone_logger(log_level: LogLevel) -> anyhow::Result<()> {
     let log_dir = get_log_dir()?;
     let log_file = log_dir.join("fsct_standalone.log");
 
     // Create a file appender
     let file_appender = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .encoder(Box::new(get_logger_pattern()))
         .build(log_file)?;
 
     // Create a console appender
     let console_appender = log4rs::append::console::ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} - {l} - {m}\n")))
+        .encoder(Box::new(get_logger_pattern()))
         .build();
+
+    // Get LevelFilter from LogLevel
+    let level_filter = log_level.to_level_filter();
 
     // Build the logger configuration with both file and console appenders
     let config = Config::builder()
@@ -382,23 +454,23 @@ fn init_standalone_logger() -> anyhow::Result<()> {
         .build(Root::builder()
             .appender("file")
             .appender("console")
-            .build(LevelFilter::Debug))?;
+            .build(level_filter))?;
 
     // Initialize the logger
     log4rs::init_config(config)?;
 
-    debug!("Standalone logger initialized");
+    debug!("Standalone logger initialized with level: {}", log_level);
     Ok(())
 }
 
 // Function to run the service in standalone mode (for debugging)
-fn run_standalone() -> anyhow::Result<()> {
+fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
     // Initialize logger for standalone mode
-    if let Err(e) = init_standalone_logger() {
+    if let Err(e) = init_standalone_logger(log_level) {
         eprintln!("Failed to initialize logger: {}", e);
     }
 
-    debug!("Starting in standalone mode");
+    debug!("Starting in standalone mode with log level: {}", log_level);
 
     // Create a Tokio runtime for async operations
     debug!("Creating Tokio runtime");
@@ -434,19 +506,21 @@ fn run_standalone() -> anyhow::Result<()> {
 pub fn fsct_main() -> anyhow::Result<()> {
     // Parse command line arguments using clap
     let cli = Cli::parse();
+    let log_level = cli.log_level;
 
     // Check if a command was provided
     if let Some(command) = cli.command {
         match command {
             Commands::Service { command } => {
                 match command {
-                    ServiceCommands::Install { verbose } => {
+                    ServiceCommands::Install { verbose, service_log_level } => {
                         // Initialize logger for install command
-                        if let Err(e) = init_install_logger(verbose) {
+                        if let Err(e) = init_install_logger(verbose, log_level) {
                             eprintln!("Failed to initialize logger: {}", e);
+                            bail!("Failed to initialize logger: {}", e);
                         }
-                        debug!("Installing service");
-                        let result = install_service();
+                        debug!("Installing service with log level: {}", log_level);
+                        let result = install_service(service_log_level);
                         if let Err(ref e) = result {
                             error!("Failed to install service: {}", e);
                         } else {
@@ -456,10 +530,11 @@ pub fn fsct_main() -> anyhow::Result<()> {
                     }
                     ServiceCommands::Uninstall { verbose } => {
                         // Initialize logger for uninstall command
-                        if let Err(e) = init_install_logger(verbose) {
+                        if let Err(e) = init_install_logger(verbose, log_level) {
                             eprintln!("Failed to initialize logger: {}", e);
+                            bail!("Failed to initialize logger: {}", e);
                         }
-                        debug!("Uninstalling service");
+                        debug!("Uninstalling service with log level: {}", log_level);
                         let result = uninstall_service();
                         if let Err(ref e) = result {
                             error!("Failed to uninstall service: {}", e);
@@ -469,7 +544,14 @@ pub fn fsct_main() -> anyhow::Result<()> {
                         return result;
                     }
                     ServiceCommands::Run => {
+                        // Initialize the logger first thing
+                        if let Err(e) = init_logger(log_level) {
+                            // Can't log this error since the logger failed to initialize
+                            eprintln!("Failed to initialize logger: {}", e);
+                            bail!("Failed to initialize logger: {}", e);
+                        }
                         // Run as a service
+                        info!("Service starting with log level: {}", log_level);
                         service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
                         return Ok(());
                     }
@@ -479,19 +561,10 @@ pub fn fsct_main() -> anyhow::Result<()> {
     }
 
     // If no arguments provided, run in standalone mode
-    run_standalone()
+    run_standalone(log_level)
 }
 
 fn service_main(arguments: Vec<OsString>) {
-    // Initialize the logger first thing
-    if let Err(e) = init_logger() {
-        // Can't log this error since the logger failed to initialize
-        eprintln!("Failed to initialize logger: {}", e);
-        return;
-    }
-
-    info!("Service starting");
-
     if let Err(e) = run_service_main(arguments) {
         error!("Service failed: {}", e);
     }
