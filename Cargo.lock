@@ -387,7 +387,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsct_native_port"
+name = "fsct_driver_service"
 version = "0.2.9"
 dependencies = [
  "anyhow",
