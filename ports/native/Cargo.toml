@@ -9,7 +9,10 @@ readme.workspace = true
 repository.workspace = true
 description = """FSCT Host driver service with native player port. It contains host OS bindings as well as service
 executables of Ferrum Streaming Control Technology™ (FSCT) host driver implementation.
-Additional licensing terms apply as described in LICENSE-FSCT.md."""
+Additional licensing terms apply as described in LICENSE-FSCT.md.
+
+Ferrum Streaming Control Technology™ is a trademark of HEM Sp. z o.o.
+"""
 
 [dependencies]
 fsct_core.workspace = true
