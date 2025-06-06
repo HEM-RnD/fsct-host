@@ -23,19 +23,25 @@ pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+#[cfg(target_os = "windows")]
+use windows::*;
+
+#[cfg(target_os = "macos")]
+use macos::*;
+
 #[allow(unreachable_code)]
 
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
     #[cfg(target_os = "windows")]
     {
-        let windows_player = windows::WindowsPlatformGlobalSessionManager::new()
+        let windows_player = WindowsPlatformGlobalSessionManager::new()
             .await?;
         return Ok(Player::new(windows_player));
     }
     #[cfg(target_os = "macos")]
     {
         return Ok(Player::new(
-            macos::MacOSPlaybackManager::new()?
+            MacOSPlaybackManager::new()?
         ));
     }
     {
@@ -43,12 +49,5 @@ pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
     }
 }
 
-#[cfg(target_os = "windows")]
-pub fn run_service_main() -> anyhow::Result<()> {
-    crate::windows::service::fsct_main()
-}
 
-#[cfg(target_os = "macos")]
-pub fn run_service_main() -> anyhow::Result<()> {
-    crate::macos::service::fsct_main()
-}
+pub use service::fsct_main;

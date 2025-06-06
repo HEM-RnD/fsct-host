@@ -213,15 +213,15 @@ impl FsctServiceState {
         info!("Service tasks started successfully");
         Ok(())
     }
+}
 
-    fn get_current_session_id(&self) -> Result<u32> {
-        // Get the current active session ID using the Windows API
-        let session_id = unsafe { WTSGetActiveConsoleSessionId() };
-        if session_id == 0xFFFFFFFF {
-            return Err(anyhow::anyhow!("Failed to get active console session ID"));
-        }
-        Ok(session_id)
+fn get_current_session_id() -> Option<u32> {
+    // Get the current active session ID using the Windows API
+    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+    if session_id == 0xFFFFFFFF {
+        return None;
     }
+    Some(session_id)
 }
 
 fn get_service_type() -> ServiceType
@@ -357,43 +357,11 @@ fn get_logger_pattern() -> PatternEncoder
     PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} - {l} - {m}\n")
 }
 
-fn init_logger(log_level: LogLevel) -> anyhow::Result<()> {
-    let log_dir = get_log_dir()?;
-
-    // Get the current session ID
-    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
-    let log_file = if session_id != 0xFFFFFFFF {
-        // Include session ID in the log file name if running as a service
-        log_dir.join(format!("fsct_service_session_{}.log", session_id))
-    } else {
-        // Fallback to the default log file name if unable to get session ID
-        log_dir.join("fsct_service.log")
-    };
-
-    // Create a file appender
-    let file_appender = FileAppender::builder()
-        .encoder(Box::new(get_logger_pattern()))
-        .build(log_file)?;
-
-    // Get LevelFilter from LogLevel
-    let level_filter = log_level.to_level_filter();
-
-    // Build the logger configuration
-    let config = Config::builder()
-        .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .build(Root::builder().appender("file").build(level_filter))?;
-
-    // Initialize the logger
-    log4rs::init_config(config)?;
-
-    debug!("Logger initialized with level: {}", log_level);
-    Ok(())
-}
-
-fn init_install_logger(verbose: bool, log_level: LogLevel) -> anyhow::Result<()> {
-    let log_dir = get_log_dir()?;
-    let log_file = log_dir.join("fsct_install.log");
-
+fn build_logger_config(
+    log_file: PathBuf, 
+    log_level: LogLevel, 
+    include_console: bool
+) -> anyhow::Result<Config> {
     // Create a file appender
     let file_appender = FileAppender::builder()
         .encoder(Box::new(get_logger_pattern()))
@@ -408,8 +376,8 @@ fn init_install_logger(verbose: bool, log_level: LogLevel) -> anyhow::Result<()>
 
     let mut root_builder = Root::builder().appender("file");
 
-    // Add console appender only if verbose is true
-    if verbose {
+    // Add console appender if requested
+    if include_console {
         // Create a console appender
         let console_appender = log4rs::append::console::ConsoleAppender::builder()
             .encoder(Box::new(get_logger_pattern()))
@@ -421,46 +389,36 @@ fn init_install_logger(verbose: bool, log_level: LogLevel) -> anyhow::Result<()>
         root_builder = root_builder.appender("console");
     }
 
-    let config = config_builder.build(root_builder.build(level_filter))?;
+    // Build and return the config
+    Ok(config_builder.build(root_builder.build(level_filter))?)
+}
 
-    // Initialize the logger
+fn init_logger_common(log_file_name: &str, log_level: LogLevel, include_console: bool) -> anyhow::Result<()> {
+    let log_dir = get_log_dir()?;
+    let log_file = log_dir.join(log_file_name);
+    let config = build_logger_config(log_file, log_level, include_console)?;
     log4rs::init_config(config)?;
-
-    debug!("Install logger initialized with level: {}", log_level);
+    debug!("Logger initialized with level: {}", log_level);
     Ok(())
+}
+
+fn init_service_logger(log_level: LogLevel) -> anyhow::Result<()> {
+    let session_id = get_current_session_id();
+    let log_file_name = session_id
+        .map(|session_id| format!("fsct_service_session_{}.log", session_id))
+        .unwrap_or_else(|| "fsct_service.log".to_string());
+
+    init_logger_common(&log_file_name, log_level, false)
+}
+
+fn init_install_logger(verbose: bool, log_level: LogLevel) -> anyhow::Result<()> {
+    init_logger_common("fsct_install.log", log_level, verbose)
 }
 
 fn init_standalone_logger(log_level: LogLevel) -> anyhow::Result<()> {
     let log_dir = get_log_dir()?;
     let log_file = log_dir.join("fsct_standalone.log");
-
-    // Create a file appender
-    let file_appender = FileAppender::builder()
-        .encoder(Box::new(get_logger_pattern()))
-        .build(log_file)?;
-
-    // Create a console appender
-    let console_appender = log4rs::append::console::ConsoleAppender::builder()
-        .encoder(Box::new(get_logger_pattern()))
-        .build();
-
-    // Get LevelFilter from LogLevel
-    let level_filter = log_level.to_level_filter();
-
-    // Build the logger configuration with both file and console appenders
-    let config = Config::builder()
-        .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .appender(Appender::builder().build("console", Box::new(console_appender)))
-        .build(Root::builder()
-            .appender("file")
-            .appender("console")
-            .build(level_filter))?;
-
-    // Initialize the logger
-    log4rs::init_config(config)?;
-
-    debug!("Standalone logger initialized with level: {}", log_level);
-    Ok(())
+    init_logger_common("fsct_standalone.log", log_level, true)
 }
 
 // Function to run the service in standalone mode (for debugging)
@@ -545,7 +503,7 @@ pub fn fsct_main() -> anyhow::Result<()> {
                     }
                     ServiceCommands::Run => {
                         // Initialize the logger first thing
-                        if let Err(e) = init_logger(log_level) {
+                        if let Err(e) = init_service_logger(log_level) {
                             // Can't log this error since the logger failed to initialize
                             eprintln!("Failed to initialize logger: {}", e);
                             bail!("Failed to initialize logger: {}", e);
@@ -631,7 +589,7 @@ fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Get the current active console session ID
         // This is the session ID of the user who is currently logged on to the physical console
-        let current_session_id = service_state.get_current_session_id().ok();
+        let current_session_id = get_current_session_id();
         service_state.assigned_session_id = current_session_id;  // Store the assigned session ID
         info!("Assigned session ID: {:?}", current_session_id);
 

@@ -18,8 +18,8 @@
 // This file calls the appropriate service main implementation from the library
 // based on the target OS.
 
-use fsct_native_port::run_service_main;
+use fsct_native_port::fsct_main;
 
 fn main() -> anyhow::Result<()> {
-    run_service_main()
+    fsct_main()
 }
