@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="FSCT Driver Service"
+           Language="1033"
+           Version="1.0.0.0"
+           Manufacturer="HEM Sp. z o.o."
+           UpgradeCode="e4101414-00f9-428b-998b-c8560f95b4ec"
+           Compressed="yes"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <Property Id="REBOOT" Value="Force" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of FSCT Driver Service is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="FSCT Service" Level="1">
+      <ComponentGroupRef Id="ServiceFiles" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="FerrumFolder" Name="Ferrum">
+        <Directory Id="INSTALLFOLDER" Name="FSCT Driver Service">
+          <!-- Files will be copied here -->
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ServiceExe" Guid="fd6d8931-e4e4-4651-9f80-08663706c52a">
+        <File Id="FsctServiceExe"
+              Source="$(var.SourceDir)\fsct_driver_service.exe"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Custom Actions -->
+    <CustomAction Id="KillServiceProcesses"
+                 Directory="INSTALLFOLDER"
+                 Execute="deferred"
+                 Impersonate="no"
+                 ExeCommand="cmd.exe /C powershell -ExecutionPolicy Bypass -Command &quot;&amp;{Get-WmiObject Win32_Service | Where-Object { $_.PathName -like '*fsct_driver_service.exe*' } | ForEach-Object { Stop-Service -Force -Name $_.Name -ErrorAction SilentlyContinue } ; Get-Process fsct_driver_service -ErrorAction SilentlyContinue | Stop-Process -Force }&quot;"
+                 Return="ignore" />
+
+    <CustomAction Id="SetKillServiceProcessesCondition"
+                 Property="KillServiceProcesses"
+                 Value="Installed AND REMOVE = ALL" />
+
+    <CustomAction Id="SetInstallServiceCondition"
+                 Property="InstallService"
+                 Value="NOT Installed" />
+
+    <CustomAction Id="InstallService"
+                 FileRef="FsctServiceExe"
+                 Execute="deferred"
+                 Impersonate="no"
+                 ExeCommand="service install"
+                 Return="check" />
+
+    <CustomAction Id="UninstallService"
+                 FileRef="FsctServiceExe"
+                 Execute="deferred"
+                 Impersonate="no"
+                 ExeCommand="service uninstall"
+                 Return="check" />
+
+    <CustomAction Id="SetUninstallServiceCondition"
+                 Property="UninstallService"
+                 Value="Installed AND REMOVE = ALL" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetInstallServiceCondition" Before="InstallService" />
+      <Custom Action="InstallService" After="InstallFiles" />
+      <Custom Action="SetKillServiceProcessesCondition" Before="KillServiceProcesses" />
+      <Custom Action="KillServiceProcesses" Before="UninstallService" Condition="REMOVE = ALL" />
+      <Custom Action="SetUninstallServiceCondition" Before="UninstallService" />
+      <Custom Action="UninstallService" Before="RemoveFiles" Condition="REMOVE = ALL" />
+    </InstallExecuteSequence>
+
+    <ComponentGroup Id="ServiceFiles">
+      <ComponentRef Id="ServiceExe" />
+    </ComponentGroup>
+
+  </Package>
+</Wix>
