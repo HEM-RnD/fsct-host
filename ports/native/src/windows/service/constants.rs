@@ -15,18 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-#[cfg(target_os = "windows")]
-pub mod windows;
-
-#[cfg(target_os = "windows")]
-use windows::*;
-
-#[cfg(target_os = "macos")]
-pub mod macos;
-
-#[cfg(target_os = "macos")]
-use macos::*;
-
-
-pub use player::initialize_native_platform_player;
-pub use service::fsct_main;
+// Service constants
+pub const SERVICE_NAME: &str = "FsctDriverService";
+pub const SERVICE_DISPLAY_NAME: &str = "FSCT Driver Service";
+pub const SERVICE_DESCRIPTION: &str = "Ferrum Streaming Control Technology Driver Service";

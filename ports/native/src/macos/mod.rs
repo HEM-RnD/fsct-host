@@ -23,11 +23,13 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use fsct_core::Player;
 
 mod media_remote;
 pub mod service;
 
 use media_remote::MediaRemoteFramework;
+use crate::windows::WindowsPlatformGlobalSessionManager;
 
 pub struct MacOSPlaybackManager {
     media_remote: Arc<MediaRemoteFramework>,
@@ -120,4 +122,12 @@ impl PlayerInterface for MacOSPlaybackManager {
             texts,
         })
     }
+}
+
+pub mod player {
+    use fsct_core::Player;
+    pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
+        Ok(Player::new(MacOSPlaybackManager::new()?))
+    }
+
 }

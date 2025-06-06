@@ -169,3 +169,15 @@ fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportC
     }
     playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
 }
+
+pub mod player {
+    use fsct_core::Player;
+    use crate::windows::WindowsPlatformGlobalSessionManager;
+
+    pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
+        let windows_player = WindowsPlatformGlobalSessionManager::new()
+            .await?;
+        Ok(Player::new(windows_player))
+    }
+
+}
