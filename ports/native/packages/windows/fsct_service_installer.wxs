@@ -22,7 +22,7 @@
     </Feature>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="FerrumFolder" Name="Ferrum">
+      <Directory Id="HemFolder" Name="HEM Sp. z o.o.">
         <Directory Id="INSTALLFOLDER" Name="FSCT Driver Service">
           <!-- Files will be copied here -->
         </Directory>
@@ -34,35 +34,42 @@
         <File Id="FsctServiceExe"
               Source="fsct_driver_service.exe"
               KeyPath="yes" />
+        <ServiceInstall
+                Id="FsctDriverService"
+                Name="FsctDriverService"
+                DisplayName="Ferrum Streaming Control Technology Driver Service"
+                Description="This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver."
+                Start="auto"
+                Interactive="yes"
+                Type="ownProcess"
+                ErrorControl="normal"
+                Arguments="service run"
+                Vital="yes" />
+
+        <ServiceControl
+                Id="StartFsctDriverService"
+                Name="FsctDriverService"
+                Remove="uninstall" />
       </Component>
     </DirectoryRef>
 
-    <!-- Custom Actions -->
-    <CustomAction Id="KillServiceProcesses"
-                 Directory="INSTALLFOLDER"
-                 Execute="deferred"
-                 Impersonate="no"
-                 ExeCommand="cmd.exe /C powershell -ExecutionPolicy Bypass -Command &quot;&amp;{Get-WmiObject Win32_Service | Where-Object { $_.PathName -like '*fsct_driver_service.exe*' } | ForEach-Object { Stop-Service -Force -Name $_.Name -ErrorAction SilentlyContinue } ; Get-Process fsct_driver_service -ErrorAction SilentlyContinue | Stop-Process -Force }&quot;"
-                 Return="ignore" />
+    <CustomAction Id="MarkAsPerUserService"
+                  Directory="INSTALLFOLDER"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  ExeCommand='reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v Type /t REG_DWORD /d 336 /f' />
 
-    <CustomAction Id="InstallService"
-                 FileRef="FsctServiceExe"
-                 Execute="deferred"
-                 Impersonate="no"
-                 ExeCommand="service install"
-                 Return="check" />
-
-    <CustomAction Id="UninstallService"
-                 FileRef="FsctServiceExe"
-                 Execute="deferred"
-                 Impersonate="no"
-                 ExeCommand="service uninstall"
-                 Return="check" />
+    <CustomAction Id="MarkToNotRunAsLocalSystem"
+                  Directory="INSTALLFOLDER"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
 
     <InstallExecuteSequence>
-      <Custom Action="InstallService" After="InstallFiles" Condition="NOT Installed"/>
-      <Custom Action="KillServiceProcesses" Before="UninstallService" Condition="Installed"/>
-      <Custom Action="UninstallService" Before="RemoveFiles" Condition="Installed" />
+      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
+      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
     </InstallExecuteSequence>
 
     <ComponentGroup Id="ServiceFiles">

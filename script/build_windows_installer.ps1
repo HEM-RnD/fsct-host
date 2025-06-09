@@ -230,35 +230,27 @@ try
         exit 1
     }
 
-    # === Skip WiX fragment generation ===
-    Write-Host "[INFO] Skipping WiX fragment generation..."
     Set-Location $BUILD_DIR
+    # === Installing WiX extensions ===
 
-    # Find extension DLLs
-    Write-Host "[INFO] Finding WiX extension DLLs..."
-    $balDllPath = Join-Path $initialLocation ".wix\extensions\WixToolset.Bal.wixext\6.0.1\wixext6\WixToolset.BootstrapperApplications.wixext.dll"
-
-    if (-not (Test-Path $balDllPath))
+    Write-Host "[INFO] Installing WixToolset.Util.wixext extension..."
+    $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
+    if ($LASTEXITCODE -ne 0)
     {
-        Write-Error "[ERROR] WixToolset.Bal.wixext DLL not found at: $balDllPath"
+        Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
+        Write-Error "[ERROR] Error details: $utilResult"
         exit 1
     }
 
-    # Check if WixToolset.Util.wixext is installed
-    $extensionList = & wix extension list 2>&1
-    if ($extensionList -notmatch "WixToolset.Util.wixext")
+    Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext extension..."
+    $utilResult = & wix extension add WixToolset.BootstrapperApplications.wixext 2>&1
+    if ($LASTEXITCODE -ne 0)
     {
-        Write-Host "[INFO] Installing WixToolset.Util.wixext extension..."
-        $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
-        if ($LASTEXITCODE -ne 0)
-        {
-            Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
-            Write-Error "[ERROR] Error details: $utilResult"
-            exit 1
-        }
+        Write-Error "[ERROR] Failed to install WixToolset.BootstrapperApplications.wixext"
+        Write-Error "[ERROR] Error details: $utilResult"
+        exit 1
     }
 
-    Write-Host "[INFO] Found Bal extension DLL: $balDllPath"
     Write-Host "[INFO] WiX extensions ready"
 
     # === WiX Compilation ===
@@ -279,7 +271,7 @@ try
 
     # === Bundle Compilation ===
     Write-Host "[INFO] Compiling bundle installer..."
-    $bundleResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -ext $balDllPath -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
+    $bundleResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -ext WixToolset.BootstrapperApplications.wixext -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
     if ($LASTEXITCODE -ne 0)
     {
         Write-Error "[ERROR] Bundle compilation failed"
