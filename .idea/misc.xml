@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectResources">
+    <resource url="http://wixtoolset.org/schemas/v4/wxs" location="$PROJECT_DIR$/ports/native/packages/windows/schemas/wxs_sechma.xml" />
+    <resource url="http://wixtoolset.org/schemas/v4/wxs/bal" location="$PROJECT_DIR$/ports/native/packages/windows/schemas/bal_extension.xml" />
+    <resource url="http://wixtoolset.org/schemas/v4/wxs/util" location="$PROJECT_DIR$/ports/native/packages/windows/schemas/util_extension.xml" />
+  </component>
+</project>
