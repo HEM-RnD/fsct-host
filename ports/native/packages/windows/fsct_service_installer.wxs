@@ -4,7 +4,7 @@
 
   <Package Name="FSCT Driver Service"
            Language="1033"
-           Version="1.0.0.0"
+           Version="$(var.Version)"
            Manufacturer="HEM Sp. z o.o."
            UpgradeCode="e4101414-00f9-428b-998b-c8560f95b4ec"
            Compressed="yes"
@@ -32,7 +32,7 @@
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="ServiceExe" Guid="fd6d8931-e4e4-4651-9f80-08663706c52a">
         <File Id="FsctServiceExe"
-              Source="$(var.SourceDir)\fsct_driver_service.exe"
+              Source="fsct_driver_service.exe"
               KeyPath="yes" />
       </Component>
     </DirectoryRef>
@@ -44,14 +44,6 @@
                  Impersonate="no"
                  ExeCommand="cmd.exe /C powershell -ExecutionPolicy Bypass -Command &quot;&amp;{Get-WmiObject Win32_Service | Where-Object { $_.PathName -like '*fsct_driver_service.exe*' } | ForEach-Object { Stop-Service -Force -Name $_.Name -ErrorAction SilentlyContinue } ; Get-Process fsct_driver_service -ErrorAction SilentlyContinue | Stop-Process -Force }&quot;"
                  Return="ignore" />
-
-    <CustomAction Id="SetKillServiceProcessesCondition"
-                 Property="KillServiceProcesses"
-                 Value="Installed AND REMOVE = ALL" />
-
-    <CustomAction Id="SetInstallServiceCondition"
-                 Property="InstallService"
-                 Value="NOT Installed" />
 
     <CustomAction Id="InstallService"
                  FileRef="FsctServiceExe"
@@ -67,17 +59,10 @@
                  ExeCommand="service uninstall"
                  Return="check" />
 
-    <CustomAction Id="SetUninstallServiceCondition"
-                 Property="UninstallService"
-                 Value="Installed AND REMOVE = ALL" />
-
     <InstallExecuteSequence>
-      <Custom Action="SetInstallServiceCondition" Before="InstallService" />
-      <Custom Action="InstallService" After="InstallFiles" />
-      <Custom Action="SetKillServiceProcessesCondition" Before="KillServiceProcesses" />
-      <Custom Action="KillServiceProcesses" Before="UninstallService" Condition="REMOVE = ALL" />
-      <Custom Action="SetUninstallServiceCondition" Before="UninstallService" />
-      <Custom Action="UninstallService" Before="RemoveFiles" Condition="REMOVE = ALL" />
+      <Custom Action="InstallService" After="InstallFiles" Condition="NOT Installed"/>
+      <Custom Action="KillServiceProcesses" Before="UninstallService" Condition="Installed"/>
+      <Custom Action="UninstallService" Before="RemoveFiles" Condition="Installed" />
     </InstallExecuteSequence>
 
     <ComponentGroup Id="ServiceFiles">

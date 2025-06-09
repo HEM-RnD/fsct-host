@@ -4,13 +4,13 @@
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Bundle Name="FSCT Driver Installer"
-          Version="1.0.0.0"
+          Version="$(var.Version)"
           Manufacturer="HEM Sp. z o.o."
           UpgradeCode="114bae33-cd52-42db-995e-a40506dc5626">
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
-          LicenseFile="$(var.SourceDir)\FSCT_Driver_EULA.rtf"
+          LicenseFile="FSCT_Driver_EULA.rtf"
           ShowVersion="yes"
           Theme="rtfLargeLicense" />
     </BootstrapperApplication>
@@ -19,7 +19,7 @@
       <!-- VC++ Redist 2015-2022 -->
       <ExePackage 
           Name="Microsoft Visual C++ 2015–2022 Redistributable (x64)"
-          SourceFile="$(var.SourceDir)\vc_redist.x64.exe"
+          SourceFile="vc_redist.x64.exe"
           Cache="keep"
           Permanent="yes"
           Vital="yes"
@@ -31,7 +31,7 @@
 
       <!-- FSCT Service MSI -->
       <MsiPackage 
-          SourceFile="$(var.SourceDir)\FSCTServiceInstaller.msi"
+          SourceFile="FSCTServiceInstaller.msi"
           Name="FSCT Driver Service"
           Vital="yes" />
     </Chain>

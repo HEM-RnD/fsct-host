@@ -16,8 +16,8 @@
 #   - curl
 #   - signtool (if signing is enabled)
 #
-
 param(
+    [Parameter()][int]$BuildNumber = 0,
     [switch]$NoSign,
     [switch]$NoDwnld,
     [switch]$Help
@@ -131,6 +131,28 @@ try {
     exit 1
 }
 
+
+# === Get package version ===
+Write-Host "[INFO] Getting package version..."
+function Get-CargoVersion {
+    $cargoMetadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+    $package = $cargoMetadata.packages | Where-Object { $_.name -eq $PROJECT_NAME }
+    return $package.version
+}
+
+$packageVersion = Get-CargoVersion
+
+if ([string]::IsNullOrEmpty($packageVersion)) {
+    Write-Error "[ERROR] Failed to get package version"
+    exit 1
+}
+
+Write-Host "[INFO] Package version: $packageVersion"
+
+$installerVersion = "$packageVersion.$BuildNumber"
+
+Write-Host "[INFO] Installer version: $installerVersion"
+
 # === Signing EXE ===
 if ($SIGN_ENABLED) {
     Write-Host "[INFO] Signing EXE..."
@@ -199,7 +221,7 @@ Write-Host "[INFO] WiX extensions ready"
 
 # === WiX Compilation ===
 Write-Host "[INFO] Compiling WiX files..."
-$msiResult = & wix build -arch x64 -d SourceDir=. -ext WixToolset.Util.wixext -o FSCTServiceInstaller.msi fsct_service_installer.wxs 2>&1
+$msiResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -o FSCTServiceInstaller.msi fsct_service_installer.wxs 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Error "[ERROR] WiX compilation failed"
     Write-Error "[ERROR] Error details: $msiResult"
@@ -213,7 +235,7 @@ if (-not (Test-Path "FSCTServiceInstaller.msi")) {
 
 # === Bundle Compilation ===
 Write-Host "[INFO] Compiling bundle installer..."
-$bundleResult = & wix build -arch x64 -d SourceDir=. -ext WixToolset.Util.wixext -ext $balDllPath -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
+$bundleResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -ext $balDllPath -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Error "[ERROR] Bundle compilation failed"
     Write-Error "[ERROR] Error details: $bundleResult"
