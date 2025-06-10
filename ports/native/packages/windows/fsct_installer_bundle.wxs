@@ -10,7 +10,7 @@
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
-          LicenseFile="FSCT_Driver_EULA.rtf"
+          LicenseFile="$(var.EULA)"
           ShowVersion="yes"
           Theme="rtfLargeLicense" />
     </BootstrapperApplication>

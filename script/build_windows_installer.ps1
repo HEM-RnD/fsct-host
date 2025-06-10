@@ -12,9 +12,10 @@
 #
 # Requirements:
 #   - Rust (cargo)
+#       - cargo about
 #   - WiX Toolset v6.0
-#   - curl
 #   - signtool (if signing is enabled)
+#   - pandoc
 #
 param(
     [Parameter()][int]$BuildNumber = 0,
@@ -53,8 +54,11 @@ try
     $SIGN_ENABLED = $true
     $DOWNLOAD_ENABLE = $true
 
+    $PROJECT_DIR = $projectLocation
     $WIX_SOURCE_DIR = Join-Path $projectLocation "ports\native\packages\windows"
     $BUILD_DIR = Join-Path $projectLocation "target\wix_build"
+    $EULA_DIR = Join-Path $projectLocation "ports\native"
+    $EULA_RTF = Join-Path $BUILD_DIR "EULA.rtf"
 
     # Parse command line arguments
     if ($NoSign)
@@ -83,14 +87,6 @@ try
     # Check for required tools
     Check-Tool -toolName "cargo"
     Check-Tool -toolName "wix"
-    if ($DOWNLOAD_ENABLE)
-    {
-        Check-Tool -toolName "curl"
-    }
-    else
-    {
-        Write-Host "[INFO] Skipping curl check in no-download mode"
-    }
 
     # Check if wix is available in PATH
     $wixVersion = & wix --version 2>&1
@@ -103,6 +99,7 @@ try
 
     Write-Host "[INFO] Using WiX Toolset: $wixVersion"
 
+    # Check if signtool is available in PATH
     if ($SIGN_ENABLED)
     {
         Check-Tool -toolName "signtool"
@@ -111,6 +108,23 @@ try
     {
         Write-Host "[INFO] Skipping signtool check in no-sign mode"
     }
+
+    # Check if pandoc is available in PATH
+    Check-Tool -toolName "pandoc"
+    $pandocVersion = (& pandoc --version 2>&1)[0].Split(" ")[-1]
+    Write-Host "[INFO] Using pandoc: $pandocVersion"
+
+    # Check if cargo about is installed
+    try
+    {
+        $cargoAboutVersion = (& cargo about -V 2>&1).Split(" ")[-1]
+        Write-Host "[INFO] Using cargo about: $cargoAboutVersion"
+    }
+    catch {
+        Write-Error "[ERROR] Required tool 'cargo about' is not installed."
+        exit 1
+    }
+
 
     # === Prepare build directory ===
     Write-Host "[INFO] Preparing build directory..."
@@ -134,7 +148,6 @@ try
     try
     {
         New-Item -Path $BUILD_DIR -ItemType Directory -Force | Out-Null
-        New-Item -Path "$BUILD_DIR\obj" -ItemType Directory -Force | Out-Null
     }
     catch
     {
@@ -222,13 +235,38 @@ try
     {
         Copy-Item "$WIX_SOURCE_DIR\fsct_service_installer.wxs" "$BUILD_DIR\fsct_service_installer.wxs" -Force
         Copy-Item "$WIX_SOURCE_DIR\fsct_installer_bundle.wxs" "$BUILD_DIR\fsct_installer_bundle.wxs" -Force
-        Copy-Item "$WIX_SOURCE_DIR\FSCT_Driver_EULA.rtf" "$BUILD_DIR\FSCT_Driver_EULA.rtf" -Force
+        Copy-Item "$PROJECT_DIR\LICENSE-FSCT.md" "$BUILD_DIR\LICENSE-FSCT.md" -Force
+        Copy-Item "$PROJECT_DIR\NOTICE" "$BUILD_DIR\NOTICE" -Force
     }
     catch
     {
         Write-Error "[ERROR] Failed to copy WiX source files"
         exit 1
     }
+    
+    # === Generating EULA ===
+    Write-Host "[INFO] Generating RTF EULA..."
+    try
+    {
+        # Convert to RTF using pandoc
+        $pandocResult = & pandoc --from markdown --to rtf -s -o $EULA_RTF "$EULA_DIR\FSCT_Driver_EULA.md" 2>&1
+
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to generate RTF license"
+            Write-Error "[ERROR] Pandoc error: $pandocResult"
+            throw
+        }
+    }
+    catch
+    {
+        Write-Error "[ERROR] Failed to generate RTF license: $_"
+        throw
+    }
+
+    # === Generating Licenses ===
+    & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
+        -o "$BUILD_DIR/LICENSES.md" 2>&1
 
     Set-Location $BUILD_DIR
     # === Installing WiX extensions ===
@@ -255,7 +293,8 @@ try
 
     # === WiX Compilation ===
     Write-Host "[INFO] Compiling WiX files..."
-    $msiResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -o FSCTServiceInstaller.msi fsct_service_installer.wxs 2>&1
+    $msiResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext         `
+        -o FSCTServiceInstaller.msi fsct_service_installer.wxs 2>&1
     if ($LASTEXITCODE -ne 0)
     {
         Write-Error "[ERROR] WiX compilation failed"
@@ -271,7 +310,10 @@ try
 
     # === Bundle Compilation ===
     Write-Host "[INFO] Compiling bundle installer..."
-    $bundleResult = & wix build -arch x64 -d Version=$installerVersion -ext WixToolset.Util.wixext -ext WixToolset.BootstrapperApplications.wixext -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
+    $bundleResult = & wix build -arch x64 -d Version=$installerVersion -d EULA=$EULA_RTF                `
+        -ext WixToolset.Util.wixext -ext WixToolset.BootstrapperApplications.wixext                     `
+        -o FSCTDriverInstaller.exe fsct_installer_bundle.wxs 2>&1
+
     if ($LASTEXITCODE -ne 0)
     {
         Write-Error "[ERROR] Bundle compilation failed"
@@ -290,7 +332,8 @@ try
     if ($SIGN_ENABLED)
     {
         Write-Host "[INFO] Signing MSI..."
-        $msiSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTServiceInstaller.msi" 2>&1
+        $msiSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTServiceInstaller.msi" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             Write-Error "[ERROR] Failed to sign MSI"
@@ -300,7 +343,8 @@ try
         Write-Host "[INFO] MSI signed successfully"
 
         Write-Host "[INFO] Signing bundle EXE..."
-        $bundleSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTDriverInstaller.exe" 2>&1
+        $bundleSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTDriverInstaller.exe" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             Write-Error "[ERROR] Failed to sign bundle EXE"
