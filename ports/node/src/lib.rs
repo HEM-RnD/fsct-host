@@ -29,7 +29,7 @@ use fsct_core::player::{
     create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver,
     PlayerEventsSender,
 };
-use fsct_core::{player::Player, player::PlayerInterface, player::PlayerState, run_devices_watch, run_player_watch, DevicesPlayerEventApplier};
+use fsct_core::{player::Player, player::PlayerInterface, player::PlayerState, run_devices_watch, run_player_watch, DevicesPlayerEventApplier, DevicesWatchHandle};
 use std::sync::{Arc, Mutex};
 use tokio::task::{AbortHandle};
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
@@ -128,13 +128,29 @@ impl NodePlayer {
 }
 
 struct FsctServiceAbortHandle {
-    device_watch_handle: AbortHandle,
+    device_watch_handle: DevicesWatchHandle,
     player_watch_handle: AbortHandle,
 }
 
 impl FsctServiceAbortHandle {
-    fn abort(&self) {
-        self.device_watch_handle.abort();
+    // Synchronous abort for use in Drop and other non-async contexts
+    async fn abort(self) {
+        // Abort player watch task immediately
+ 
+
+        // Spawn a task to shutdown device watch handle
+        // This allows abort to be synchronous while still properly shutting down the device watch
+        // tokio::spawn(async move {
+        //     if let Err(e) = self.device_watch_handle.shutdown().await {
+        //         log::error!("Error shutting down device watch: {}", e);
+        //     }
+        //     // Wait a short time to allow tasks to clean up
+        //     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // });
+
+        if let Err(e) = self.device_watch_handle.shutdown().await {
+            log::error!("Error shutting down device watch: {}", e);
+        }
         self.player_watch_handle.abort();
     }
 }
@@ -152,7 +168,7 @@ async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceAbortHandle> {
                                                player_state).await
                                                             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(FsctServiceAbortHandle {
-        device_watch_handle: device_watch_handle.abort_handle(),
+        device_watch_handle,
         player_watch_handle: player_watch_handle.abort_handle(),
     })
 }
@@ -241,7 +257,7 @@ impl FsctService {
     }
 
     #[napi]
-    pub fn stop_fsct(&self) -> napi::Result<()> {
+    pub async fn stop_fsct(&self) -> napi::Result<()> {
         let abort_handle = self
             .service_abort_handle.lock().unwrap()
             .take()

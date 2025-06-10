@@ -31,6 +31,30 @@ use crate::usb::fsct_device::FsctDevice;
 
 pub type DeviceMap = Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>;
 
+pub struct DevicesWatchHandle {
+    join_handle: tokio::task::JoinHandle<()>,
+    shutdown_requested: Arc<Mutex<bool>>,
+}
+
+impl DevicesWatchHandle {
+    pub fn new(join_handle: tokio::task::JoinHandle<()>, shutdown_requested: Arc<Mutex<bool>>) -> Self {
+        Self {
+            join_handle,
+            shutdown_requested
+        }
+    }
+
+    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.signal_shutdown();
+        self.join_handle.await
+    }
+
+    fn signal_shutdown(&self) {
+        let mut flag = self.shutdown_requested.lock().unwrap();
+        *flag = true;
+    }
+}
+
 async fn try_initialize_device(device_info: &DeviceInfo) -> Result<FsctDevice, DeviceDiscoveryError>
 {
     let fsct_device = create_and_configure_fsct_device(device_info).await?;
@@ -134,29 +158,83 @@ fn log_device_initialize_result(result: Result<(), DeviceDiscoveryError>, device
     }
 }
 
+async fn deinitialize_devices(devices: &DeviceMap) -> () {
+    // First, collect all devices and their IDs
+    let device_entries: Vec<(DeviceId, Arc<FsctDevice>)> = {
+        let devices_map = devices.lock().unwrap();
+        devices_map.iter()
+            .map(|(id, device)| (*id, device.clone()))
+            .collect()
+    };
+
+    // Disable all devices (without holding the lock)
+    for (_, device) in &device_entries {
+        if let Err(e) = device.set_enable(false).await {
+            warn!("Failed to disable device: {}", e);
+        }
+    }
+
+    // Now remove all devices from the map
+    let mut devices_map = devices.lock().unwrap();
+    for (device_id, _) in device_entries {
+        devices_map.remove(&device_id);
+    }
+}
+
 pub async fn run_devices_watch(fsct_devices: DeviceMap, current_metadata: Arc<Mutex<PlayerState>>)
-    -> Result<tokio::task::JoinHandle<()>, anyhow::Error>
+    -> Result<DevicesWatchHandle, anyhow::Error>
 {
     let mut devices_plug_events_stream = nusb::watch_devices()?;
+    let shutdown_requested = Arc::new(Mutex::new(false));
+
+    let shutdown_flag = shutdown_requested.clone();
     let join_handle = tokio::spawn(async move {
         let devices = list_devices().unwrap();
         for device_info in devices {
-            let res = try_initialize_device_and_add_to_list(&device_info, &fsct_devices, &current_metadata).await;
+            let res = try_initialize_device_and_add_to_list(&device_info, &fsct_devices.clone(), &current_metadata).await;
             log_device_initialize_result(res, &device_info);
         }
-        while let Some(event) = devices_plug_events_stream.next().await {
-            match event {
-                HotplugEvent::Connected(device_info) => {
-                    run_device_initialization(device_info.clone(), fsct_devices.clone(), current_metadata.clone()).await;
-                }
-                HotplugEvent::Disconnected(device_id) => {
-                    let mut fsct_devices = fsct_devices.lock().unwrap();
-                    fsct_devices.remove(&device_id);
+
+        loop {
+            // Check if shutdown was requested
+            if *shutdown_flag.lock().unwrap() {
+                debug!("Shutdown requested, stopping devices watch task");
+                deinitialize_devices(&fsct_devices).await;
+                break;
+            }
+
+            // Use timeout to periodically check for shutdown
+            let next_event = tokio::time::timeout(
+                std::time::Duration::from_millis(100), 
+                devices_plug_events_stream.next()
+            ).await;
+
+            match next_event {
+                Ok(Some(event)) => {
+                    match event {
+                        HotplugEvent::Connected(device_info) => {
+                            run_device_initialization(device_info.clone(), fsct_devices.clone(), current_metadata.clone()).await;
+                        }
+                        HotplugEvent::Disconnected(device_id) => {
+                            let mut fsct_devices = fsct_devices.lock().unwrap();
+                            fsct_devices.remove(&device_id);
+                        }
+                    }
+                },
+                Ok(None) => {
+                    // Stream ended
+                    break;
+                },
+                Err(_) => {
+                    // Timeout, continue to check the shutdown flag
+                    continue;
                 }
             }
         }
     });
-    Ok(join_handle)
+
+
+    Ok(DevicesWatchHandle::new(join_handle, shutdown_requested))
 }
 
 pub struct DevicesPlayerEventApplier {

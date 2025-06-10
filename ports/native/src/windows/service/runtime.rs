@@ -195,7 +195,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::SessionLogoff => {
                                     if service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is logging off, stopping service tasks", session_id);
-                                        service_state.stop_service();
+                                        service_state.stop_service().await;
                                     } else {
                                         debug!("This session ({}) is logging off, but service is not started, can't \
                                         stop it, ignoring...", session_id)
@@ -206,7 +206,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::RemoteDisconnect => {
                                     if service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is disconnecting, stopping service tasks", session_id);
-                                        service_state.stop_service();
+                                        service_state.stop_service().await;
                                     } else {
                                         debug!("This session ({}) is disconnecting, but service is not started, can't \
                                         stop it, ignoring...",
@@ -231,7 +231,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Stop the service tasks
         debug!("Stopping service tasks");
-        service_state.stop_service();
+        service_state.stop_service().await;
 
         info!("Exiting service");
     });

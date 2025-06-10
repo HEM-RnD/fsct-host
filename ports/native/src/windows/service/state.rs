@@ -19,12 +19,12 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use log::{info, error, warn, debug};
 use tokio::task::JoinHandle;
-use fsct_core::{run_devices_watch, run_player_watch, DevicesPlayerEventApplier, player::Player};
+use fsct_core::{run_devices_watch, run_player_watch, DevicesWatchHandle, DevicesPlayerEventApplier, player::Player};
 use crate::initialize_native_platform_player;
 
 // Struct to hold the service state and abort handles
 pub struct FsctServiceState {
-    pub device_watch_handle: Option<JoinHandle<()>>,
+    pub device_watch_handle: Option<DevicesWatchHandle>,
     pub player_watch_handle: Option<JoinHandle<()>>,
     pub assigned_session_id: Option<u32>,  // The session ID of the user who the service is assigned to
     pub platform_player: Option<Player>,
@@ -40,14 +40,17 @@ impl FsctServiceState {
         })
     }
 
-    pub fn stop_service(&mut self) {
+    pub async fn stop_service(&mut self) {
         info!("Stopping service tasks");
         if let Some(handle) = self.device_watch_handle.take() {
-            handle.abort();
+            // Request shutdown and wait for it to complete
+            // This will abort the task
+            if let Err(e) = handle.shutdown().await {
+                error!("Error shutting down device watch: {}", e);
+            }
         }
-        if let Some(handle) = self.player_watch_handle.take() {
-            handle.abort();
-        }
+        // Clear the handles
+        self.player_watch_handle = None;
         self.platform_player = None;
     }
 
@@ -55,7 +58,7 @@ impl FsctServiceState {
         info!("Starting service tasks");
         if self.device_watch_handle.is_some() || self.player_watch_handle.is_some() {
             warn!("Service tasks are already running, stopping them first");
-            self.stop_service();
+            self.stop_service().await;
         }
 
         debug!("Initializing native platform player");
