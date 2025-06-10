@@ -11,8 +11,6 @@
            Scope="perMachine"
            InstallerVersion="500">
 
-    <Property Id="REBOOT" Value="Force" />
-
     <MajorUpgrade DowngradeErrorMessage="A newer version of FSCT Driver Service is already installed." />
 
     <MediaTemplate EmbedCab="yes" />
@@ -51,6 +49,16 @@
                 Name="FsctDriverService"
                 Remove="uninstall" />
       </Component>
+      <Component Id="LicensesMd" Guid="*">
+        <File Id="LicensesMdFile" Source="LICENSES.md" KeyPath="yes"/>
+      </Component>
+      <Component Id="EulaRtf" Guid="*">
+        <File Id="EulaRtfFile" Source="EULA.rtf" KeyPath="yes"/>
+      </Component>
+      <Component Id="LicenseFsctMd" Guid="*">
+        <File Id="LicenseFsctMdFile" Source="LICENSE-FSCT.md" KeyPath="yes"/>
+      </Component>
+
     </DirectoryRef>
 
     <CustomAction Id="MarkAsPerUserService"
@@ -70,10 +78,14 @@
     <InstallExecuteSequence>
       <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
       <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
+      <ForceReboot Before="InstallFinalize" />
     </InstallExecuteSequence>
 
     <ComponentGroup Id="ServiceFiles">
       <ComponentRef Id="ServiceExe" />
+      <ComponentRef Id="LicensesMd"/>
+      <ComponentRef Id="EulaRtf"/>
+      <ComponentRef Id="LicenseFsctMd"/>
     </ComponentGroup>
 
   </Package>

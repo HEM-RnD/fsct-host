@@ -3,7 +3,7 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
-  <Bundle Name="FSCT Driver Installer"
+  <Bundle Name="Ferrum Streaming Control Technology™ Driver"
           Version="$(var.Version)"
           Manufacturer="HEM Sp. z o.o."
           UpgradeCode="114bae33-cd52-42db-995e-a40506dc5626">
@@ -12,7 +12,10 @@
       <bal:WixStandardBootstrapperApplication
           LicenseFile="$(var.EULA)"
           ShowVersion="yes"
-          Theme="rtfLargeLicense" />
+          Theme="rtfLargeLicense"
+          SuppressOptionsUI="yes"
+          SuppressRepair="yes"
+      />
     </BootstrapperApplication>
 
     <Chain>
