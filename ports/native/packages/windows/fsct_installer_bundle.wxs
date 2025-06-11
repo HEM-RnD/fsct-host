@@ -18,12 +18,6 @@
       />
     </BootstrapperApplication>
 
-    <util:CloseApplication
-            Id="StopServiceInstance"
-            Target="fsct_driver_service.exe"
-            TerminateProcess="1"
-            RebootPrompt="no"
-    />
 
     <!-- processor architecture -->
     <util:RegistrySearch
@@ -138,7 +132,9 @@
       <MsiPackage 
           SourceFile="FSCTServiceInstaller.msi"
           Name="FSCT Driver Service"
-          Vital="yes" />
+          Vital="yes">
+        <MsiProperty Name="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+      </MsiPackage>
     </Chain>
 
 

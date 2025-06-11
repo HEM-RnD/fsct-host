@@ -11,6 +11,9 @@
            Scope="perMachine"
            InstallerVersion="500">
 
+    <!-- Disable restart manager to prevent asking user to close applications -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
     <MajorUpgrade DowngradeErrorMessage="A newer version of FSCT Driver Service is already installed." />
 
     <MediaTemplate EmbedCab="yes" />
