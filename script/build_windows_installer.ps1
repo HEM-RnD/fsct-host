@@ -195,6 +195,47 @@ try
 
     Write-Host "[INFO] Package version: $packageVersion"
 
+    # Handle BuildNumber = 0 case
+    if ($BuildNumber -eq 0) {
+        $buildNumberFilePath = Join-Path $env:LOCALAPPDATA "FSCT\windows-installer-buildnumber.txt"
+        Write-Host "[INFO] BuildNumber is 0, using persistent build number from $buildNumberFilePath"
+
+        # Create directory if it doesn't exist
+        $buildNumberDir = Split-Path -Parent $buildNumberFilePath
+        if (-not (Test-Path $buildNumberDir)) {
+            New-Item -Path $buildNumberDir -ItemType Directory -Force | Out-Null
+        }
+
+        # Check if file exists and read build number
+        if (Test-Path $buildNumberFilePath) {
+            try {
+                $storedBuildNumber = [int](Get-Content $buildNumberFilePath -ErrorAction Stop)
+                # Increment the build number
+                $BuildNumber = $storedBuildNumber + 1
+                Write-Host "[INFO] Incrementing build number from $storedBuildNumber to $BuildNumber"
+            }
+            catch {
+                # If file exists but content is invalid, start from 1
+                $BuildNumber = 1
+                Write-Host "[WARNING] Invalid build number in file, resetting to $BuildNumber"
+            }
+        }
+        else {
+            # If file doesn't exist, start from 1
+            $BuildNumber = 1
+            Write-Host "[INFO] Build number file not found, starting from $BuildNumber"
+        }
+
+        # Save the new build number
+        try {
+            Set-Content -Path $buildNumberFilePath -Value $BuildNumber -Force
+            Write-Host "[INFO] Saved build number $BuildNumber to $buildNumberFilePath"
+        }
+        catch {
+            Write-Warning "[WARNING] Failed to save build number to file: $_"
+        }
+    }
+
     $installerVersion = "$packageVersion.$BuildNumber"
 
     Write-Host "[INFO] Installer version: $installerVersion"
