@@ -134,7 +134,7 @@ struct FsctServiceAbortHandle {
 
 impl FsctServiceAbortHandle {
     // Synchronous abort for use in Drop and other non-async contexts
-    async fn abort(self) {
+    async fn stop(self) {
         // Abort player watch task immediately
  
 
@@ -150,11 +150,16 @@ impl FsctServiceAbortHandle {
 
         if let Err(e) = self.device_watch_handle.shutdown().await {
             log::error!("Error shutting down device watch: {}", e);
+            //todo handle error 
         }
         self.player_watch_handle.abort();
     }
+    
+    fn abort(self) {
+        self.device_watch_handle.abort();
+        self.player_watch_handle.abort();
+    }
 }
-
 
 async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceAbortHandle> {
     let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
@@ -245,15 +250,18 @@ impl FsctService {
             return Err(napi::Error::from_reason("FSCT service already run"));
         }
         let new_service_abort_handle = run_fsct(player).await?;
-        let mut service_impl = self.service_abort_handle.lock().unwrap();
-        if service_impl.is_some() {
-            // if for some reason service has started, during we are starting our new service (i.e. typical race
-            // condition), we abort the new service.
-            new_service_abort_handle.abort();
-            return Err(napi::Error::from_reason("FSCT service already run"));
+        {
+            let mut service_impl = self.service_abort_handle.lock().unwrap();
+            if service_impl.is_none() {
+                service_impl.replace(new_service_abort_handle);
+                return Ok(());
+            }
         }
-        service_impl.replace(new_service_abort_handle);
-        Ok(())
+        
+        // if for some reason service has started, during we are starting our new service (i.e. typical race
+        // condition), we abort the new service.
+        new_service_abort_handle.stop().await;
+        return Err(napi::Error::from_reason("FSCT service already run"));
     }
 
     #[napi]
@@ -262,7 +270,7 @@ impl FsctService {
             .service_abort_handle.lock().unwrap()
             .take()
             .ok_or_else(|| napi::Error::from_reason("FSCT service not run"))?;
-        abort_handle.abort();
+        abort_handle.stop().await;
         Ok(())
     }
 }

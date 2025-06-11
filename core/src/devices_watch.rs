@@ -43,6 +43,11 @@ impl DevicesWatchHandle {
             shutdown_requested
         }
     }
+    
+    pub fn abort(self)
+    {
+        self.join_handle.abort();
+    }
 
     pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
         self.signal_shutdown();
