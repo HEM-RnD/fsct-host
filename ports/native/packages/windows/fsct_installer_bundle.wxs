@@ -18,18 +18,120 @@
       />
     </BootstrapperApplication>
 
+    <util:CloseApplication
+            Id="StopServiceInstance"
+            Target="fsct_driver_service.exe"
+            TerminateProcess="1"
+            RebootPrompt="no"
+    />
+
+    <!-- processor architecture -->
+    <util:RegistrySearch
+            Id="REG_ARCH"
+            Root="HKLM"
+            Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+            Value="PROCESSOR_ARCHITECTURE"
+            Result="value"
+            Variable="ARCH_NAME" />
+
+    <!-- Visual C++ 2015-2022 Redistributable (x86) runtime minimum msi package version -->
+    <util:ProductSearch
+            Id="VCRUNTIME_X86"
+            Result="version"
+            Variable="VCRUNTIME_X86_VER"
+            UpgradeCode="65E5BD06-6392-3027-8C26-853107D3CF1A"
+            Condition="VersionNT" />
+
+    <!-- Visual C++ 2015-2022 Redistributable (x64) runtime minimum msi package version -->
+    <util:ProductSearch
+            Id="VCRUNTIME_X64"
+            Result="version"
+            Variable="VCRUNTIME_X64_VER"
+            UpgradeCode="36F68A90-239C-34DF-B58C-64B30153CE35"
+            Condition="VersionNT64 AND (ARCH_NAME = &quot;AMD64&quot;)"
+            After="REG_ARCH" />
+
+    <!-- Visual C++ 2015-2022 Redistributable (Arm64) runtime msi package version -->
+    <util:ProductSearch
+            Id="VCRUNTIME_ARM64"
+            Result="version"
+            Variable="VCRUNTIME_ARM64_VER"
+            UpgradeCode="DC9BAE42-810B-423A-9E25-E4073F1C7B00"
+            Condition="(ARCH_NAME = &quot;ARM64&quot;)"
+            After="REG_ARCH" />
+
+    <!-- Visual C++ 2015-2022 Redistributable runtime msi package version -->
+    <Variable Name="VCRUNTIME_VER" Type="version" Value="14.40.33810.0" />
+
+
     <Chain>
-      <!-- VC++ Redist 2015-2022 -->
-      <ExePackage 
-          Name="Microsoft Visual C++ 2015–2022 Redistributable (x64)"
-          SourceFile="vc_redist.x64.exe"
-          Cache="keep"
-          Permanent="yes"
-          Vital="yes"
-          InstallArguments="/quiet /norestart"
-          DetectCondition="WixBundleInstalled OR WixMsiProductInstalled">
-        <ExitCode Behavior="success" Value="0" />
-        <ExitCode Behavior="success" Value="3010" />
+      <!-- Visual C++ 2015-2022 Redistributable (x86) - 14.40.33810 -->
+      <ExePackage
+              Id="VC_REDIST_X86"
+              DisplayName="Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.40.33810"
+              Cache="remove"
+              PerMachine="yes"
+              Permanent="yes"
+              Protocol="burn"
+              InstallCondition="VersionNT"
+              DetectCondition="(VCRUNTIME_X86_VER &gt;= VCRUNTIME_VER) AND VersionNT"
+              InstallArguments="/install /quiet /norestart"
+              RepairArguments="/repair /quiet /norestart"
+              UninstallArguments="/uninstall /quiet /norestart">
+        <ExePackagePayload
+                Name="VC_redist.x86.exe"
+                ProductName="Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.40.33810"
+                Description="Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.40.33810"
+                Hash="91A6283F774F9E2338B65AA835156854E9E76AED32F821B13CFD070DD6C87E1542CE2D5845BEB5E4AF1DDB102314BB6E0AD6214D896BB3E387590A01EAE0C182"
+                Size="13867304"
+                Version="14.40.33810.0"
+                DownloadUrl="https://download.visualstudio.microsoft.com/download/pr/9c69db26-cda4-472d-bdae-f2b87f4a0177/A32DD41EAAB0C5E1EAA78BE3C0BB73B48593DE8D97A7510B97DE3FD993538600/VC_redist.x86.exe" />
+      </ExePackage>
+
+      <!-- Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810 -->
+      <ExePackage
+              Id="VC_REDIST_X64"
+              DisplayName="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+              Cache="remove"
+              PerMachine="yes"
+              Permanent="yes"
+              Protocol="burn"
+              InstallCondition="VersionNT64 AND (ARCH_NAME = &quot;AMD64&quot;)"
+              DetectCondition="(VCRUNTIME_X64_VER &gt;= VCRUNTIME_VER) AND VersionNT64 AND (ARCH_NAME = &quot;AMD64&quot;)"
+              InstallArguments="/install /quiet /norestart"
+              RepairArguments="/repair /quiet /norestart"
+              UninstallArguments="/uninstall /quiet /norestart">
+        <ExePackagePayload
+                Name="VC_redist.x64.exe"
+                ProductName="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+                Description="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+                Hash="5935B69F5138AC3FBC33813C74DA853269BA079F910936AEFA95E230C6092B92F6225BFFB594E5DD35FF29BF260E4B35F91ADEDE90FDF5F062030D8666FD0104"
+                Size="25397512"
+                Version="14.40.33810.0"
+                DownloadUrl="https://download.visualstudio.microsoft.com/download/pr/1754ea58-11a6-44ab-a262-696e194ce543/3642E3F95D50CC193E4B5A0B0FFBF7FE2C08801517758B4C8AEB7105A091208A/VC_redist.x64.exe" />
+      </ExePackage>
+
+      <!-- Visual C++ 2015-2022 Redistributable (Arm64) - 14.40.33810 -->
+      <ExePackage
+              Id="VC_REDIST_ARM64"
+              DisplayName="Microsoft Visual C++ 2015-2022 Redistributable (Arm64) - 14.40.33810"
+              Cache="remove"
+              PerMachine="yes"
+              Permanent="yes"
+              Protocol="burn"
+              InstallCondition="(ARCH_NAME = &quot;ARM64&quot;)"
+              DetectCondition="(VCRUNTIME_ARM64_VER &gt;= VCRUNTIME_VER) AND (ARCH_NAME = &quot;ARM64&quot;)"
+              InstallArguments="/install /quiet /norestart"
+              RepairArguments="/repair /quiet /norestart"
+              UninstallArguments="/uninstall /quiet /norestart">
+        <ExePackagePayload
+                Name="VC_redist.arm64.exe"
+                ProductName="Microsoft Visual C++ 2022 Redistributable (Arm64) - 14.40.33810"
+                Description="Microsoft Visual C++ 2022 Redistributable (Arm64) - 14.40.33810"
+                Hash="76A467E992E4F2CBAE261CFB8C64274782E3D420A61F52458662AA1C3A843ED8F4E340D4C237BB080BE1F2E86D7C4E5F4859FFDA8FDCA4E77375FD4D49663D14"
+                Size="11531032"
+                Version="14.40.33810.0"
+                DownloadUrl="https://download.visualstudio.microsoft.com/download/pr/1754ea58-11a6-44ab-a262-696e194ce543/15B8F5B2106DC7A7BD83AB57B796770E0F4ECB891AD19BF655C9D6A9DA650AD2/VC_redist.arm64.exe" />
       </ExePackage>
 
       <!-- FSCT Service MSI -->
@@ -38,6 +140,8 @@
           Name="FSCT Driver Service"
           Vital="yes" />
     </Chain>
+
+
 
   </Bundle>
 </Wix>

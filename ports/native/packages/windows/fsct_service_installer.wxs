@@ -47,7 +47,8 @@
         <ServiceControl
                 Id="StartFsctDriverService"
                 Name="FsctDriverService"
-                Remove="uninstall" />
+                Remove="uninstall"
+                Stop="both" />
       </Component>
       <Component Id="LicensesMd" Guid="*">
         <File Id="LicensesMdFile" Source="LICENSES.md" KeyPath="yes"/>
@@ -58,7 +59,6 @@
       <Component Id="LicenseFsctMd" Guid="*">
         <File Id="LicenseFsctMdFile" Source="LICENSE-FSCT.md" KeyPath="yes"/>
       </Component>
-
     </DirectoryRef>
 
     <CustomAction Id="MarkAsPerUserService"
