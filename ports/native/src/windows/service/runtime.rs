@@ -126,7 +126,6 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         // Get the current active console session ID
         // This is the session ID of the user who is currently logged on to the physical console
         let current_session_id = get_current_session_id();
-        service_state.assigned_session_id = current_session_id;  // Store the assigned session ID
         info!("Assigned session ID: {:?}", current_session_id);
 
         // Note: The assigned session ID is the session ID of the user who is currently logged on to the physical console
@@ -179,9 +178,9 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                             // We only care about events for the session assigned to this process (assigned_session_id)
 
                             // First, check if this event is for our assigned session
-                            if service_state.assigned_session_id != Some(session_id) {
+                            if current_session_id != Some(session_id) {
                                 debug!("Event for session {} doesn't match assigned session {:?}, ignoring",
-                                      session_id, service_state.assigned_session_id);
+                                      session_id, current_session_id);
                                 continue;
                             }
 

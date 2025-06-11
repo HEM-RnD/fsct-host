@@ -25,8 +25,6 @@ use crate::{run_devices_watch, run_player_watch, DevicesWatchHandle, DevicesPlay
 pub struct FsctServiceState {
     pub device_watch_handle: Option<DevicesWatchHandle>,
     pub player_watch_handle: Option<JoinHandle<()>>,
-    pub assigned_session_id: Option<u32>,  // The session ID of the user who the service is assigned to
-    pub platform_player: Option<Player>,
 }
 
 impl FsctServiceState {
@@ -34,8 +32,6 @@ impl FsctServiceState {
         Ok(Self {
             device_watch_handle: None,
             player_watch_handle: None,
-            assigned_session_id: None, // Will be set when service starts
-            platform_player: None,
         })
     }
 
@@ -44,18 +40,29 @@ impl FsctServiceState {
         if let Some(handle) = self.device_watch_handle.take() {
             // Request shutdown and wait for it to complete
             // This will abort the task
-            if let Err(e) = handle.shutdown().await {
-                error!("Error shutting down device watch: {}", e);
+            match handle.shutdown().await {
+                Ok(()) => {},
+                Err(e) if e.is_cancelled() => {
+                    // Task was cancelled, continue stopping
+                    debug!("Device watch task was cancelled during shutdown");
+                },
+                Err(e) if e.is_panic() => {
+                    // Propagate panic
+                    error!("Device watch task panicked during shutdown: {}", e);
+                    std::panic::resume_unwind(e.into_panic());
+                },
+                Err(e) => {
+                    error!("Error shutting down device watch: {}", e);
+                }
             }
         }
-        
+
         if let Some(handle) = self.player_watch_handle.take() {
             handle.abort();
         }
 
         // Clear the handles
         self.player_watch_handle = None;
-        self.platform_player = None;
     }
 
     pub async fn start_service_with_player(&mut self, platform_player: Player) -> Result<()> {
@@ -64,8 +71,6 @@ impl FsctServiceState {
             warn!("Service tasks are already running, stopping them first");
             self.stop_service().await;
         }
-
-        self.platform_player = Some(platform_player.clone());
 
         // Create shared state for devices and player state
         let fsct_devices = Arc::new(Mutex::new(std::collections::HashMap::new()));
