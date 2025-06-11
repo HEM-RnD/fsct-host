@@ -22,16 +22,14 @@ mod js_types;
 #[macro_use]
 extern crate napi_derive;
 
-use std::collections::HashMap;
 use async_trait::async_trait;
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
 use fsct_core::player::{
     create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver,
     PlayerEventsSender,
 };
-use fsct_core::{player::Player, player::PlayerInterface, player::PlayerState, run_devices_watch, run_player_watch, DevicesPlayerEventApplier, DevicesWatchHandle};
+use fsct_core::{player::Player, player::PlayerInterface, player::PlayerState, FsctServiceState};
 use std::sync::{Arc, Mutex};
-use tokio::task::{AbortHandle};
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 
 pub struct NodePlayerImpl {
@@ -127,47 +125,22 @@ impl NodePlayer {
     }
 }
 
-struct FsctServiceHandle {
-    device_watch_handle: DevicesWatchHandle,
-    player_watch_handle: AbortHandle,
-}
+async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceState> {
+    // Create a new FsctServiceState
+    let mut service_state = FsctServiceState::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-impl FsctServiceHandle {
-    async fn stop(self) {
-        if let Err(e) = self.device_watch_handle.shutdown().await {
-            log::error!("Error shutting down device watch: {}", e);
-            //todo handle error
-        }
-        self.player_watch_handle.abort();
-    }
+    // Start the service with the player
+    let player = Player::from_arc(player.player_impl.clone());
+    service_state.start_service_with_player(player).await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    fn abort(self) {
-        self.device_watch_handle.abort();
-        self.player_watch_handle.abort();
-    }
-}
-
-async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceHandle> {
-    let fsct_devices = Arc::new(Mutex::new(HashMap::new()));
-    let player_state = Arc::new(Mutex::new(PlayerState::default()));
-
-    let player_event_listener = DevicesPlayerEventApplier::new(fsct_devices.clone());
-
-    let device_watch_handle = run_devices_watch(fsct_devices.clone(), player_state.clone()).await.map_err(|e|
-        napi::Error::from_reason(e.to_string()))?;
-    let player_watch_handle = run_player_watch(Player::from_arc(player.player_impl.clone()), player_event_listener,
-                                               player_state).await
-                                                            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(FsctServiceHandle {
-        device_watch_handle,
-        player_watch_handle: player_watch_handle.abort_handle(),
-    })
+    Ok(service_state)
 }
 
 
 #[napi]
 pub struct FsctService {
-    service_handle: Mutex<Option<FsctServiceHandle>>,
+    service_handle: Mutex<Option<FsctServiceState>>,
 }
 
 #[napi]
@@ -235,28 +208,28 @@ impl FsctService {
             // if we know at this point that service is already run we don't even try to start it
             return Err(napi::Error::from_reason("FSCT service already run"));
         }
-        let new_service_handle = run_fsct(player).await?;
+        let mut new_service_handle = run_fsct(player).await?;
         {
             let mut service_impl = self.service_handle.lock().unwrap();
             if service_impl.is_none() {
                 service_impl.replace(new_service_handle);
                 return Ok(());
-            }
+            } 
         }
 
         // if for some reason service has started, during we are starting our new service (i.e. typical race
-        // condition), we abort the new service.
-        new_service_handle.stop().await;
+        // condition), we stop the new service.
+        new_service_handle.stop_service().await;
         return Err(napi::Error::from_reason("FSCT service already run"));
     }
 
     #[napi]
     pub async fn stop_fsct(&self) -> napi::Result<()> {
-        let _service_handle = self
+        let mut _service_handle = self
             .service_handle.lock().unwrap()
             .take()
             .ok_or_else(|| napi::Error::from_reason("FSCT service not run"))?;
-        _service_handle.stop().await;
+        _service_handle.stop_service().await;
         Ok(())
     }
 }

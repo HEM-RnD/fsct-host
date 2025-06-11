@@ -31,7 +31,8 @@ use windows_service::{
 };
 use crate::windows::service::constants::SERVICE_NAME;
 use crate::windows::service::install::get_service_type;
-use crate::windows::service::state::FsctServiceState;
+use fsct_core::FsctServiceState;
+use crate::initialize_native_platform_player;
 
 // Define service events
 #[derive(Clone)]
@@ -132,8 +133,18 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         // when the service starts. This is the session that the service is assigned to and should run for.
         // We only start service tasks for this session and stop them for all other sessions.
 
+        // Initialize the player
+        debug!("Initializing native platform player");
+        let platform_player = match initialize_native_platform_player().await {
+            Ok(player) => player,
+            Err(e) => {
+                error!("Failed to initialize player: {}", e);
+                return;
+            }
+        };
+
         // Start the service tasks
-        if let Err(e) = service_state.start_service().await {
+        if let Err(e) = service_state.start_service_with_player(platform_player).await {
             error!("Failed to start service tasks: {}", e);
             return;
         }
@@ -183,8 +194,17 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::SessionLogon => {
                                     if !service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is becoming active, starting service tasks", session_id);
-                                        if let Err(e) = service_state.start_service().await {
-                                            error!("Failed to start service tasks: {}", e);
+                                        // Initialize the player
+                                        debug!("Initializing native platform player");
+                                        match initialize_native_platform_player().await {
+                                            Ok(player) => {
+                                                if let Err(e) = service_state.start_service_with_player(player).await {
+                                                    error!("Failed to start service tasks: {}", e);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                error!("Failed to initialize player: {}", e);
+                                            }
                                         }
                                     } else {
                                         info!("This session ({}) is becoming active, but service has been already

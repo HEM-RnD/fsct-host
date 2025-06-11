@@ -19,8 +19,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use log::{info, error, warn, debug};
 use tokio::task::JoinHandle;
-use fsct_core::{run_devices_watch, run_player_watch, DevicesWatchHandle, DevicesPlayerEventApplier, player::Player};
-use crate::initialize_native_platform_player;
+use crate::{run_devices_watch, run_player_watch, DevicesWatchHandle, DevicesPlayerEventApplier, player::Player};
 
 // Struct to hold the service state and abort handles
 pub struct FsctServiceState {
@@ -49,33 +48,28 @@ impl FsctServiceState {
                 error!("Error shutting down device watch: {}", e);
             }
         }
-        self.player_watch_handle.take().unwrap().abort();
+        
+        if let Some(handle) = self.player_watch_handle.take() {
+            handle.abort();
+        }
 
         // Clear the handles
         self.player_watch_handle = None;
         self.platform_player = None;
     }
 
-    pub async fn start_service(&mut self) -> Result<()> {
+    pub async fn start_service_with_player(&mut self, platform_player: Player) -> Result<()> {
         info!("Starting service tasks");
         if self.device_watch_handle.is_some() || self.player_watch_handle.is_some() {
             warn!("Service tasks are already running, stopping them first");
             self.stop_service().await;
         }
 
-        debug!("Initializing native platform player");
-        let platform_player = match initialize_native_platform_player().await {
-            Ok(player) => player,
-            Err(e) => {
-                error!("Failed to initialize player: {}", e);
-                return Err(e.into());
-            }
-        };
         self.platform_player = Some(platform_player.clone());
 
         // Create shared state for devices and player state
         let fsct_devices = Arc::new(Mutex::new(std::collections::HashMap::new()));
-        let player_state = Arc::new(Mutex::new(fsct_core::player::PlayerState::default()));
+        let player_state = Arc::new(Mutex::new(crate::player::PlayerState::default()));
 
         // Set up player event listener
         let player_event_listener = DevicesPlayerEventApplier::new(fsct_devices.clone());
@@ -92,5 +86,10 @@ impl FsctServiceState {
 
         info!("Service tasks started successfully");
         Ok(())
+    }
+
+    pub fn abort(mut self) {
+        self.device_watch_handle.take().unwrap().abort();
+        self.player_watch_handle.take().unwrap().abort();
     }
 }

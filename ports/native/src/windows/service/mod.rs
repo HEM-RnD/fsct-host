@@ -22,7 +22,6 @@ pub mod install;
 pub mod logger;
 pub mod runtime;
 pub mod standalone;
-pub mod state;
 
 // Re-export commonly used items
 pub use cli::{Cli, Commands, ServiceCommands, LogLevel};
