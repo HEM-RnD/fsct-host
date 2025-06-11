@@ -21,6 +21,7 @@ param(
     [Parameter()][int]$BuildNumber = 0,
     [switch]$NoSign,
     [switch]$NoDwnld,
+    [switch]$NoLicense,
     [switch]$Help
 )
 
@@ -36,15 +37,16 @@ try
     if ($Help)
     {
         Write-Host "FSCT Driver Service Windows Installer Build Script"
-        Write-Host "Usage: .\build_windows_installer.ps1 [-NoSign] [-SkipDwnld] [-Help]"
+        Write-Host "Usage: .\build_windows_installer.ps1 [-NoSign] [-SkipDwnld] [-NoLicense] [-Help]"
         Write-Host ""
         Write-Host "Options:"
         Write-Host "  -NoSign    Skip signing of executables and installers"
         Write-Host "  -NoDwnld   Skip downloading Visual C++ Redistributable and wix extensions"
+        Write-Host "  -NoLicense Skip generating license files (assumes they already exist)"
         Write-Host "  -Help      Display this help message"
         exit 0
     }
-    
+
     # === Configuration ===
     $PROJECT_NAME = "fsct_driver_service"
     $VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
@@ -53,6 +55,7 @@ try
     $SIGN_PASSWORD = "password"
     $SIGN_ENABLED = $true
     $DOWNLOAD_ENABLE = $true
+    $LICENSE_ENABLE = $true
 
     $PROJECT_DIR = $projectLocation
     $WIX_SOURCE_DIR = Join-Path $projectLocation "ports\native\packages\windows"
@@ -68,6 +71,10 @@ try
     if ($NoDwnld)
     {
         $DOWNLOAD_ENABLE = $false
+    }
+    if ($NoLicense)
+    {
+        $LICENSE_ENABLE = $false
     }
 
     # === Checking dependencies ===
@@ -243,53 +250,91 @@ try
         Write-Error "[ERROR] Failed to copy WiX source files"
         exit 1
     }
-    
-    # === Generating EULA ===
-    Write-Host "[INFO] Generating RTF EULA..."
-    try
-    {
-        # Convert to RTF using pandoc
-        $pandocResult = & pandoc --from markdown --to rtf -s -o $EULA_RTF "$EULA_DIR\FSCT_Driver_EULA.md" 2>&1
 
-        if ($LASTEXITCODE -ne 0)
+    # === Generating EULA ===
+    if ($LICENSE_ENABLE)
+    {
+        Write-Host "[INFO] Generating RTF EULA..."
+        try
         {
-            Write-Error "[ERROR] Failed to generate RTF license"
-            Write-Error "[ERROR] Pandoc error: $pandocResult"
+            # Convert to RTF using pandoc
+            $pandocResult = & pandoc --from markdown --to rtf -s -o $EULA_RTF "$EULA_DIR\FSCT_Driver_EULA.md" 2>&1
+
+            if ($LASTEXITCODE -ne 0)
+            {
+                Write-Error "[ERROR] Failed to generate RTF license"
+                Write-Error "[ERROR] Pandoc error: $pandocResult"
+                throw
+            }
+        }
+        catch
+        {
+            Write-Error "[ERROR] Failed to generate RTF license: $_"
             throw
         }
     }
-    catch
+    else
     {
-        Write-Error "[ERROR] Failed to generate RTF license: $_"
-        throw
+        Write-Host "[INFO] Skipping EULA generation (license generation disabled)"
+        # Check if EULA file already exists
+        if (-not (Test-Path $EULA_RTF))
+        {
+            Write-Host "[INFO] Creating empty EULA file for bundle compilation..."
+            # Create a minimal RTF file
+            Set-Content -Path $EULA_RTF -Value "{\rtf1\ansi\deff0{\fonttbl{\f0 Times New Roman;}}{\colortbl;\red0\green0\blue0;}\f0\fs24\cf1 EULA file (skipped generation)}"
+        }
     }
 
     # === Generating Licenses ===
-    & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
-        -o "$BUILD_DIR/LICENSES.md" 2>&1
+    if ($LICENSE_ENABLE)
+    {
+        Write-Host "[INFO] Generating license files..."
+        & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
+            -o "$BUILD_DIR/LICENSES.md" 2>&1
+    }
+    else
+    {
+        Write-Host "[INFO] Skipping license generation (license generation disabled)"
+        # Create minimal LICENSES.md file
+        $minimalLicenseContent = @"
+# Third Party Licenses
+
+This file contains license information for the dependencies used in this project.
+License generation was skipped during build.
+
+For complete license information, please build with license generation enabled.
+"@
+        Set-Content -Path "$BUILD_DIR/LICENSES.md" -Value $minimalLicenseContent
+    }
 
     Set-Location $BUILD_DIR
     # === Installing WiX extensions ===
-
-    Write-Host "[INFO] Installing WixToolset.Util.wixext extension..."
-    $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
-    if ($LASTEXITCODE -ne 0)
+    if ($DOWNLOAD_ENABLE)
     {
-        Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
-        Write-Error "[ERROR] Error details: $utilResult"
-        exit 1
-    }
+        Write-Host "[INFO] Installing WixToolset.Util.wixext extension..."
+        $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
+            Write-Error "[ERROR] Error details: $utilResult"
+            exit 1
+        }
 
-    Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext extension..."
-    $utilResult = & wix extension add WixToolset.BootstrapperApplications.wixext 2>&1
-    if ($LASTEXITCODE -ne 0)
+        Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext extension..."
+        $utilResult = & wix extension add WixToolset.BootstrapperApplications.wixext 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to install WixToolset.BootstrapperApplications.wixext"
+            Write-Error "[ERROR] Error details: $utilResult"
+            exit 1
+        }
+
+        Write-Host "[INFO] WiX extensions ready"
+    }
+    else
     {
-        Write-Error "[ERROR] Failed to install WixToolset.BootstrapperApplications.wixext"
-        Write-Error "[ERROR] Error details: $utilResult"
-        exit 1
+        Write-Host "[INFO] Skipping WiX extensions installation (download disabled)"
     }
-
-    Write-Host "[INFO] WiX extensions ready"
 
     # === WiX Compilation ===
     Write-Host "[INFO] Compiling WiX files..."
