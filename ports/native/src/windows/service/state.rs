@@ -49,6 +49,8 @@ impl FsctServiceState {
                 error!("Error shutting down device watch: {}", e);
             }
         }
+        self.player_watch_handle.take().unwrap().abort();
+
         // Clear the handles
         self.player_watch_handle = None;
         self.platform_player = None;
