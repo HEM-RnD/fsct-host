@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="FSCT Driver Service"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="HEM Sp. z o.o."
+           UpgradeCode="e4101414-00f9-428b-998b-c8560f95b4ec"
+           Compressed="yes"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <!-- Disable restart manager to prevent asking user to close applications -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of FSCT Driver Service is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="FSCT Service" Level="1">
+      <ComponentGroupRef Id="ServiceFiles" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="HemFolder" Name="HEM Sp. z o.o.">
+        <Directory Id="INSTALLFOLDER" Name="FSCT Driver Service">
+          <!-- Files will be copied here -->
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ServiceExe" Guid="fd6d8931-e4e4-4651-9f80-08663706c52a">
+        <File Id="FsctServiceExe"
+              Source="fsct_driver_service.exe"
+              KeyPath="yes" />
+        <ServiceInstall
+                Id="FsctDriverService"
+                Name="FsctDriverService"
+                DisplayName="Ferrum Streaming Control Technology Driver Service"
+                Description="This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver."
+                Start="auto"
+                Interactive="yes"
+                Type="ownProcess"
+                ErrorControl="normal"
+                Arguments="service run"
+                Vital="yes" />
+
+        <ServiceControl
+                Id="StartFsctDriverService"
+                Name="FsctDriverService"
+                Remove="both"
+                Stop="both" />
+      </Component>
+      <Component Id="LicensesMd" Guid="*">
+        <File Id="LicensesMdFile" Source="LICENSES.md" KeyPath="yes"/>
+      </Component>
+      <Component Id="EulaRtf" Guid="*">
+        <File Id="EulaRtfFile" Source="EULA.rtf" KeyPath="yes"/>
+      </Component>
+      <Component Id="LicenseFsctMd" Guid="*">
+        <File Id="LicenseFsctMdFile" Source="LICENSE-FSCT.md" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+    <CustomAction Id="MarkAsPerUserService"
+                  Directory="INSTALLFOLDER"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  ExeCommand='reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v Type /t REG_DWORD /d 336 /f' />
+
+    <CustomAction Id="MarkToNotRunAsLocalSystem"
+                  Directory="INSTALLFOLDER"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
+
+    <InstallExecuteSequence>
+      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
+      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
+      <ScheduleReboot  Before="InstallFinalize"  />
+    </InstallExecuteSequence>
+
+    <ComponentGroup Id="ServiceFiles">
+      <ComponentRef Id="ServiceExe" />
+      <ComponentRef Id="LicensesMd"/>
+      <ComponentRef Id="EulaRtf"/>
+      <ComponentRef Id="LicenseFsctMd"/>
+    </ComponentGroup>
+
+  </Package>
+</Wix>

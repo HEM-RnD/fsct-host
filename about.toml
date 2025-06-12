@@ -1,7 +1,8 @@
 accepted = [
     "MIT",
     "ISC",
-    "Unicode-3.0"
+    "Unicode-3.0",
+    "BSL-1.0"
 ]
 
 private = { ignore = true }
