@@ -49,8 +49,8 @@ try
 
     # === Configuration ===
     $PROJECT_NAME = "fsct_driver_service"
-    $SIGN_CERT = "cert.pfx"
-    $SIGN_PASSWORD = "password"
+    $SIGN_CERT_THUMBPRINT = "aef0182f5de48143c336a56f9ef5b706a9eb0403"
+    $TIMESTAMP_URL = "http://timestamp.globalsign.com/tsa/r6advanced1"
     $SIGN_ENABLED = $true
     $DOWNLOAD_ENABLE = $true
     $LICENSE_ENABLE = $true
@@ -242,7 +242,7 @@ try
     if ($SIGN_ENABLED)
     {
         Write-Host "[INFO] Signing EXE..."
-        $signResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\$PROJECT_NAME.exe" 2>&1
+        $signResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\$PROJECT_NAME.exe" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             Write-Error "[ERROR] Failed to sign EXE"
@@ -373,6 +373,21 @@ For complete license information, please build with license generation enabled.
         exit 1
     }
 
+    # === Signing MSI ===
+    if ($SIGN_ENABLED)
+    {
+        Write-Host "[INFO] Signing MSI..."
+        $msiSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 `
+            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\FSCTServiceInstaller.msi" 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to sign MSI"
+            Write-Error "[ERROR] Error details: $msiSignResult"
+            exit 1
+        }
+        Write-Host "[INFO] MSI signed successfully"
+    }
+
     # === Bundle Compilation ===
     Write-Host "[INFO] Compiling bundle installer..."
     $bundleResult = & wix build -arch x64 -d Version=$installerVersion -d EULA=$EULA_RTF                `
@@ -393,23 +408,42 @@ For complete license information, please build with license generation enabled.
     }
     Set-Location $initialLocation
 
-    # === Signing MSI and EXE ===
+    # === Signing Bundle EXE ===
     if ($SIGN_ENABLED)
     {
-        Write-Host "[INFO] Signing MSI..."
-        $msiSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 `
-            /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTServiceInstaller.msi" 2>&1
+        Write-Host "[INFO] Detaching bundle engine..."
+        $detachResult = & wix burn detach "$BUILD_DIR\FSCTDriverInstaller.exe"      `
+            -engine "$BUILD_DIR\bundle_engine.exe" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
-            Write-Error "[ERROR] Failed to sign MSI"
-            Write-Error "[ERROR] Error details: $msiSignResult"
+            Write-Error "[ERROR] Failed to detach bundle engine"
+            Write-Error "[ERROR] Error details: $detachResult"
             exit 1
         }
-        Write-Host "[INFO] MSI signed successfully"
 
-        Write-Host "[INFO] Signing bundle EXE..."
-        $bundleSignResult = signtool sign /f $SIGN_CERT /p $SIGN_PASSWORD /fd SHA256 `
-            /tr http://timestamp.digicert.com /td SHA256 "$BUILD_DIR\FSCTDriverInstaller.exe" 2>&1
+        Write-Host "[INFO] Signing detached bundle engine..."
+        $engineSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256    `
+            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\bundle_engine.exe" 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to sign bundle engine"
+            Write-Error "[ERROR] Error details: $engineSignResult"
+            exit 1
+        }
+
+        Write-Host "[INFO] Reattaching signed bundle engine..."
+        $reattachResult = & wix burn reattach "$BUILD_DIR\FSCTDriverInstaller.exe"  `
+            -engine "$BUILD_DIR\bundle_engine.exe" 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to reattach bundle engine"
+            Write-Error "[ERROR] Error details: $reattachResult"
+            exit 1
+        }
+
+        Write-Host "[INFO] Signing complete bundle EXE..."
+        $bundleSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 `
+            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\FSCTDriverInstaller.exe" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             Write-Error "[ERROR] Failed to sign bundle EXE"
