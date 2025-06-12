@@ -49,8 +49,6 @@ try
 
     # === Configuration ===
     $PROJECT_NAME = "fsct_driver_service"
-    $VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-    $VCREDIST_EXE = "vc_redist.x64.exe"
     $SIGN_CERT = "cert.pfx"
     $SIGN_PASSWORD = "password"
     $SIGN_ENABLED = $true
@@ -256,25 +254,6 @@ try
     else
     {
         Write-Host "[INFO] Skipping EXE signing (developer mode)"
-    }
-
-    # === Downloading VC Redist ===
-    if ((-not (Test-Path "$BUILD_DIR\$VCREDIST_EXE")) -and $DOWNLOAD_ENABLE)
-    {
-        Write-Host "[INFO] Downloading Visual C++ Redistributable..."
-        try
-        {
-            Invoke-WebRequest -Uri $VCREDIST_URL -OutFile "$BUILD_DIR\$VCREDIST_EXE"
-        }
-        catch
-        {
-            Write-Error "[ERROR] Failed to download Visual C++ Redistributable"
-            exit 1
-        }
-    }
-    elseif (-not $DOWNLOAD_ENABLE)
-    {
-        Write-Host "[INFO] Skipping Visual C++ Redistributable download (download disabled)"
     }
 
     # === Copying WiX source files ===
