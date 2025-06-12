@@ -182,20 +182,4 @@ impl FsctUsbInterface {
             .map_err_to_fsct_device_control_transfer_error()?;
         Ok(())
     }
-
-    pub async fn poll(&self) -> Result<(), FsctDeviceError> {
-        let control_out = ControlOut {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Interface,
-            request: requests::FsctRequestCode::Poll as u8,
-            value: 0,
-            index: self.interface.interface_number() as u16,
-            data: &[],
-        };
-        self.interface.control_out(control_out).await.into_result()
-            .context("Failed to poll")
-            .map_err_to_fsct_device_control_transfer_error()?;
-
-        Ok(())
-    }
 }

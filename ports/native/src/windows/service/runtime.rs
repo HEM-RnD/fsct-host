@@ -31,7 +31,8 @@ use windows_service::{
 };
 use crate::windows::service::constants::SERVICE_NAME;
 use crate::windows::service::install::get_service_type;
-use crate::windows::service::state::FsctServiceState;
+use fsct_core::FsctServiceState;
+use crate::initialize_native_platform_player;
 
 // Define service events
 #[derive(Clone)]
@@ -125,15 +126,24 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         // Get the current active console session ID
         // This is the session ID of the user who is currently logged on to the physical console
         let current_session_id = get_current_session_id();
-        service_state.assigned_session_id = current_session_id;  // Store the assigned session ID
         info!("Assigned session ID: {:?}", current_session_id);
 
         // Note: The assigned session ID is the session ID of the user who is currently logged on to the physical console
         // when the service starts. This is the session that the service is assigned to and should run for.
         // We only start service tasks for this session and stop them for all other sessions.
 
+        // Initialize the player
+        debug!("Initializing native platform player");
+        let platform_player = match initialize_native_platform_player().await {
+            Ok(player) => player,
+            Err(e) => {
+                error!("Failed to initialize player: {}", e);
+                return;
+            }
+        };
+
         // Start the service tasks
-        if let Err(e) = service_state.start_service().await {
+        if let Err(e) = service_state.start_service_with_player(platform_player).await {
             error!("Failed to start service tasks: {}", e);
             return;
         }
@@ -168,9 +178,9 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                             // We only care about events for the session assigned to this process (assigned_session_id)
 
                             // First, check if this event is for our assigned session
-                            if service_state.assigned_session_id != Some(session_id) {
+                            if current_session_id != Some(session_id) {
                                 debug!("Event for session {} doesn't match assigned session {:?}, ignoring",
-                                      session_id, service_state.assigned_session_id);
+                                      session_id, current_session_id);
                                 continue;
                             }
 
@@ -183,8 +193,17 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::SessionLogon => {
                                     if !service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is becoming active, starting service tasks", session_id);
-                                        if let Err(e) = service_state.start_service().await {
-                                            error!("Failed to start service tasks: {}", e);
+                                        // Initialize the player
+                                        debug!("Initializing native platform player");
+                                        match initialize_native_platform_player().await {
+                                            Ok(player) => {
+                                                if let Err(e) = service_state.start_service_with_player(player).await {
+                                                    error!("Failed to start service tasks: {}", e);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                error!("Failed to initialize player: {}", e);
+                                            }
                                         }
                                     } else {
                                         info!("This session ({}) is becoming active, but service has been already
@@ -195,7 +214,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::SessionLogoff => {
                                     if service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is logging off, stopping service tasks", session_id);
-                                        service_state.stop_service();
+                                        service_state.stop_service().await;
                                     } else {
                                         debug!("This session ({}) is logging off, but service is not started, can't \
                                         stop it, ignoring...", session_id)
@@ -206,7 +225,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::RemoteDisconnect => {
                                     if service_state.device_watch_handle.is_some() {
                                         info!("This session ({}) is disconnecting, stopping service tasks", session_id);
-                                        service_state.stop_service();
+                                        service_state.stop_service().await;
                                     } else {
                                         debug!("This session ({}) is disconnecting, but service is not started, can't \
                                         stop it, ignoring...",
@@ -231,7 +250,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Stop the service tasks
         debug!("Stopping service tasks");
-        service_state.stop_service();
+        service_state.stop_service().await;
 
         info!("Exiting service");
     });

@@ -18,9 +18,27 @@
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
 use fsct_core::run_service;
+
 use crate::initialize_native_platform_player;
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
+use tokio::signal::windows::ctrl_close;
+
+async fn shutdown_signal() {
+    debug!("Press Ctrl+C or close the console window to exit");
+
+    // Create the ctrl_close handler
+    let mut close_signal = ctrl_close().expect("Failed to create ctrl_close handler");
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Received Ctrl+C signal, exiting...");
+        }
+        _ = close_signal.recv() => {
+            info!("Received close signal from Windows, exiting...");
+        }
+    }
+}
 
 // Function to run the service in standalone mode (for debugging)
 pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
@@ -48,14 +66,31 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
         // Start the service
         debug!("Starting service");
-        if let Err(e) = run_service(platform_global_player).await {
-            error!("Service error: {}", e);
+        let service_result = run_service(platform_global_player).await;
+
+        // Handle service start result
+        let devices_watch_handle = match service_result {
+            Ok(handle) => {
+                debug!("Service started successfully");
+                Some(handle)
+            },
+            Err(e) => {
+                error!("Service error: {}", e);
+                None
+            }
+        };
+
+        // Wait for Ctrl+C or shutdown signal
+        shutdown_signal().await;
+
+        // Shutdown service if it was started successfully
+        if let Some(handle) = devices_watch_handle {
+            debug!("Shutting down service");
+            if let Err(e) = handle.shutdown().await {
+                error!("Error shutting down service: {}", e);
+            }
         }
 
-        // Wait for Ctrl+C
-        debug!("Press Ctrl+C to exit");
-        tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C signal");
-        info!("Received Ctrl+C signal, exiting...");
     });
 
     debug!("Standalone mode exited");

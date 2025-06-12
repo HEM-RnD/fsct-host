@@ -39,7 +39,6 @@ struct FsctDeviceSharedState {
 }
 pub struct FsctDevice {
     fsct_interface: Arc<FsctUsbInterface>,
-    poll_task_handle: Option<tokio::task::JoinHandle<()>>,
     time_sync_handle: Option<tokio::task::JoinHandle<()>>,
     state: Arc<Mutex<FsctDeviceSharedState>>,
 }
@@ -48,7 +47,6 @@ impl FsctDevice {
     pub(super) fn new(fsct_interface: FsctUsbInterface) -> Self {
         let fsct_device = Self {
             fsct_interface: Arc::new(fsct_interface),
-            poll_task_handle: None,
             time_sync_handle: None,
             state: Arc::new(Mutex::new(FsctDeviceSharedState {
                 time_diff: None,
@@ -66,17 +64,7 @@ impl FsctDevice {
             self.synchronize_time().await?;
         }
         self.fsct_interface.set_enable(true).await?;
-        let fsct_interface = self.fsct_interface.clone();
-        self.poll_task_handle = Some(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                let res = fsct_interface.poll().await;
-                if let Err(e) = res {
-                    log::error!("Error in FSCT interface: {}", e);
-                }
-            }
-        }));
-
+      
         let state = self.state.clone();
         let fsct_interface = self.fsct_interface.clone();
         self.time_sync_handle = Some(tokio::spawn(async move {
@@ -205,10 +193,6 @@ impl FsctDevice {
 
 impl Drop for FsctDevice {
     fn drop(&mut self) {
-        if let Some(handle) = self.poll_task_handle.take() {
-            log::info!("Stopping FSCT device polling task");
-            handle.abort();
-        }
         if let Some(handle) = self.time_sync_handle.take() {
             log::info!("Stopping FSCT device time synchronization task");
             handle.abort();
