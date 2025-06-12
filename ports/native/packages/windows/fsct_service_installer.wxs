@@ -50,7 +50,7 @@
         <ServiceControl
                 Id="StartFsctDriverService"
                 Name="FsctDriverService"
-                Remove="uninstall"
+                Remove="both"
                 Stop="both" />
       </Component>
       <Component Id="LicensesMd" Guid="*">
@@ -79,9 +79,9 @@
                   ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
 
     <InstallExecuteSequence>
-      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
-      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
-      <ForceReboot Before="InstallFinalize" />
+      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed OR UPGRADINGPRODUCTCODE"/>
+      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed OR UPGRADINGPRODUCTCODE"/>
+      <ScheduleReboot  Before="InstallFinalize"  />
     </InstallExecuteSequence>
 
     <ComponentGroup Id="ServiceFiles">

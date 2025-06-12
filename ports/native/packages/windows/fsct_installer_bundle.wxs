@@ -34,7 +34,7 @@
             Result="version"
             Variable="VCRUNTIME_X86_VER"
             UpgradeCode="65E5BD06-6392-3027-8C26-853107D3CF1A"
-            Condition="VersionNT" />
+            Condition="VersionNT AND NOT VersionNT64" />
 
     <!-- Visual C++ 2015-2022 Redistributable (x64) runtime minimum msi package version -->
     <util:ProductSearch
@@ -67,8 +67,8 @@
               PerMachine="yes"
               Permanent="yes"
               Protocol="burn"
-              InstallCondition="VersionNT"
-              DetectCondition="(VCRUNTIME_X86_VER &gt;= VCRUNTIME_VER) AND VersionNT"
+              InstallCondition="VersionNT AND NOT VersionNT64"
+              DetectCondition="(VCRUNTIME_X86_VER &gt;= VCRUNTIME_VER) AND VersionNT AND NOT VersionNT64"
               InstallArguments="/install /quiet /norestart"
               RepairArguments="/repair /quiet /norestart"
               UninstallArguments="/uninstall /quiet /norestart">
