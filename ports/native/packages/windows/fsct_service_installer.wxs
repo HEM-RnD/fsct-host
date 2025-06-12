@@ -79,8 +79,8 @@
                   ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
 
     <InstallExecuteSequence>
-      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed OR UPGRADINGPRODUCTCODE"/>
-      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed OR UPGRADINGPRODUCTCODE"/>
+      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
+      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
       <ScheduleReboot  Before="InstallFinalize"  />
     </InstallExecuteSequence>
 
