@@ -17,23 +17,14 @@
 
 mod media_remote;
 
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use async_trait::async_trait;
-use fsct_core::definitions::FsctStatus;
-use fsct_core::definitions::TimelineInfo;
-use fsct_core::player::{PlayerError, PlayerInterface, PlayerState, TrackMetadata};
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use fsct_core::Player;
+use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player::{PlayerError, PlayerInterface, PlayerState, TrackMetadata};
-use media_remote::MediaRemoteFramework;
+use std::any::Any;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 pub struct MacOSPlaybackManager {
     media_remote: Arc<media_remote::MediaRemoteFramework>,
@@ -112,10 +103,7 @@ fn get_status(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> FsctSt
 #[async_trait]
 impl PlayerInterface for MacOSPlaybackManager {
     async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let now_playing_info = self
-            .media_remote
-            .get_now_playing_info()
-            .await?;
+        let now_playing_info = self.media_remote.get_now_playing_info().await?;
 
         let status = get_status(&now_playing_info);
         let texts = get_current_track(&now_playing_info);
@@ -127,7 +115,6 @@ impl PlayerInterface for MacOSPlaybackManager {
         })
     }
 }
-
 
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
     Ok(Player::new(MacOSPlaybackManager::new()?))
