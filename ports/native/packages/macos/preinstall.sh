@@ -1,50 +1,59 @@
 #!/bin/bash
 
+# Configuration
+LOG_FILE="/tmp/fsct_installer.log"
 
-logger -s "Preinstall started" 2> /tmp/preinstall.log
+rm -f $LOG_FILE || true
+
+# Logging function
+log_message() {
+    local message="[FSCT Driver Installer] $1"
+    logger -s "$message" 2>> $LOG_FILE
+}
+
+# Initialize log file
+log_message "Preinstall started"
+
+# Function to remove a service
+remove_service() {
+    local service_name=$1
+    local service_display_name=$2
+
+    # Derive plist path by removing underscores from service name
+    local plist_name=$(echo "${service_name}" | sed 's/\_//g')
+    local plist_path="/Library/LaunchDaemons/com.hem-e.${plist_name}.plist"
+
+    # Binary name is already with underscores
+    local binary_path="/usr/local/bin/${service_name}"
+
+    if [ -f "$plist_path" ] || [ -f "$binary_path" ]; then
+        log_message "Detected $service_display_name, removing..."
+
+        # Kill any running instances of the application
+        log_message "Killing any running instances of $service_name"
+        pkill -SIGINT -f "$binary_path" 2>> $LOG_FILE || true
+
+        # Stop the daemon service if it's running
+        if [ -f "$plist_path" ]; then
+            log_message "Stopping existing $service_display_name..."
+            launchctl stop "$plist_path" 2>> $LOG_FILE || true
+            launchctl unload "$plist_path" 2>> $LOG_FILE || true
+        fi
+
+        # Remove service files
+        if [ -f "$plist_path" ]; then
+            rm -f "$plist_path"
+        fi
+        if [ -f "$binary_path" ]; then
+            rm -f "$binary_path"
+        fi
+    fi
+}
 
 # Stop and remove old daemon services if running
-if [ -f "/Library/LaunchDaemons/com.hem-e.fsctservice.plist" ] || [ -f "/usr/local/bin/fsct_service" ]; then
-    logger -s "Detected prerelease fsct_service, removing..." 2>> /tmp/preinstall.log
+remove_service "fsct_service" "prerelease fsct service"
+remove_service "fsct_driver_service" "previous fsct driver service"
 
-    # Kill any running instances of the old application
-    logger -s "Killing any running instances of fsct_service" 2>> /tmp/preinstall.log
-    pkill -SIGINT -f "/usr/local/bin/fsct_service" 2>> /tmp/preinstall.log || true
-
-    logger -s "Stopping existing prerelease fsct service..." 2>> /tmp/preinstall.log
-    launchctl stop /Library/LaunchDaemons/com.hem-e.fsctservice.plist 2>> /tmp/preinstall.log || true
-    launchctl unload /Library/LaunchDaemons/com.hem-e.fsctservice.plist 2>> /tmp/preinstall.log || true  
-
-    if [ -f "/Library/LaunchDaemons/com.hem-e.fsctservice.plist" ]; then
-        rm -f /Library/LaunchDaemons/com.hem-e.fsctservice.plist
-    fi
-    if [ -f "/usr/local/bin/fsct_service" ]; then
-        rm -f /usr/local/bin/fsct_service
-    fi
-fi
-
-if [ -f "/Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist" ] || [ -f "/usr/local/bin/fsct_driver_service" ]; then
-    logger -s "Detected previous fsct_driver_service, removing..." 2>> /tmp/preinstall.log
-
-    # Kill any running instances of the application
-    logger -s "Killing any running instances of fsct_driver_service" 2>> /tmp/preinstall.log
-    pkill -SIGINT -f "/usr/local/bin/fsct_driver_service" 2>> /tmp/preinstall.log || true
-
-    # Stop the daemon service if it's running
-    if [ -f "/Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist" ]; then
-        logger -s "Stopping existing fsct driver service..." 2>> /tmp/preinstall.log
-        launchctl stop /Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist 2>> /tmp/preinstall.log || true
-        launchctl unload /Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist 2>> /tmp/preinstall.log || true
-    fi
-
-    if [ -f "/Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist" ]; then
-        rm -f /Library/LaunchDaemons/com.hem-e.fsctdriverservice.plist
-    fi
-    if [ -f "/usr/local/bin/fsct_driver_service" ]; then
-        rm -f /usr/local/bin/fsct_driver_service
-    fi
-fi
-
-logger -s "Preinstall finished" 2>> /tmp/preinstall.log
+log_message "Preinstall finished"
 
 exit 0
