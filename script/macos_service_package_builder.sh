@@ -5,10 +5,10 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
-TARGET_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
+CARGO_BIN_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
 APP_NAME="fsct_driver_service"                                # Application name (final binary name)
 IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
-BUILD_DIR="${ROOT_DIR}/target/release"                 # Directory where Cargo build produces the binary
+BUILD_DIR="${ROOT_DIR}/target"                          # Directory where build will be performed
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
 INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
@@ -65,6 +65,7 @@ check_command codesign
 check_command xcrun
 check_command ditto
 check_command pandoc
+check_command lipo
 
 echo "Using cargo: $(cargo --version)"
 echo "Using python3: $(python3 --version)"
@@ -81,16 +82,41 @@ if [ "$SKIP_LICENSE" = false ]; then
 fi
 
 # Extract version using cargo
-VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${TARGET_NAME}'), ''))")
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CARGO_BIN_NAME}'), ''))")
 if [ -z "$VERSION" ]; then
     echo "Error: Failed to extract version using cargo metadata"
     exit 1
 fi
 echo "Using version from cargo metadata: ${VERSION}"
 
+echo "Checking required Rust targets for universal build..."
+
+PLATFORM_TARGETS=("x86_64-apple-darwin" "aarch64-apple-darwin")
+for target in "${PLATFORM_TARGETS[@]}"; do
+    if ! rustup target list --installed | grep -q "$target"; then
+        echo "Rust target $target is not installed."
+        echo "Install it with: rustup target add $target"
+        exit 1
+    fi
+done
+echo "All required targets are installed."
+
 echo "========================================"
-echo "Compiling the application in release mode..."
-(cd "${ROOT_DIR}" && cargo build --release --bin ${TARGET_NAME})
+echo "Compiling universal (fat) binary..."
+
+FAT_BUILD_DIR="${BUILD_DIR}/universal/release"
+mkdir -p "${FAT_BUILD_DIR}"
+# Loop through required targets and build
+targets_array=()
+for target in "${PLATFORM_TARGETS[@]}"; do
+    (cd "${ROOT_DIR}" && cargo build --release --bin ${CARGO_BIN_NAME} --target ${target})
+    targets_array+=("${ROOT_DIR}/target/${target}/release/${CARGO_BIN_NAME}")  
+done
+
+# Combine using lipo
+lipo -create "${targets_array[@]}" -output "${FAT_BUILD_DIR}/${CARGO_BIN_NAME}"
+
+echo "Fat binary created at ${FAT_BUILD_DIR}/${CARGO_BIN_NAME}"
 
 echo "========================================"
 echo "Preparing package structure..."
@@ -111,7 +137,7 @@ cp "${ROOT_DIR}/LICENSE-FSCT.md" "${BIN_ROOT}/usr/local/share/fsct-driver/"
 
 # Copy the built executable and rename it to APP_NAME
 echo "Copying the binary..."
-cp "${BUILD_DIR}/${TARGET_NAME}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+cp "${FAT_BUILD_DIR}/${CARGO_BIN_NAME}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
 
 # Sign the binary if signing is enabled
 if [ "$SKIP_SIGNING" = false ]; then
@@ -272,15 +298,15 @@ if [ "$SKIP_SIGNING" = false ]; then
                  --package-path "${COMPONENT_PKGS_DIR}" \
                  --sign "${DEVELOPER_ID_INSTALLER}" \
                  --resources "${PACKAGE_DIR}" \
-                 "${BUILD_DIR}/${PKG_NAME}"
+                 "${PACKAGE_DIR}/${PKG_NAME}"
 
     echo "Verifying package signature..."
-    pkgutil --check-signature "${BUILD_DIR}/${PKG_NAME}"
+    pkgutil --check-signature "${PACKAGE_DIR}/${PKG_NAME}"
 else
     productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
                  --package-path "${COMPONENT_PKGS_DIR}" \
                  --resources "${PACKAGE_DIR}" \
-                 "${BUILD_DIR}/${PKG_NAME}"
+                 "${PACKAGE_DIR}/${PKG_NAME}"
 fi
 
 # Notarize the package if enabled
@@ -290,7 +316,7 @@ if [ "$SKIP_NOTARIZATION" = false ] && [ "$SKIP_SIGNING" = false ]; then
 
     # Create a temporary ZIP archive for notarization
     NOTARIZE_ZIP="${BUILD_DIR}/${APP_NAME}-${VERSION}.zip"
-    ditto -c -k --keepParent "${BUILD_DIR}/${PKG_NAME}" "${NOTARIZE_ZIP}"
+    ditto -c -k --keepParent "${PACKAGE_DIR}/${PKG_NAME}" "${NOTARIZE_ZIP}"
 
     # Submit for notarization
     xcrun notarytool submit "${NOTARIZE_ZIP}" \
@@ -315,17 +341,17 @@ if [ "$SKIP_NOTARIZATION" = false ] && [ "$SKIP_SIGNING" = false ]; then
 
     # Staple the notarization ticket to the package
     echo "Stapling notarization ticket to package..."
-    xcrun stapler staple "${BUILD_DIR}/${PKG_NAME}"
+    xcrun stapler staple "${PACKAGE_DIR}/${PKG_NAME}"
 
     # Verify stapling
-    xcrun stapler validate "${BUILD_DIR}/${PKG_NAME}"
+    xcrun stapler validate "${PACKAGE_DIR}/${PKG_NAME}"
 
     # Clean up
     rm "${NOTARIZE_ZIP}"
 fi
 
 echo "========================================"
-echo "Done! Package created: ${BUILD_DIR}/${PKG_NAME}"
+echo "Done! Package created: ${PACKAGE_DIR}/${PKG_NAME}"
 if [ "$SKIP_SIGNING" = false ] && [ "$SKIP_NOTARIZATION" = false ]; then
     echo "Package is signed and notarized"
 elif [ "$SKIP_SIGNING" = false ]; then
@@ -334,4 +360,4 @@ else
     echo "Package is unsigned"
     echo "WARNING: Unsigned packages will display security warnings during installation"
 fi
-echo "To install, use: sudo installer -pkg ${BUILD_DIR}/${PKG_NAME} -target LocalSystem"
+echo "To install, use: sudo installer -pkg ${PACKAGE_DIR}/${PKG_NAME} -target LocalSystem"
