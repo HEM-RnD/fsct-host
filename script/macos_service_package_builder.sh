@@ -5,9 +5,9 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
-TARGET_NAME="fsct_native_service"                      # Name of the binary target for Cargo
-APP_NAME="fsct_service"                                # Application name (final binary name)
-IDENTIFIER="com.hem-e.fsctservice"                     # Unique package identifier
+TARGET_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
+APP_NAME="fsct_driver_service"                                # Application name (final binary name)
+IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
 VERSION="0.2.0"                                        # Application version
 BUILD_DIR="${ROOT_DIR}/target/release"                 # Directory where Cargo build produces the binary
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
@@ -91,14 +91,14 @@ if [ ! -f "${INSTALLER_FILES_DIR}/com.hem-e.fsctservice.xml" ]; then
 fi
 
 # Check for postinstall script
-if [ ! -f "${INSTALLER_FILES_DIR}/service_setup_script.sh" ]; then
-    echo "File service_setup_script.sh not found in ${INSTALLER_FILES_DIR}!"
+if [ ! -f "${INSTALLER_FILES_DIR}/postinstall.sh" ]; then
+    echo "File postinstall.sh not found in ${INSTALLER_FILES_DIR}!"
     exit 1
 fi
 
 # Check for preinstall script
-if [ ! -f "${INSTALLER_FILES_DIR}/preinstall_script.sh" ]; then
-    echo "File preinstall_script.sh not found in ${INSTALLER_FILES_DIR}!"
+if [ ! -f "${INSTALLER_FILES_DIR}/preinstall.sh" ]; then
+    echo "File preinstall.sh not found in ${INSTALLER_FILES_DIR}!"
     exit 1
 fi
 
@@ -111,7 +111,7 @@ fi
 # Copy the prepared files
 echo "Copying prepared files..."
 cp "${INSTALLER_FILES_DIR}/com.hem-e.fsctservice.xml" "${DAEMON_ROOT}${DAEMON_DIR}/com.hem-e.fsctservice.plist"
-cp "${INSTALLER_FILES_DIR}/service_setup_script.sh" "${SCRIPTS_DIR}/postinstall"
+cp "${INSTALLER_FILES_DIR}/postinstall.sh" "${SCRIPTS_DIR}/postinstall"
 chmod +x "${SCRIPTS_DIR}/postinstall"
 
 echo "========================================"
@@ -119,12 +119,12 @@ echo "Building component packages..."
 
 # Prepare scripts for the daemon component
 mkdir -p "${PACKAGE_DIR}/daemon_scripts"
-cp "${INSTALLER_FILES_DIR}/service_setup_script.sh" "${PACKAGE_DIR}/daemon_scripts/postinstall"
+cp "${INSTALLER_FILES_DIR}/postinstall.sh" "${PACKAGE_DIR}/daemon_scripts/postinstall"
 chmod +x "${PACKAGE_DIR}/daemon_scripts/postinstall"
 
 # Prepare scripts for the bin component
 mkdir -p "${PACKAGE_DIR}/bin_scripts"
-cp "${INSTALLER_FILES_DIR}/preinstall_script.sh" "${PACKAGE_DIR}/bin_scripts/preinstall"
+cp "${INSTALLER_FILES_DIR}/preinstall.sh" "${PACKAGE_DIR}/bin_scripts/preinstall"
 chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 
 # Build component packages
