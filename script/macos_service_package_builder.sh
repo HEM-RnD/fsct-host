@@ -290,7 +290,7 @@ fi
 
 echo "========================================"
 echo "Building the distribution package with productbuild..."
-PKG_NAME="${APP_NAME}-${VERSION}.pkg"                  # Output package name
+PKG_NAME="fsct-driver-${VERSION}.pkg"                  # Output package name
 
 # Build final package with or without signing
 if [ "$SKIP_SIGNING" = false ]; then
