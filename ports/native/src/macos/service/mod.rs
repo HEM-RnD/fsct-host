@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::initialize_native_platform_player;
 use anyhow::anyhow;
 use env_logger::Env;
 use fsct_core::run_service;
-use crate::initialize_native_platform_player;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
@@ -27,13 +27,18 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
 
-    let platform_global_player = initialize_native_platform_player().await
-                                                                    .map_err(|e| anyhow!(e))?;
-    run_service(platform_global_player).await?;
+    let platform_global_player = initialize_native_platform_player().await.map_err(|e| anyhow!(e))?;
+    let devices_watch_handle = run_service(platform_global_player).await?;
 
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to listen for Ctrl+C signal");
-    println!("Exiting...");
+    println!("Stopping service.");
+    let res = devices_watch_handle.shutdown().await;
+    if let Err(e) = res {
+        println!("Error while stopping service: {}", e);
+        return Err(e.into());
+    }
+    println!("Exit.");
     Ok(())
 }
