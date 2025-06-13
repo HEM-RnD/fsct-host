@@ -6,21 +6,11 @@ ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
 TARGET_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
-
-# Extract version using cargo metadata (similar to Windows script approach)
-VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${TARGET_NAME}'), ''))")
-if [ -z "$VERSION" ]; then
-    echo "Error: Failed to extract version using cargo metadata"
-    exit 1
-fi
-echo "Using version from cargo metadata: ${VERSION}"
 APP_NAME="fsct_driver_service"                                # Application name (final binary name)
 IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
-# Using version from cargo metadata instead of hardcoded value
 BUILD_DIR="${ROOT_DIR}/target/release"                 # Directory where Cargo build produces the binary
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
-PKG_NAME="${APP_NAME}-${VERSION}.pkg"                  # Output package name
 INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
@@ -32,12 +22,14 @@ KEYCHAIN_PROFILE="APPLE_NOTARY_PROFILE"
 # Control flags
 SKIP_SIGNING=false
 SKIP_NOTARIZATION=false
+SKIP_LICENSE=false
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --skip-signing) SKIP_SIGNING=true ;;
         --skip-notarization) SKIP_NOTARIZATION=true ;;
+        --skip-license) SKIP_LICENSE=true ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -53,6 +45,48 @@ DAEMON_PKG="${COMPONENT_PKGS_DIR}/daemon.pkg"
 
 # Exit the script if any command fails
 set -e
+
+# Function to check if a command exists
+check_command() {
+    if ! command -v "$1" &> /dev/null; then
+        echo "Error: $1 is not installed or not in PATH"
+        echo "Please install $1 to continue"
+        exit 1
+    fi
+}
+
+# Check for required tools
+echo "Checking required tools..."
+check_command cargo
+check_command python3
+check_command pkgbuild
+check_command productbuild
+check_command codesign
+check_command xcrun
+check_command ditto
+check_command pandoc
+
+echo "Using cargo: $(cargo --version)"
+echo "Using python3: $(python3 --version)"
+echo "Using pandoc: $(pandoc --version | head -n 1)"
+
+# Check if cargo about is installed (only if license generation is enabled)
+if [ "$SKIP_LICENSE" = false ]; then
+    if ! cargo about -V &> /dev/null; then
+        echo "Error: cargo about is not installed"
+        echo "Please install it with: cargo install cargo-about"
+        exit 1
+    fi
+    echo "Using cargo about: $(cargo about -V)"
+fi
+
+# Extract version using cargo
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${TARGET_NAME}'), ''))")
+if [ -z "$VERSION" ]; then
+    echo "Error: Failed to extract version using cargo metadata"
+    exit 1
+fi
+echo "Using version from cargo metadata: ${VERSION}"
 
 echo "========================================"
 echo "Compiling the application in release mode..."
@@ -71,6 +105,9 @@ DAEMON_ROOT="${PACKAGE_DIR}/daemon_root"
 SCRIPTS_DIR="${PACKAGE_DIR}/scripts"
 
 mkdir -p "${BIN_ROOT}${INSTALL_DIR}" "${DAEMON_ROOT}${DAEMON_DIR}" "${SCRIPTS_DIR}"
+
+mkdir -p "${BIN_ROOT}/usr/local/share/fsct-driver"
+cp "${ROOT_DIR}/LICENSE-FSCT.md" "${BIN_ROOT}/usr/local/share/fsct-driver/"
 
 # Copy the built executable and rename it to APP_NAME
 echo "Copying the binary..."
@@ -135,6 +172,61 @@ mkdir -p "${PACKAGE_DIR}/bin_scripts"
 cp "${INSTALLER_FILES_DIR}/preinstall.sh" "${PACKAGE_DIR}/bin_scripts/preinstall"
 chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 
+
+echo "========================================"
+echo "Generating EULA from FSCT_Driver_EULA.md..."
+# Generate EULA.rtf from FSCT_Driver_EULA.md using pandoc
+pandoc --from markdown --to rtf -s -o "${PACKAGE_DIR}/EULA.rtf" "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to generate EULA.rtf using pandoc"
+    exit 1
+fi
+
+# Verify that EULA.rtf was created
+if [ ! -f "${PACKAGE_DIR}/EULA.rtf" ]; then
+    echo "Error: EULA.rtf file was not created"
+    exit 1
+fi
+echo "EULA generated successfully: ${PACKAGE_DIR}/EULA.rtf"
+
+# Copy the EULA.md to the binary root directory
+cp "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md" "${BIN_ROOT}/usr/local/share/fsct-driver/EULA.md"
+
+echo "========================================"
+echo "Generating license information..."
+if [ "$SKIP_LICENSE" = false ]; then
+    echo "Generating LICENSES.md using cargo about..."
+    (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs -o "${PACKAGE_DIR}/LICENSES.md")
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to generate LICENSES.md using cargo about"
+        exit 1
+    fi
+    # Copy the generated LICENSES.md to the binary root directory
+    cp "${PACKAGE_DIR}/LICENSES.md" "${BIN_ROOT}/usr/local/share/fsct-driver/"
+    echo "LICENSES.md generated successfully: ${PACKAGE_DIR}/LICENSES.md"
+else
+    echo "Skipping LICENSES.md generation (--skip-license option provided)"
+    # Create a minimal LICENSES.md file
+    cat > "${PACKAGE_DIR}/LICENSES.md" << EOF
+# Third Party Licenses
+
+This file contains license information for the dependencies used in this project.
+License generation was skipped during build.
+
+For complete license information, please build without the --skip-license option.
+EOF
+    # Copy the minimal LICENSES.md to the binary root directory
+    cp "${PACKAGE_DIR}/LICENSES.md" "${BIN_ROOT}/usr/local/share/fsct-driver/"
+fi
+
+echo "========================================"
+echo "Copying distribution.xml to package build directory..."
+cp "${INSTALLER_FILES_DIR}/distribution.xml" "${PACKAGE_DIR}/distribution.xml"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to copy distribution.xml to package build directory"
+    exit 1
+fi
+
 # Build component packages
 if [ "$SKIP_SIGNING" = false ]; then
     echo "Building and signing component packages..."
@@ -172,19 +264,22 @@ fi
 
 echo "========================================"
 echo "Building the distribution package with productbuild..."
+PKG_NAME="${APP_NAME}-${VERSION}.pkg"                  # Output package name
 
 # Build final package with or without signing
 if [ "$SKIP_SIGNING" = false ]; then
-    productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
+    productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
                  --package-path "${COMPONENT_PKGS_DIR}" \
                  --sign "${DEVELOPER_ID_INSTALLER}" \
+                 --resources "${PACKAGE_DIR}" \
                  "${BUILD_DIR}/${PKG_NAME}"
 
     echo "Verifying package signature..."
     pkgutil --check-signature "${BUILD_DIR}/${PKG_NAME}"
 else
-    productbuild --distribution "${INSTALLER_FILES_DIR}/distribution.xml" \
+    productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
                  --package-path "${COMPONENT_PKGS_DIR}" \
+                 --resources "${PACKAGE_DIR}" \
                  "${BUILD_DIR}/${PKG_NAME}"
 fi
 

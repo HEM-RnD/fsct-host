@@ -4,6 +4,7 @@
     <organization>com.hem-e</organization>
     <domains enable_localSystem="true"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <license file="EULA.rtf"/>
     <script>
         <postinstall file="./postinstall"/>
     </script>
