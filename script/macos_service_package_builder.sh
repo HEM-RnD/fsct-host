@@ -6,9 +6,17 @@ ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
 TARGET_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
+
+# Extract version using cargo metadata (similar to Windows script approach)
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${TARGET_NAME}'), ''))")
+if [ -z "$VERSION" ]; then
+    echo "Error: Failed to extract version using cargo metadata"
+    exit 1
+fi
+echo "Using version from cargo metadata: ${VERSION}"
 APP_NAME="fsct_driver_service"                                # Application name (final binary name)
 IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
-VERSION="0.2.0"                                        # Application version
+# Using version from cargo metadata instead of hardcoded value
 BUILD_DIR="${ROOT_DIR}/target/release"                 # Directory where Cargo build produces the binary
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
@@ -85,8 +93,8 @@ if [ ! -d "${INSTALLER_FILES_DIR}" ]; then
 fi
 
 # Check for plist file
-if [ ! -f "${INSTALLER_FILES_DIR}/com.hem-e.fsctservice.xml" ]; then
-    echo "File com.hem-e.fsctservice.xml not found in ${INSTALLER_FILES_DIR}!"
+if [ ! -f "${INSTALLER_FILES_DIR}/$IDENTIFIER.xml" ]; then
+    echo "File $IDENTIFIER.xml not found in ${INSTALLER_FILES_DIR}!"
     exit 1
 fi
 
@@ -110,7 +118,7 @@ fi
 
 # Copy the prepared files
 echo "Copying prepared files..."
-cp "${INSTALLER_FILES_DIR}/com.hem-e.fsctservice.xml" "${DAEMON_ROOT}${DAEMON_DIR}/com.hem-e.fsctservice.plist"
+cp "${INSTALLER_FILES_DIR}/$IDENTIFIER.xml" "${DAEMON_ROOT}${DAEMON_DIR}/$IDENTIFIER.plist"
 cp "${INSTALLER_FILES_DIR}/postinstall.sh" "${SCRIPTS_DIR}/postinstall"
 chmod +x "${SCRIPTS_DIR}/postinstall"
 
@@ -171,7 +179,7 @@ if [ "$SKIP_SIGNING" = false ]; then
                  --package-path "${COMPONENT_PKGS_DIR}" \
                  --sign "${DEVELOPER_ID_INSTALLER}" \
                  "${BUILD_DIR}/${PKG_NAME}"
-    
+
     echo "Verifying package signature..."
     pkgutil --check-signature "${BUILD_DIR}/${PKG_NAME}"
 else
@@ -184,39 +192,39 @@ fi
 if [ "$SKIP_NOTARIZATION" = false ] && [ "$SKIP_SIGNING" = false ]; then
     echo "========================================"
     echo "Submitting package for notarization..."
-    
+
     # Create a temporary ZIP archive for notarization
     NOTARIZE_ZIP="${BUILD_DIR}/${APP_NAME}-${VERSION}.zip"
     ditto -c -k --keepParent "${BUILD_DIR}/${PKG_NAME}" "${NOTARIZE_ZIP}"
-    
+
     # Submit for notarization
     xcrun notarytool submit "${NOTARIZE_ZIP}" \
         --keychain-profile "${KEYCHAIN_PROFILE}" \
         --wait
-    
+
     # Check notarization result - use JSON format for reliable parsing
     NOTARIZATION_STATUS=$(xcrun notarytool history \
     --keychain-profile "${KEYCHAIN_PROFILE}" \
     --output-format json | grep -o '"status"[ ]*:[ ]*"[^"]*"' | head -n 1 | sed 's/.*"status"[ ]*:[ ]*"\([^"]*\)".*/\1/')
-    
+
     echo "Notarization status: ${NOTARIZATION_STATUS}"
-    
+
     if [ "${NOTARIZATION_STATUS}" = "Accepted" ]; then
         echo "Notarization successful!"
     else
         echo "Notarization failed with status: ${NOTARIZATION_STATUS}"
         exit 1
     fi
-    
+
     echo "Notarization successful!"
-    
+
     # Staple the notarization ticket to the package
     echo "Stapling notarization ticket to package..."
     xcrun stapler staple "${BUILD_DIR}/${PKG_NAME}"
-    
+
     # Verify stapling
     xcrun stapler validate "${BUILD_DIR}/${PKG_NAME}"
-    
+
     # Clean up
     rm "${NOTARIZE_ZIP}"
 fi
