@@ -358,7 +358,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fsct-node-lib"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "fsct_core"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "fsct_driver_service"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
