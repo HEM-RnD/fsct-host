@@ -23,14 +23,15 @@ use tokio::runtime::Runtime;
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows_service::{
     service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceAccess,
     },
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
+    service_manager::{ServiceManager, ServiceManagerAccess},
     define_windows_service,
 };
+use windows_service::service::ServiceType;
 use crate::windows::service::constants::SERVICE_NAME;
-use crate::windows::service::install::get_service_type;
 use fsct_core::FsctServiceState;
 use crate::initialize_native_platform_player;
 
@@ -62,6 +63,13 @@ pub fn service_main(arguments: Vec<OsString>) {
     if let Err(e) = run_service_main(arguments) {
         error!("Service failed: {}", e);
     }
+}
+
+fn get_service_type_from_manager() -> anyhow::Result<ServiceType> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let service = manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_CONFIG)?;
+    let config = service.query_config()?;
+    Ok(config.service_type)
 }
 
 pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
@@ -96,16 +104,18 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             }
         }
     };
+    let service_type = get_service_type_from_manager()?;
+    let is_user_service = service_type.contains(ServiceType::USER_OWN_PROCESS);
 
     debug!("Registering service control handler");
     let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
 
-    // Tell the system that the service is running
-    debug!("Setting service status to Running");
+    // Tell the system that the service is starting
+    debug!("Setting service status to StartPending");
     status_handle.set_service_status(ServiceStatus {
-        service_type: get_service_type(),
-        current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SESSION_CHANGE,
+        service_type,
+        current_state: ServiceState::StartPending,
+        controls_accepted: ServiceControlAccept::empty(),
         exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
@@ -134,17 +144,41 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Initialize the player
         debug!("Initializing native platform player");
-        let platform_player = match initialize_native_platform_player().await {
-            Ok(player) => player,
-            Err(e) => {
-                error!("Failed to initialize player: {}", e);
-                return;
+        let mut retries = 0;
+        let platform_player = loop {
+            match initialize_native_platform_player().await {
+                Ok(player) => break player,
+                Err(e) => {
+                    retries += 1;
+                    if retries >= 10 {
+                        error!("Failed to initialize player after 10 retries: {}", e);
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    debug!("Retrying initialization, attempt {}/10", retries + 1);
+                }
             }
         };
 
         // Start the service tasks
         if let Err(e) = service_state.start_service_with_player(platform_player).await {
             error!("Failed to start service tasks: {}", e);
+            return;
+        }
+
+        // Tell the system that the service is running
+        debug!("Setting service status to Running");
+        let result = status_handle.set_service_status(ServiceStatus {
+            service_type,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SESSION_CHANGE,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        });
+        if let Err(e) = result {
+            error!("Failed to set service status: {}", e);
             return;
         }
 
@@ -173,6 +207,11 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                         ServiceEvent::SessionChange(param) => {
                             let session_id = param.notification.session_id;
                             debug!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
+
+                            if !is_user_service {
+                                debug!("This is not a user service, ignoring session change event");
+                                continue;
+                            }
 
                             // Handle session change based on both the reason and session ID
                             // We only care about events for the session assigned to this process (assigned_session_id)
@@ -258,7 +297,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Tell the system that the service has stopped
     debug!("Setting service status to Stopped");
     status_handle.set_service_status(ServiceStatus {
-        service_type: get_service_type(),
+        service_type,
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
         exit_code: ServiceExitCode::Win32(0),

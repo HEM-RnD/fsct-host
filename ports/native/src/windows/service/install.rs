@@ -28,10 +28,16 @@ use windows_service::{
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::constants::{SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_DESCRIPTION};
 
-pub fn get_service_type() -> ServiceType
-{ ServiceType::USER_OWN_PROCESS  }
+fn get_service_type(user_service: bool) -> ServiceType
+{
+    if user_service {
+        ServiceType::USER_OWN_PROCESS
+    } else {
+        ServiceType::OWN_PROCESS
+    }
+}
 
-pub fn install_service(log_level: Option<LogLevel>) -> Result<()> {
+pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Result<()> {
     debug!("Starting service installation");
 
     debug!("Connecting to service manager");
@@ -75,7 +81,7 @@ pub fn install_service(log_level: Option<LogLevel>) -> Result<()> {
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: OsString::from(SERVICE_DISPLAY_NAME),
-        service_type: get_service_type(),
+        service_type: get_service_type(user_service),
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: PathBuf::from(service_binary_path),
