@@ -134,6 +134,7 @@ mkdir -p "${BIN_ROOT}${INSTALL_DIR}" "${DAEMON_ROOT}${DAEMON_DIR}" "${SCRIPTS_DI
 
 mkdir -p "${BIN_ROOT}/usr/local/share/fsct-driver"
 cp "${ROOT_DIR}/LICENSE-FSCT.md" "${BIN_ROOT}/usr/local/share/fsct-driver/"
+cp "${ROOT_DIR}/NOTICE" "${BIN_ROOT}/usr/local/share/fsct-driver/"
 
 # Copy the built executable and rename it to APP_NAME
 echo "Copying the binary..."
