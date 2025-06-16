@@ -41,7 +41,7 @@
                 DisplayName="Ferrum Streaming Control Technology Driver Service"
                 Description="This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver."
                 Start="auto"
-                Interactive="yes"
+                Interactive="no"
                 Type="ownProcess"
                 ErrorControl="normal"
                 Arguments="service run"
@@ -64,23 +64,23 @@
       </Component>
     </DirectoryRef>
 
-    <CustomAction Id="MarkAsPerUserService"
+    <!--
+      Per-user service configuration with login trigger:
+      - Type=80 (0x50): Represents per-user service flags (0x10 | 0x40)
+        0x10 - SERVICE_WIN32_OWN_PROCESS: Service runs in its own process
+        0x40 - SERVICE_USER_SERVICE: Service instance runs per user session
+      - Start=2: Sets service startup mode to manual (demand start)
+      - UserServiceFlags=3: Enables starting user service
+    -->
+    <CustomAction Id="ConfigureServiceWithTriggers"
                   Directory="INSTALLFOLDER"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check"
-                  ExeCommand='reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v Type /t REG_DWORD /d 336 /f' />
-
-    <CustomAction Id="MarkToNotRunAsLocalSystem"
-                  Directory="INSTALLFOLDER"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="check"
-                  ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
+                  ExeCommand='cmd /c "reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v Type /t REG_DWORD /d 80 /f &amp;&amp; reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v UserServiceFlags /t REG_DWORD /d 3 /f' />
 
     <InstallExecuteSequence>
-      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
-      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
+      <Custom Action="ConfigureServiceWithTriggers" After="InstallServices" Condition="NOT Installed"/>
       <ScheduleReboot  Before="InstallFinalize"  />
     </InstallExecuteSequence>
 

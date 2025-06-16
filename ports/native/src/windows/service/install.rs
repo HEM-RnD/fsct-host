@@ -29,7 +29,7 @@ use crate::windows::service::cli::LogLevel;
 use crate::windows::service::constants::{SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_DESCRIPTION};
 
 pub fn get_service_type() -> ServiceType
-{ ServiceType::USER_OWN_PROCESS | ServiceType::INTERACTIVE_PROCESS }
+{ ServiceType::USER_OWN_PROCESS  }
 
 pub fn install_service(log_level: Option<LogLevel>) -> Result<()> {
     debug!("Starting service installation");
