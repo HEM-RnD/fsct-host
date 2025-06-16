@@ -19,7 +19,6 @@ use std::ffi::OsString;
 use std::time::Duration;
 use anyhow::Result;
 use log::{info, error, debug};
-use tokio::runtime::Runtime;
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows_service::{
     service::{
@@ -75,7 +74,9 @@ fn get_service_type_from_manager() -> anyhow::Result<ServiceType> {
 pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Create a Tokio runtime for async operations
     debug!("Creating Tokio runtime");
-    let rt = Runtime::new()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
     // Create a broadcast channel for events that can be used from both sync and async contexts
     let (event_tx, _) = tokio::sync::broadcast::channel::<ServiceEvent>(10);
@@ -287,12 +288,27 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             }
         }
 
+        // Tell the system that the service has stopped
+        debug!("Setting service status to Stopped");
+        status_handle.set_service_status(ServiceStatus {
+            service_type,
+            current_state: ServiceState::StopPending,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        }).ok();
+
         // Stop the service tasks
         debug!("Stopping service tasks");
         service_state.stop_service().await;
 
         info!("Exiting service");
     });
+
+    rt.shutdown_timeout(Duration::from_secs(10));
+    debug!("Service tasks stopped, exiting");
 
     // Tell the system that the service has stopped
     debug!("Setting service status to Stopped");
