@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
-    <title>FSCT Service</title>
+    <title>Ferrum Streaming Control Technology™ Driver</title>
     <organization>com.hem-e</organization>
     <domains enable_localSystem="true"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <license file="EULA.rtf"/>
     <script>
         <postinstall file="./postinstall"/>
     </script>
-    <pkg-ref id="com.hem-e.fsctservice.bin"/>
-    <pkg-ref id="com.hem-e.fsctservice.daemon"/>
+    <pkg-ref id="com.hem-e.fsctdriverservice.bin"/>
+    <pkg-ref id="com.hem-e.fsctdriverservice.daemon"/>
     <choices-outline>
         <line choice="default">
             <line choice="bin"/>
@@ -17,11 +18,11 @@
     </choices-outline>
     <choice id="default"/>
     <choice id="bin" visible="false">
-        <pkg-ref id="com.hem-e.fsctservice.bin"/>
+        <pkg-ref id="com.hem-e.fsctdriverservice.bin"/>
     </choice>
     <choice id="daemon" visible="false">
-        <pkg-ref id="com.hem-e.fsctservice.daemon"/>
+        <pkg-ref id="com.hem-e.fsctdriverservice.daemon"/>
     </choice>
-    <pkg-ref id="com.hem-e.fsctservice.bin" version="0.2.0" onConclusion="none">bin.pkg</pkg-ref>
-    <pkg-ref id="com.hem-e.fsctservice.daemon" version="0.2.0" onConclusion="none">daemon.pkg</pkg-ref>
+    <pkg-ref id="com.hem-e.fsctdriverservice.bin" version="0.2.0" onConclusion="none">bin.pkg</pkg-ref>
+    <pkg-ref id="com.hem-e.fsctdriverservice.daemon" version="0.2.0" onConclusion="none">daemon.pkg</pkg-ref>
 </installer-gui-script>

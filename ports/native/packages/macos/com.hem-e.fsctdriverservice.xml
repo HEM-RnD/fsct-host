@@ -3,10 +3,10 @@
 <plist version="1.0">
     <dict>
         <key>Label</key>
-        <string>com.hem-e.fsctservice</string>
+        <string>com.hem-e.fsctdriverservice</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/usr/local/bin/fsct_service</string>
+            <string>/usr/local/bin/fsct_driver_service</string>
         </array>
         <key>RunAtLoad</key>
         <true/>
@@ -16,8 +16,8 @@
             <false/>
         </dict>
         <key>StandardOutPath</key>
-        <string>/tmp/fsct_service.log</string>
+        <string>/tmp/fsct_driver_service.log</string>
         <key>StandardErrorPath</key>
-        <string>/tmp/fsct_service.err</string>
+        <string>/tmp/fsct_driver_service.err</string>
     </dict>
 </plist>
