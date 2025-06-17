@@ -601,7 +601,6 @@ dependencies = [
  "log",
  "log4rs",
  "media-remote",
- "serde_json",
  "tokio",
  "windows",
  "windows-core",
@@ -1056,7 +1055,7 @@ dependencies = [
 [[package]]
 name = "media-remote"
 version = "0.2.3"
-source = "git+https://github.com/HEM-RnD/media-remote.git?branch=feature%2Fadd_playback_Rate#7eee3d82be41e7732119a79a81badd2692ae66ef"
+source = "git+https://github.com/HEM-RnD/media-remote.git?branch=feature%2Fadd_playback_Rate#2c4cc8019fae8e59837bf9cb4fa09cd231ab20fe"
 dependencies = [
  "block2",
  "dispatch2",

@@ -25,6 +25,7 @@ use fsct_core::player::{
 use media_remote::{ListenerToken, NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
+use std::process::Command;
 
 pub struct MacOSPlaybackManagerJSX {
     now_playing: NowPlayingJXA,
@@ -176,6 +177,33 @@ impl PlayerInterface for MacOSPlaybackManagerNative {
     }
 }
 
+fn get_macos_version() -> Option<(u32, u32)> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+
+    let version_str = String::from_utf8(output.stdout).ok()?;
+    let version_parts: Vec<&str> = version_str.trim().split('.').collect();
+
+    if version_parts.len() >= 2 {
+        let major = version_parts[0].parse::<u32>().ok()?;
+        let minor = version_parts[1].parse::<u32>().ok()?;
+        Some((major, minor))
+    } else {
+        None
+    }
+}
+
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
-    Ok(Player::new(MacOSPlaybackManagerJSX::new()?))
+    // Check macOS version
+    if let Some((major, minor)) = get_macos_version() {
+        // For macOS 15.4 and newer, use JSX
+        if major > 15 || (major == 15 && minor >= 4) {
+            return Ok(Player::new(MacOSPlaybackManagerJSX::new()?));
+        }
+    }
+
+    // For older versions or if version detection fails, use Native
+    Ok(Player::new(MacOSPlaybackManagerNative::new()?))
 }
