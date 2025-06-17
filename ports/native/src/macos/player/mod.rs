@@ -15,38 +15,25 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-mod media_remote;
-
 use async_trait::async_trait;
 use fsct_core::Player;
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player::{PlayerError, PlayerInterface, PlayerState, TrackMetadata};
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::task::spawn_blocking;
 
-pub struct MacOSPlaybackManager {
-    media_remote: Arc<media_remote::MediaRemoteFramework>,
-}
+pub struct MacOSPlaybackManager {}
 
 impl MacOSPlaybackManager {
     pub fn new() -> Result<Self, PlayerError> {
-        let media_remote = Arc::new(media_remote::MediaRemoteFramework::load().map_err(|e| PlayerError::Other(e))?);
-        Ok(MacOSPlaybackManager { media_remote })
+        Ok(Self {})
     }
 }
 
-fn get_text_from_now_playing_info(
-    now_playing_info: &HashMap<String, Box<dyn Any + Send>>,
-    key: &str,
-) -> Option<String> {
-    now_playing_info
-        .get(key)
-        .and_then(|v| v.downcast_ref::<String>())
-        .cloned()
+fn get_text_from_now_playing_info(now_playing_info: &serde_json::Value, key: &str) -> Option<String> {
+    now_playing_info["info"][key].as_str().map(|s| s.to_string())
 }
-fn get_current_track(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> TrackMetadata {
+fn get_current_track(now_playing_info: &serde_json::Value) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
     texts.title = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoTitle");
     texts.artist = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoArtist");
@@ -56,28 +43,21 @@ fn get_current_track(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) ->
     texts
 }
 
-fn get_timeline_info(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> Option<TimelineInfo> {
-    let duration = now_playing_info
-        .get("kMRMediaRemoteNowPlayingInfoDuration")
-        .and_then(|v| v.downcast_ref::<f64>())
-        .cloned()?;
+fn get_timeline_info(now_playing_info: &serde_json::Value) -> Option<TimelineInfo> {
+    let duration = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoDuration"].as_f64()?;
 
-    let position = now_playing_info
-        .get("kMRMediaRemoteNowPlayingInfoElapsedTime")
-        .and_then(|v| v.downcast_ref::<f64>())
-        .cloned()
+    let position = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoElapsedTime"]
+        .as_f64()
         .unwrap_or(0.0);
 
-    let update_time = now_playing_info
-        .get("kMRMediaRemoteNowPlayingInfoTimestamp")
-        .and_then(|v| v.downcast_ref::<std::time::SystemTime>())
-        .cloned()
+    let update_time = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoTimestamp"]
+        .as_u64()
+        .and_then(|t| Some(SystemTime::UNIX_EPOCH + Duration::from_millis(t)))
         .unwrap_or(SystemTime::now());
 
-    let rate = now_playing_info
-        .get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
-        .and_then(|v| v.downcast_ref::<f32>())
-        .cloned()
+    let rate = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoPlaybackRate"]
+        .as_f64()
+        .and_then(|v| Some(v as f32))
         .unwrap_or(0.0);
 
     Some(TimelineInfo {
@@ -88,11 +68,8 @@ fn get_timeline_info(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) ->
     })
 }
 
-fn get_status(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> FsctStatus {
-    let current_playback_rate = now_playing_info
-        .get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
-        .and_then(|v| v.downcast_ref::<f32>())
-        .cloned();
+fn get_status(now_playing_info: &serde_json::Value) -> FsctStatus {
+    let current_playback_rate = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoPlaybackRate"].as_f64();
     match current_playback_rate {
         Some(0.0) => FsctStatus::Paused,
         Some(_) => FsctStatus::Playing,
@@ -103,16 +80,22 @@ fn get_status(now_playing_info: &HashMap<String, Box<dyn Any + Send>>) -> FsctSt
 #[async_trait]
 impl PlayerInterface for MacOSPlaybackManager {
     async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let now_playing_info = self.media_remote.get_now_playing_info().await?;
+        let now_playing_info = spawn_blocking(move || media_remote::get_raw_info())
+            .await
+            .map_err(|e| PlayerError::Other(e.into()))?;
 
-        let status = get_status(&now_playing_info);
-        let texts = get_current_track(&now_playing_info);
-        let timeline = get_timeline_info(&now_playing_info);
-        Ok(PlayerState {
-            status,
-            timeline,
-            texts,
-        })
+        if let Some(now_playing_info) = now_playing_info {
+            let status = get_status(&now_playing_info);
+            let texts = get_current_track(&now_playing_info);
+            let timeline = get_timeline_info(&now_playing_info);
+            Ok(PlayerState {
+                status,
+                timeline,
+                texts,
+            })
+        } else {
+            Ok(PlayerState::default())
+        }
     }
 }
 

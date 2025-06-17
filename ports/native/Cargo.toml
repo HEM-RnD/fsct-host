@@ -23,6 +23,7 @@ anyhow.workspace = true
 log = "0.4"
 log4rs = "1.2"
 clap = { version = "4.5", features = ["derive"] }
+serde_json = "1.0.140"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.59", features = [
@@ -36,12 +37,14 @@ windows-core = "0.59.0"
 windows-service = "0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.0"
-objc2-foundation = "0.3.0"
-core-foundation-sys = "0.8.7"
-block2 = "0.6.0"
-dispatch2 = "0.2.0"
-libc = "0.2.169"
+#objc2 = "0.6.0"
+#objc2-foundation = "0.3.0"
+#core-foundation-sys = "0.8.7"
+#block2 = "0.6.0"
+#dispatch2 = "0.2.0"
+#libc = "0.2.169"
+media-remote = "0.2.3"
+tokio = { workspace = true, features = ["rt"] }
 
 [[bin]]
 name = "fsct_driver_service"
