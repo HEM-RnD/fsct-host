@@ -41,7 +41,7 @@
                 DisplayName="Ferrum Streaming Control Technology Driver Service"
                 Description="This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver."
                 Start="auto"
-                Interactive="yes"
+                Interactive="no"
                 Type="ownProcess"
                 ErrorControl="normal"
                 Arguments="service run"
@@ -52,6 +52,29 @@
                 Name="FsctDriverService"
                 Remove="both"
                 Stop="both" />
+
+        <!--
+          Per-user service configuration with login trigger:
+          - Type=80 (0x50): Represents per-user service flags (0x10 | 0x40)
+            0x10 - SERVICE_WIN32_OWN_PROCESS: Service runs in its own process
+            0x40 - SERVICE_USER_SERVICE: Service instance runs per user session
+        -->
+        <RegistryValue Root="HKLM"
+                       Key="SYSTEM\CurrentControlSet\Services\FsctDriverService"
+                       Name="Type"
+                       Type="integer"
+                       Value="80"
+                       Action="write" />
+
+        <!--
+          - UserServiceFlags=3: Enables starting user service
+        -->
+        <RegistryValue Root="HKLM"
+                       Key="SYSTEM\CurrentControlSet\Services\FsctDriverService"
+                       Name="UserServiceFlags"
+                       Type="integer"
+                       Value="3"
+                       Action="write" />
       </Component>
       <Component Id="LicensesMd" Guid="*">
         <File Id="LicensesMdFile" Source="LICENSES.md" KeyPath="yes"/>
@@ -64,23 +87,9 @@
       </Component>
     </DirectoryRef>
 
-    <CustomAction Id="MarkAsPerUserService"
-                  Directory="INSTALLFOLDER"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="check"
-                  ExeCommand='reg add "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v Type /t REG_DWORD /d 336 /f' />
-
-    <CustomAction Id="MarkToNotRunAsLocalSystem"
-                  Directory="INSTALLFOLDER"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="check"
-                  ExeCommand='reg delete "HKLM\SYSTEM\CurrentControlSet\Services\FsctDriverService" /v ObjectName /f' />
-
-    <InstallExecuteSequence>
-      <Custom Action="MarkAsPerUserService" After="InstallServices" Condition="NOT Installed"/>
-      <Custom Action="MarkToNotRunAsLocalSystem" After="MarkAsPerUserService" Condition="NOT Installed"/>
+      <InstallExecuteSequence>
+      <WriteRegistryValues Sequence="5801" Condition="NOT Installed"/>
+      <RemoveRegistryValues Condition="0" />
       <ScheduleReboot  Before="InstallFinalize"  />
     </InstallExecuteSequence>
 

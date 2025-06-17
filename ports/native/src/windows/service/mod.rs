@@ -45,14 +45,14 @@ pub fn fsct_main() -> anyhow::Result<()> {
         match command {
             Commands::Service { command } => {
                 match command {
-                    ServiceCommands::Install { verbose, service_log_level } => {
+                    ServiceCommands::Install { verbose, service_log_level,  user_service} => {
                         // Initialize logger for install command
                         if let Err(e) = init_install_logger(verbose, log_level) {
                             eprintln!("Failed to initialize logger: {}", e);
                             bail!("Failed to initialize logger: {}", e);
                         }
                         debug!("Installing service with log level: {}", log_level);
-                        let result = install_service(service_log_level);
+                        let result = install_service(service_log_level, user_service);
                         if let Err(ref e) = result {
                             error!("Failed to install service: {}", e);
                         } else {

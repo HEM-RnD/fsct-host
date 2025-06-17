@@ -96,8 +96,13 @@ pub enum ServiceCommands {
         #[arg(short, long)]
         verbose: bool,
 
+        /// Service log level
         #[arg(short, long, value_enum)]
         service_log_level: Option<LogLevel>,
+
+        /// Should be a user (per-session) service
+        #[arg(short, long)]
+        user_service: bool,
     },
 
     /// Uninstall the service
@@ -108,5 +113,5 @@ pub enum ServiceCommands {
     },
 
     /// Run as a service
-    Run,
+    Run
 }
