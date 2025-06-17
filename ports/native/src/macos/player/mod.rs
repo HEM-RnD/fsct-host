@@ -27,7 +27,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-pub struct MacOSPlaybackManagerJSX {
+pub struct MacOSPlaybackManagerJXA {
     now_playing: NowPlayingJXA,
     player_sender: PlayerEventsSender,
 }
@@ -99,7 +99,7 @@ fn send_changes(info: &Option<NowPlayingInfo>, tx: &PlayerEventsSender) {
     }
 }
 
-impl MacOSPlaybackManagerJSX {
+impl MacOSPlaybackManagerJXA {
     pub fn new() -> Result<Self, PlayerError> {
         let (player_sender, _rx) = create_player_events_channel();
         let tx = player_sender.clone();
@@ -142,7 +142,7 @@ fn get_current_state(info: &Option<NowPlayingInfo>) -> Result<PlayerState, Playe
 }
 
 #[async_trait]
-impl PlayerInterface for MacOSPlaybackManagerJSX {
+impl PlayerInterface for MacOSPlaybackManagerJXA {
     async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
         let info = self.now_playing.get_info();
         get_current_state(&info)
@@ -191,9 +191,9 @@ fn get_macos_version() -> Option<(u32, u32)> {
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
     // Check macOS version
     if let Some((major, minor)) = get_macos_version() {
-        // For macOS 15.4 and newer, use JSX
+        // For macOS 15.4 and newer, use JXA
         if major > 15 || (major == 15 && minor >= 4) {
-            return Ok(Player::new(MacOSPlaybackManagerJSX::new()?));
+            return Ok(Player::new(MacOSPlaybackManagerJXA::new()?));
         }
     }
 
