@@ -1055,7 +1055,7 @@ dependencies = [
 [[package]]
 name = "media-remote"
 version = "0.2.3"
-source = "git+https://github.com/HEM-RnD/media-remote.git?branch=feature%2Fadd_playback_Rate#2c4cc8019fae8e59837bf9cb4fa09cd231ab20fe"
+source = "git+https://github.com/HEM-RnD/media-remote.git?branch=feature%2Fadd_playback_Rate#46235e16150b7264007c7c5069adf6c339adbf91"
 dependencies = [
  "block2",
  "dispatch2",

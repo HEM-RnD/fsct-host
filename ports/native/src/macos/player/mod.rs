@@ -103,7 +103,7 @@ impl MacOSPlaybackManagerJSX {
     pub fn new() -> Result<Self, PlayerError> {
         let (player_sender, _rx) = create_player_events_channel();
         let tx = player_sender.clone();
-        let now_playing = NowPlayingJXA::new(Duration::from_millis(300));
+        let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
         now_playing.subscribe(move |info| {
             send_changes(&info, &tx);
         });
