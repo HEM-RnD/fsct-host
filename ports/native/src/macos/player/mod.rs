@@ -22,14 +22,13 @@ use fsct_core::player::{
     PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata,
     create_player_events_channel,
 };
-use media_remote::{ListenerToken, NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
+use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-use std::process::Command;
 
 pub struct MacOSPlaybackManagerJSX {
     now_playing: NowPlayingJXA,
-    listener: ListenerToken,
     player_sender: PlayerEventsSender,
 }
 
@@ -41,7 +40,6 @@ unsafe impl Send for NowPlayingWrapper {}
 
 pub struct MacOSPlaybackManagerNative {
     now_playing: Mutex<NowPlayingWrapper>,
-    listener: ListenerToken,
     player_sender: PlayerEventsSender,
 }
 
@@ -106,12 +104,11 @@ impl MacOSPlaybackManagerJSX {
         let (player_sender, _rx) = create_player_events_channel();
         let tx = player_sender.clone();
         let now_playing = NowPlayingJXA::new(Duration::from_millis(300));
-        let listener = now_playing.subscribe(move |info| {
+        now_playing.subscribe(move |info| {
             send_changes(&info, &tx);
         });
         Ok(Self {
             now_playing,
-            listener,
             player_sender,
         })
     }
@@ -122,12 +119,11 @@ impl MacOSPlaybackManagerNative {
         let (player_sender, _rx) = create_player_events_channel();
         let tx = player_sender.clone();
         let now_playing = NowPlaying::new();
-        let listener = now_playing.subscribe(move |info| {
+        now_playing.subscribe(move |info| {
             send_changes(&info, &tx);
         });
         Ok(Self {
             now_playing: Mutex::new(NowPlayingWrapper { now_playing }),
-            listener,
             player_sender,
         })
     }
@@ -178,10 +174,7 @@ impl PlayerInterface for MacOSPlaybackManagerNative {
 }
 
 fn get_macos_version() -> Option<(u32, u32)> {
-    let output = Command::new("sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()?;
+    let output = Command::new("sw_vers").arg("-productVersion").output().ok()?;
 
     let version_str = String::from_utf8(output.stdout).ok()?;
     let version_parts: Vec<&str> = version_str.trim().split('.').collect();

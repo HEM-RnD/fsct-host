@@ -64,7 +64,7 @@ impl FsctServiceState {
         }
 
         // Clear the handles
-        self.player_watch_handle = None;
+        self.player = None;
     }
 
     pub async fn start_service_with_player(&mut self, platform_player: Player) -> Result<()> {
