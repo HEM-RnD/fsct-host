@@ -17,48 +17,48 @@
 
 use async_trait::async_trait;
 use fsct_core::Player;
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use fsct_core::player::{PlayerError, PlayerInterface, PlayerState, TrackMetadata};
+use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct_core::player::{
+    PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata,
+    create_player_events_channel,
+};
+use media_remote::{ListenerToken, NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-use tokio::task::spawn_blocking;
 
-pub struct MacOSPlaybackManager {}
-
-impl MacOSPlaybackManager {
-    pub fn new() -> Result<Self, PlayerError> {
-        Ok(Self {})
-    }
+pub struct MacOSPlaybackManagerJSX {
+    now_playing: NowPlayingJXA,
+    listener: ListenerToken,
+    player_sender: PlayerEventsSender,
 }
 
-fn get_text_from_now_playing_info(now_playing_info: &serde_json::Value, key: &str) -> Option<String> {
-    now_playing_info["info"][key].as_str().map(|s| s.to_string())
+struct NowPlayingWrapper {
+    now_playing: NowPlaying,
 }
-fn get_current_track(now_playing_info: &serde_json::Value) -> TrackMetadata {
+
+unsafe impl Send for NowPlayingWrapper {}
+
+pub struct MacOSPlaybackManagerNative {
+    now_playing: Mutex<NowPlayingWrapper>,
+    listener: ListenerToken,
+    player_sender: PlayerEventsSender,
+}
+
+fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
-    texts.title = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoTitle");
-    texts.artist = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoArtist");
-    texts.album = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoAlbum");
-    texts.genre = get_text_from_now_playing_info(now_playing_info, "kMRMediaRemoteNowPlayingInfoGenre");
+    texts.title = now_playing_info.title.clone();
+    texts.artist = now_playing_info.artist.clone();
+    texts.album = now_playing_info.album.clone();
+    texts.genre = None;
 
     texts
 }
 
-fn get_timeline_info(now_playing_info: &serde_json::Value) -> Option<TimelineInfo> {
-    let duration = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoDuration"].as_f64()?;
-
-    let position = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoElapsedTime"]
-        .as_f64()
-        .unwrap_or(0.0);
-
-    let update_time = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoTimestamp"]
-        .as_u64()
-        .and_then(|t| Some(SystemTime::UNIX_EPOCH + Duration::from_millis(t)))
-        .unwrap_or(SystemTime::now());
-
-    let rate = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoPlaybackRate"]
-        .as_f64()
-        .and_then(|v| Some(v as f32))
-        .unwrap_or(0.0);
+fn get_timeline_info(now_playing_info: &NowPlayingInfo) -> Option<TimelineInfo> {
+    let duration = now_playing_info.duration?;
+    let position = now_playing_info.elapsed_time.unwrap_or(0.0);
+    let update_time = now_playing_info.info_update_time.unwrap_or(SystemTime::now());
+    let rate = now_playing_info.playback_rate.unwrap_or(0.0);
 
     Some(TimelineInfo {
         position: Duration::from_secs_f64(position),
@@ -68,37 +68,114 @@ fn get_timeline_info(now_playing_info: &serde_json::Value) -> Option<TimelineInf
     })
 }
 
-fn get_status(now_playing_info: &serde_json::Value) -> FsctStatus {
-    let current_playback_rate = now_playing_info["info"]["kMRMediaRemoteNowPlayingInfoPlaybackRate"].as_f64();
-    match current_playback_rate {
+fn get_status(now_playing_info: &NowPlayingInfo) -> FsctStatus {
+    match now_playing_info.playback_rate {
         Some(0.0) => FsctStatus::Paused,
         Some(_) => FsctStatus::Playing,
         None => FsctStatus::Stopped,
     }
 }
 
-#[async_trait]
-impl PlayerInterface for MacOSPlaybackManager {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let now_playing_info = spawn_blocking(move || media_remote::get_raw_info())
-            .await
-            .map_err(|e| PlayerError::Other(e.into()))?;
+fn send_changes(info: &Option<NowPlayingInfo>, tx: &PlayerEventsSender) {
+    if let Some(info) = info.as_ref() {
+        tx.send(PlayerEvent::TextChanged((
+            FsctTextMetadata::CurrentTitle,
+            info.title.clone(),
+        )))
+        .unwrap_or_default();
+        tx.send(PlayerEvent::TextChanged((
+            FsctTextMetadata::CurrentAuthor,
+            info.artist.clone(),
+        )))
+        .unwrap_or_default();
+        tx.send(PlayerEvent::TextChanged((
+            FsctTextMetadata::CurrentAlbum,
+            info.album.clone(),
+        )))
+        .unwrap_or_default();
+        tx.send(PlayerEvent::StatusChanged(get_status(info)))
+            .unwrap_or_default();
+        tx.send(PlayerEvent::TimelineChanged(get_timeline_info(info)))
+            .unwrap_or_default();
+    }
+}
 
-        if let Some(now_playing_info) = now_playing_info {
-            let status = get_status(&now_playing_info);
-            let texts = get_current_track(&now_playing_info);
-            let timeline = get_timeline_info(&now_playing_info);
-            Ok(PlayerState {
-                status,
-                timeline,
-                texts,
-            })
-        } else {
-            Ok(PlayerState::default())
-        }
+impl MacOSPlaybackManagerJSX {
+    pub fn new() -> Result<Self, PlayerError> {
+        let (player_sender, _rx) = create_player_events_channel();
+        let tx = player_sender.clone();
+        let now_playing = NowPlayingJXA::new(Duration::from_millis(300));
+        let listener = now_playing.subscribe(move |info| {
+            send_changes(&info, &tx);
+        });
+        Ok(Self {
+            now_playing,
+            listener,
+            player_sender,
+        })
+    }
+}
+
+impl MacOSPlaybackManagerNative {
+    pub fn new() -> Result<Self, PlayerError> {
+        let (player_sender, _rx) = create_player_events_channel();
+        let tx = player_sender.clone();
+        let now_playing = NowPlaying::new();
+        let listener = now_playing.subscribe(move |info| {
+            send_changes(&info, &tx);
+        });
+        Ok(Self {
+            now_playing: Mutex::new(NowPlayingWrapper { now_playing }),
+            listener,
+            player_sender,
+        })
+    }
+}
+
+fn get_current_state(info: &Option<NowPlayingInfo>) -> Result<PlayerState, PlayerError> {
+    if let Some(info) = info {
+        Ok(PlayerState {
+            status: get_status(info),
+            texts: get_current_track(info),
+            timeline: get_timeline_info(info),
+        })
+    } else {
+        Err(PlayerError::PermissionDenied)
+    }
+}
+
+#[async_trait]
+impl PlayerInterface for MacOSPlaybackManagerJSX {
+    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
+        let info = self.now_playing.get_info();
+        get_current_state(&info)
+    }
+
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
+        let rx = self.player_sender.subscribe();
+        let info = self.now_playing.get_info();
+        send_changes(&info, &self.player_sender);
+        Ok(rx)
+    }
+}
+
+#[async_trait]
+impl PlayerInterface for MacOSPlaybackManagerNative {
+    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
+        let now_playing = self.now_playing.lock().unwrap();
+        let info = now_playing.now_playing.get_info();
+        get_current_state(&info)
+    }
+
+    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
+        let rx = self.player_sender.subscribe();
+        let now_playing = self.now_playing.lock().unwrap();
+        let info = now_playing.now_playing.get_info();
+        send_changes(&info, &self.player_sender);
+        Ok(rx)
     }
 }
 
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
-    Ok(Player::new(MacOSPlaybackManager::new()?))
+    Ok(Player::new(MacOSPlaybackManagerJSX::new()?))
 }

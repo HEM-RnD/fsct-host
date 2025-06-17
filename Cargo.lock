@@ -1056,8 +1056,7 @@ dependencies = [
 [[package]]
 name = "media-remote"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "576e446b8ad8941b5d9727c0673fe06a960a01a83ca8a5aefaba03563f3155a1"
+source = "git+https://github.com/HEM-RnD/media-remote.git?branch=feature%2Fadd_playback_Rate#7eee3d82be41e7732119a79a81badd2692ae66ef"
 dependencies = [
  "block2",
  "dispatch2",

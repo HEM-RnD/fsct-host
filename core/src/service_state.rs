@@ -15,16 +15,17 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::{Arc, Mutex};
+use crate::{DevicesPlayerEventApplier, DevicesWatchHandle, player::Player, run_devices_watch, run_player_watch};
 use anyhow::Result;
-use log::{info, error, warn, debug};
+use log::{debug, error, info, warn};
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
-use crate::{run_devices_watch, run_player_watch, DevicesWatchHandle, DevicesPlayerEventApplier, player::Player};
 
 // Struct to hold the service state and abort handles
 pub struct FsctServiceState {
     pub device_watch_handle: Option<DevicesWatchHandle>,
     pub player_watch_handle: Option<JoinHandle<()>>,
+    pub player: Option<Player>,
 }
 
 impl FsctServiceState {
@@ -32,6 +33,7 @@ impl FsctServiceState {
         Ok(Self {
             device_watch_handle: None,
             player_watch_handle: None,
+            player: None,
         })
     }
 
@@ -41,16 +43,16 @@ impl FsctServiceState {
             // Request shutdown and wait for it to complete
             // This will abort the task
             match handle.shutdown().await {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(e) if e.is_cancelled() => {
                     // Task was cancelled, continue stopping
                     debug!("Device watch task was cancelled during shutdown");
-                },
+                }
                 Err(e) if e.is_panic() => {
                     // Propagate panic
                     error!("Device watch task panicked during shutdown: {}", e);
                     std::panic::resume_unwind(e.into_panic());
-                },
+                }
                 Err(e) => {
                     error!("Error shutting down device watch: {}", e);
                 }
@@ -86,8 +88,11 @@ impl FsctServiceState {
 
         // Start player watch
         debug!("Starting player watch");
-        let player_watch_handle = run_player_watch(platform_player, player_event_listener, player_state).await?;
+        let player_watch_handle =
+            run_player_watch(platform_player.clone(), player_event_listener, player_state).await?;
         self.player_watch_handle = Some(player_watch_handle);
+
+        self.player = Some(platform_player);
 
         info!("Service tasks started successfully");
         Ok(())
@@ -96,5 +101,6 @@ impl FsctServiceState {
     pub fn abort(mut self) {
         self.device_watch_handle.take().unwrap().abort();
         self.player_watch_handle.take().unwrap().abort();
+        self.player = None;
     }
 }
