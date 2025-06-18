@@ -28,7 +28,7 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     env_logger::init_from_env(env);
 
     let platform_global_player = initialize_native_platform_player().await.map_err(|e| anyhow!(e))?;
-    let devices_watch_handle = run_service(platform_global_player).await?;
+    let devices_watch_handle = run_service(platform_global_player.clone()).await?;
 
     tokio::signal::ctrl_c()
         .await
