@@ -53,6 +53,6 @@ export declare class NodePlayer {
 export declare class FsctService {
   constructor()
   runFsct(player: NodePlayer): Promise<void>
-  stopFsct(): void
+  stopFsct(): Promise<void>
   
 }
