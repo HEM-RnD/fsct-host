@@ -40,33 +40,20 @@ impl<T> IntoPlayerResult<T> for Result<T, WindowsError> {
     }
 }
 
-pub struct WindowsPlatformGlobalSessionManager {
-    session_manager: GlobalSystemMediaTransportControlsSessionManager,
-}
+pub struct WindowsSystemPlayer {}
 
 const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
-impl WindowsPlatformGlobalSessionManager {
-    pub async fn new() -> Result<Self, PlayerError> {
-        let session_manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .into_player_error()?
-            .await
-            .into_player_error()?;
+async fn get_session() -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
+    let session_manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+        .into_player_error()?
+        .await
+        .into_player_error()?;
 
-        Ok(Self { session_manager })
-    }
+    let session = session_manager.GetCurrentSession().into_player_error()?;
 
-    async fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
-        let session = self.session_manager
-                          .GetCurrentSession().into_player_error()?;
-        Ok(session)
-    }
-
-    async fn get_media_properties(&self) -> Result<GlobalSystemMediaTransportControlsSessionMediaProperties, PlayerError> {
-        Ok(self.get_session().await?.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?)
-    }
+    Ok(session)
 }
-
 async fn get_timeline_info(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo,
                            timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties, ) ->
 Result<Option<TimelineInfo>, PlayerError> {
@@ -119,12 +106,12 @@ fn get_texts(media_properties: &GlobalSystemMediaTransportControlsSessionMediaPr
 }
 
 #[async_trait]
-impl PlayerInterface for WindowsPlatformGlobalSessionManager {
+impl PlayerInterface for WindowsSystemPlayer {
     async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let session = self.get_session().await?;
+        let session = get_session().await?;
         let playback_info = session.GetPlaybackInfo().into_player_error()?;
         let timeline_properties = session.GetTimelineProperties().into_player_error()?;
-        let media_properties = self.get_media_properties().await?;
+        let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
         let timeline = get_timeline_info(&playback_info, &timeline_properties).await?;
         let status = get_status(&playback_info);
         let texts = get_texts(&media_properties);
@@ -136,27 +123,27 @@ impl PlayerInterface for WindowsPlatformGlobalSessionManager {
     }
 
     async fn play(&self) -> Result<(), PlayerError> {
-        self.get_session().await?.TryPlayAsync().into_player_error()?.await.into_player_error()?;
+        get_session().await?.TryPlayAsync().into_player_error()?.await.into_player_error()?;
         Ok(())
     }
 
     async fn pause(&self) -> Result<(), PlayerError> {
-        self.get_session().await?.TryPauseAsync().into_player_error()?.await.into_player_error()?;
+        get_session().await?.TryPauseAsync().into_player_error()?.await.into_player_error()?;
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), PlayerError> {
-        self.get_session().await?.TryStopAsync().into_player_error()?.await.into_player_error()?;
+        get_session().await?.TryStopAsync().into_player_error()?.await.into_player_error()?;
         Ok(())
     }
 
     async fn next_track(&self) -> Result<(), PlayerError> {
-        self.get_session().await?.TrySkipNextAsync().into_player_error()?.await.into_player_error()?;
+        get_session().await?.TrySkipNextAsync().into_player_error()?.await.into_player_error()?;
         Ok(())
     }
 
     async fn previous_track(&self) -> Result<(), PlayerError> {
-        self.get_session().await?.TrySkipPreviousAsync().into_player_error()?.await.into_player_error()?;
+        get_session().await?.TrySkipPreviousAsync().into_player_error()?.await.into_player_error()?;
         Ok(())
     }
 }
@@ -171,7 +158,6 @@ fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportC
 
 
 pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
-    let windows_player = WindowsPlatformGlobalSessionManager::new()
-        .await?;
+    let windows_player = WindowsSystemPlayer{};
     Ok(Player::new(windows_player))
 }
