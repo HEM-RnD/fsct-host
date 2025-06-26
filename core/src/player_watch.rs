@@ -120,6 +120,7 @@ fn create_polling_metadata_watch(player: Player) -> PlayerEventsReceiver {
                         last_get_current_state_failed = true;
                         error!("Failed to get state: {}", e);
                     }
+                    debug!("Failed to get state: {}", e);
                     PlayerState::default()
                 }
             };
