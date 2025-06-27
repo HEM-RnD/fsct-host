@@ -62,7 +62,15 @@ struct BosCapabilityDescriptor {
     bLength: u8,
     bDescriptorType: u8,
     bDevCapabilityType: u8,
+}
+
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+struct PlatformDataPartDescriptor {
     bReserved: u8,
+    uuid: [u8; 16],
 }
 
 #[derive(Debug, Clone)]
@@ -106,8 +114,15 @@ fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData, BosEr
     if capability_desc.bDescriptorType != 0x10 {
         return Err(BosError::WrongType { name: "BosCapabilityDescriptor", expected: 0x10, actual: capability_desc.bDescriptorType });
     }
-    let data =
-        &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)];
+    if (capability_desc.bLength as usize) < std::mem::size_of::<BosCapabilityDescriptor>() {
+        return Err(BosError::TooShort { 
+            name: "BosCapabilityDescriptor data", 
+            expected: std::mem::size_of::<BosCapabilityDescriptor>(), 
+            actual: capability_desc.bLength as usize 
+        });
+    }     
+    let data = if (capability_desc.bLength as usize) == std::mem::size_of::<BosCapabilityDescriptor>() { &[] }
+    else { &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)] };
     if capability_desc.bDevCapabilityType == 0 || capability_desc.bDevCapabilityType > 17 {
         return Err(BosError::CapabilityTypeMismatch(capability_desc.bDevCapabilityType));
     }
@@ -144,13 +159,16 @@ fn get_platform_capabilities(
     for capability in bos_capabilities {
         match capability.capability {
             BosCapabilityType::Platform => {
-                let uuid_bytes = capability.data[0..16]
-                    .try_into()
-                    .map_err(|_| BosError::TooShort { name: "PlatformCapability UUID", expected: 16, actual: 0 })?;
-                let uuid = Uuid::from_bytes_le(uuid_bytes);
+                let platform_part_size = size_of::<PlatformDataPartDescriptor>();
+                if capability.data.len() < size_of::<PlatformDataPartDescriptor>() {
+                    return Err(BosError::TooShort { name: "PlatformCapabilityDescriptor - bReserved and UUID part", expected: 17, actual: capability.data.len() });
+                };
+                let platform_part: PlatformDataPartDescriptor =  
+                    unsafe { *std::mem::transmute::<*const u8, &PlatformDataPartDescriptor>(capability.data.as_ptr()) };
+                let uuid = Uuid::from_bytes_le(platform_part.uuid);
                 capabilities.push(PlatformCapability {
                     uuid,
-                    data: capability.data[16..].to_vec(),
+                    data: capability.data[platform_part_size..].to_vec(),
                 });
             }
             _ => {}
