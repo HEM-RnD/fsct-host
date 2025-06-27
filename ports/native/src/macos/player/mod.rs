@@ -57,7 +57,12 @@ fn get_timeline_info(now_playing_info: &NowPlayingInfo) -> Option<TimelineInfo> 
     let duration = now_playing_info.duration?;
     let position = now_playing_info.elapsed_time.unwrap_or(0.0);
     let update_time = now_playing_info.info_update_time.unwrap_or(SystemTime::now());
-    let rate = now_playing_info.playback_rate.unwrap_or(0.0);
+    let is_playing = now_playing_info.is_playing.unwrap_or(false);
+    let rate = if is_playing {
+        now_playing_info.playback_rate.unwrap_or(0.0)
+    } else {
+        0.0
+    };
 
     Some(TimelineInfo {
         position: Duration::from_secs_f64(position),
