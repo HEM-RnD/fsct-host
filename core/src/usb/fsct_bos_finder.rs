@@ -400,4 +400,64 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn test_bos_data_shorter_than_total_length() {
+        let mut data = create_bos_descriptor(50, 1); // Total length larger than actual data
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA,
+        ));
+
+        assert!(matches!(
+            decode_bos_descriptor_with_capabilities(&data),
+            Err(BosError::TooShort {
+                name: "BosDescriptor with capabilities",
+                expected: 50,
+                actual: 28
+            })
+        ));
+    }
+
+    #[test]
+    fn test_platform_descriptor_shorter_than_uuid() {
+        let mut data = create_bos_descriptor(18, 1);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA[..10], // Data shorter than UUID
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+
+        assert!(matches!(
+            get_platform_capabilities(bos_caps),
+            Err(BosError::TooShort {
+                name: "PlatformCapabilityDescriptor - bReserved and UUID part",
+                expected: 17,
+                actual: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn test_invalid_platform_capability_data() {
+        let mut invalid_data = vec![0; 20];
+        invalid_data[0] = 0x00; // bReserved
+        invalid_data[1..17].copy_from_slice(&[0xFF; 16]); // Invalid UUID
+        invalid_data[17..].copy_from_slice(&[0x00, 0x01, 0x42]); // Version and subclass
+
+        let mut data = create_bos_descriptor(28, 1);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &invalid_data,
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+
+        assert!(matches!(
+            get_fsct_vendor_subclass_number(platform_caps),
+            Err(BosError::NotFsctCapability)
+        ));
+    }
 }
