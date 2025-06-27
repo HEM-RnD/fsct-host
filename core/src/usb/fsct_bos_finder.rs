@@ -224,3 +224,162 @@ pub fn get_fsct_vendor_subclass_number_from_device(
     let platform_caps = get_platform_capabilities(bos_desc)?;
     Ok(get_fsct_vendor_subclass_number(platform_caps)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    const FSCT_PLATFORM_CAPABILITY_DATA: [u8; 20] = [
+        0x00, // bReserved
+        0xEB, 0xBE, 0x33, 0xC4, 0x00, 0x8D, 0x20, 0x44,
+        0x95, 0x15, 0xBC, 0xB7, 0xFA, 0xF3, 0x8A, 0x41, // FSCT UUID
+        0x00, 0x01, // FSCT desc version
+        0x42, // FSCT vendorSubClassNumber
+    ];
+
+    fn create_bos_descriptor(total_length: u16, num_caps: u8) -> Vec<u8> {
+        vec![
+            5, // bLength
+            0x0F, // bDescriptorType
+            total_length as u8,
+            (total_length >> 8) as u8,
+            num_caps, // bNumDeviceCaps
+        ]
+    }
+
+    fn create_capability_descriptor(cap_type: u8, data: &[u8]) -> Vec<u8> {
+        let mut desc = vec![
+            (3 + data.len()) as u8, // bLength 
+            0x10, // bDescriptorType
+            cap_type, // bDevCapabilityType
+        ];
+        desc.extend_from_slice(data);
+        desc
+    }
+
+    #[test]
+    fn test_fsct_capability_present() {
+        let mut data = create_bos_descriptor(28, 1);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA,
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+        let vendor_subclass = get_fsct_vendor_subclass_number(platform_caps).unwrap();
+
+        assert_eq!(vendor_subclass, 0x42);
+    }
+
+    #[test]
+    fn test_fsct_capability_with_others() {
+        let mut data = create_bos_descriptor(34, 2);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::SuperspeedUsb as u8,
+            &[1, 2, 3],
+        ));
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA,
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+        let vendor_subclass = get_fsct_vendor_subclass_number(platform_caps).unwrap();
+
+        assert_eq!(vendor_subclass, 0x42);
+    }
+
+    #[test]
+    fn test_fsct_capability_with_short_other_capability() {
+        let mut data = create_bos_descriptor(30, 2);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::PrecisionTimeMeasurement as u8,
+            &[],
+        ));
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA,
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+        let vendor_subclass = get_fsct_vendor_subclass_number(platform_caps).unwrap();
+
+        assert_eq!(vendor_subclass, 0x42);
+    }
+    
+    #[test]
+    fn test_wrong_bos_descriptor() {
+        let data = vec![5, 0x0E, 0, 0, 0]; // Wrong descriptor type
+
+        assert!(matches!(
+            decode_bos_descriptor(&data),
+            Err(BosError::WrongType {
+                name: "BosDescriptor",
+                expected: 0x0F,
+                actual: 0x0E
+            })
+        ));
+    }
+
+    #[test]
+    fn test_wrong_capability_descriptor() {
+        let mut data = create_bos_descriptor(8, 1);
+        data.extend(vec![3, 0x11, 5]); // Wrong descriptor type
+
+        assert!(matches!(
+            decode_bos_descriptor_with_capabilities(&data),
+            Err(BosError::WrongType {
+                name: "BosCapabilityDescriptor",
+                expected: 0x10,
+                actual: 0x11
+            })
+        ));
+    }
+
+    #[test]
+    fn test_wrong_fsct_capability_version() {
+        let mut wrong_platform_data = FSCT_PLATFORM_CAPABILITY_DATA.to_vec();
+        wrong_platform_data[18] = 0x02; // Wrong version
+
+        let mut data = create_bos_descriptor(28, 1);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &wrong_platform_data,
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+
+        assert!(matches!(
+            get_fsct_capability(platform_caps),
+            Err(BosError::FsctCapabilityVersionMismatch {
+                expected: 0x0100,
+                actual: 0x0200
+            })
+        ));
+    }
+
+    #[test]
+    fn test_wrong_platform_capability_descriptor() {
+        let mut data = create_bos_descriptor(22, 1);
+        data.extend(create_capability_descriptor(
+            BosCapabilityType::Platform as u8,
+            &FSCT_PLATFORM_CAPABILITY_DATA[..17], // Missing version data
+        ));
+
+        let bos_caps = decode_bos_descriptor_with_capabilities(&data).unwrap();
+        let platform_caps = get_platform_capabilities(bos_caps).unwrap();
+
+        assert!(matches!(
+            get_fsct_capability(platform_caps),
+            Err(BosError::TooShort {
+                name: "FSCT capability data",
+                expected: 3,
+                actual: 0
+            })
+        ));
+    }
+}
