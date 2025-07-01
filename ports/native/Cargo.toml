@@ -25,15 +25,16 @@ log4rs = "1.2"
 clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.59", features = [
+windows = { version = "0.61.3", features = [
     "Media_Control",
     "Foundation",
     "Foundation_Collections",
     "Storage_Streams",
-    "Win32_System_RemoteDesktop"
+    "Win32_System_RemoteDesktop",
 ] }
-windows-core = "0.59.0"
-windows-service = "0.6.0"
+windows-core = "0.61.2"
+windows-service = "0.8.0"
+windows-future = "0.2.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media-remote = { git = "https://github.com/HEM-RnD/media-remote.git", branch = "feature/add_playback_Rate" }
