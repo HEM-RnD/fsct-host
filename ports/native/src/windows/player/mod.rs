@@ -333,9 +333,6 @@ impl WindowsSystemPlayer {
             handles: None,
         }));
 
-        // update_current_session(Some(session_manager.clone()), &internals).await;
-        // notification_sender.send(WindowsNotification::CurrentSessionChanged(Some(session_manager.clone()))).await.unwrap();
-
         run_notification_task(notification_receiver, internals.clone()).await?;
 
         Ok(Self { internals })
