@@ -33,6 +33,86 @@ use fsct_core::player::{create_player_events_channel, PlayerError, PlayerEvent, 
 use fsct_core::definitions::FsctStatus;
 use fsct_core::{player, Player};
 
+
+fn get_timeline_info(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo,
+                     timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties, ) ->
+Result<Option<TimelineInfo>, PlayerError> {
+    let position = timeline_properties.Position().into_player_error()?;
+    let last_update_time = timeline_properties.LastUpdatedTime().into_player_error()?;
+    let end_time = timeline_properties.EndTime().into_player_error()?.Duration as f64 / 10_000_000.0;
+
+    let update_time = if last_update_time.UniversalTime < UNIX_EPOCH_OFFSET {
+        std::time::SystemTime::now()
+    } else {
+        let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
+        std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
+    };
+
+    let position_sec = position.Duration as f64 / 10_000_000.0;
+
+    let rate = get_rate(playback_info);
+
+    Ok(Some(TimelineInfo {
+        position: Duration::from_secs_f64(position_sec),
+        update_time,
+        duration: Duration::from_secs_f64(end_time),
+        rate,
+    }))
+}
+
+fn get_status(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> FsctStatus {
+    match playback_info.PlaybackStatus().unwrap_or(windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed) {
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing => FsctStatus::Playing,
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused => FsctStatus::Paused,
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped => FsctStatus::Stopped,
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing => FsctStatus::Seeking,
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed => FsctStatus::Unknown,
+        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Opened => FsctStatus::Stopped,
+        _ => FsctStatus::Unknown,
+    }
+}
+
+fn windows_string_convert(winstr: windows_core::Result<windows_core::HSTRING>) -> Option<String> {
+    winstr.map(|v| v.to_string()).ok()
+}
+fn get_texts(media_properties: &GlobalSystemMediaTransportControlsSessionMediaProperties) -> TrackMetadata {
+    let mut texts = TrackMetadata::default();
+
+    texts.title = windows_string_convert(media_properties.Title());
+    texts.artist = windows_string_convert(media_properties.Artist());
+    texts.album = windows_string_convert(media_properties.AlbumTitle());
+
+    texts
+}
+
+
+async fn get_texts_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Result<TrackMetadata, PlayerError> {
+    let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
+    Ok(get_texts(&media_properties))
+}
+
+fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f64 {
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
+    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
+        return 0.0;
+    }
+    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
+}
+
+async fn get_playback_state(session: &GlobalSystemMediaTransportControlsSession) -> Result<PlayerState, PlayerError> {
+    let playback_info = session.GetPlaybackInfo().into_player_error()?;
+    let timeline_properties = session.GetTimelineProperties().into_player_error()?;
+    let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
+    let timeline = get_timeline_info(&playback_info, &timeline_properties)?;
+    let status = get_status(&playback_info);
+    let texts = get_texts(&media_properties);
+    Ok(PlayerState {
+        status,
+        timeline,
+        texts,
+    })
+}
+
 trait IntoPlayerResult<T> {
     fn into_player_error(self) -> Result<T, PlayerError>;
 }
@@ -136,12 +216,6 @@ struct WindowsPlayerImplementation {
     player_state: Mutex<PlayerState>,
     player_event_tx: PlayerEventsSender,
     handles: Mutex<Option<WindowsSessionHandles>>
-}
-
-
-async fn get_texts_from_session(session: &GlobalSystemMediaTransportControlsSession) -> Result<TrackMetadata, PlayerError> {
-    let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
-    Ok(get_texts(&media_properties))
 }
 
 
@@ -374,79 +448,6 @@ impl WindowsSystemPlayer {
         internals.clone().run_notification_task().await?;
         Ok(Self { implementation: internals })
     }
-}
-
-fn get_timeline_info(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo,
-                     timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties, ) ->
-Result<Option<TimelineInfo>, PlayerError> {
-    let position = timeline_properties.Position().into_player_error()?;
-    let last_update_time = timeline_properties.LastUpdatedTime().into_player_error()?;
-    let end_time = timeline_properties.EndTime().into_player_error()?.Duration as f64 / 10_000_000.0;
-
-    let update_time = if last_update_time.UniversalTime < UNIX_EPOCH_OFFSET {
-        std::time::SystemTime::now()
-    } else {
-        let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
-        std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
-    };
-
-    let position_sec = position.Duration as f64 / 10_000_000.0;
-
-    let rate = get_rate(playback_info);
-
-    Ok(Some(TimelineInfo {
-        position: Duration::from_secs_f64(position_sec),
-        update_time,
-        duration: Duration::from_secs_f64(end_time),
-        rate,
-    }))
-}
-
-fn get_status(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> FsctStatus {
-    match playback_info.PlaybackStatus().unwrap_or(windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed) {
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing => FsctStatus::Playing,
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused => FsctStatus::Paused,
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped => FsctStatus::Stopped,
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing => FsctStatus::Seeking,
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed => FsctStatus::Unknown,
-        windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Opened => FsctStatus::Stopped,
-        _ => FsctStatus::Unknown,
-    }
-}
-
-fn windows_string_convert(winstr: windows_core::Result<windows_core::HSTRING>) -> Option<String> {
-    winstr.map(|v| v.to_string()).ok()
-}
-fn get_texts(media_properties: &GlobalSystemMediaTransportControlsSessionMediaProperties) -> TrackMetadata {
-    let mut texts = TrackMetadata::default();
-
-    texts.title = windows_string_convert(media_properties.Title());
-    texts.artist = windows_string_convert(media_properties.Artist());
-    texts.album = windows_string_convert(media_properties.AlbumTitle());
-
-    texts
-}
-
-fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f64 {
-    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
-    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
-        return 0.0;
-    }
-    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
-}
-
-async fn get_playback_state(session: &GlobalSystemMediaTransportControlsSession) -> Result<PlayerState, PlayerError> {
-    let playback_info = session.GetPlaybackInfo().into_player_error()?;
-    let timeline_properties = session.GetTimelineProperties().into_player_error()?;
-    let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
-    let timeline = get_timeline_info(&playback_info, &timeline_properties)?;
-    let status = get_status(&playback_info);
-    let texts = get_texts(&media_properties);
-    Ok(PlayerState {
-        status,
-        timeline,
-        texts,
-    })
 }
 
 #[async_trait]
