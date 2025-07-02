@@ -52,7 +52,6 @@ struct WindowsSessionHandles {
 struct WindowsPlayerInternals {
     player_state: PlayerState,
     player_event_tx: PlayerEventsSender,
-    notification_tx: tokio::sync::mpsc::Sender<WindowsNotification>,
     handles: Option<WindowsSessionHandles>,
 
 }
@@ -158,8 +157,9 @@ fn register_to_session(session: GlobalSystemMediaTransportControlsSession,
     };
     Ok(handles)
 }
-async fn try_update_current_session(session_manager: Option<GlobalSystemMediaTransportControlsSessionManager>,
-                                    internals: &Arc<Mutex<WindowsPlayerInternals>>) -> Result<(), PlayerError> {
+async fn try_update_current_session(session_manager: Option<&GlobalSystemMediaTransportControlsSessionManager>,
+                                    internals: &Mutex<WindowsPlayerInternals>,
+                                    notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(), PlayerError> {
     let session_manager = session_manager.ok_or(PlayerError::PermissionDenied)?;
     let session = session_manager.GetCurrentSession().into_player_error()?;
     let new_player_state = get_playback_state(&session).await?;
@@ -168,16 +168,17 @@ async fn try_update_current_session(session_manager: Option<GlobalSystemMediaTra
     if let Some(handles) = handles {
         unregister_from_session(handles);
     }
-    let handles = register_to_session(session, internals_locked.notification_tx.clone())?;
+    let handles = register_to_session(session, notification_sender)?;
     internals_locked.handles = Some(handles);
     internals_locked.player_state = new_player_state;
 
     Ok(())
 }
 
-async fn update_current_session(session_manager: Option<GlobalSystemMediaTransportControlsSessionManager>,
-                                internals: &Arc<Mutex<WindowsPlayerInternals>>) {
-    if try_update_current_session(session_manager, internals).await.is_err() {
+async fn update_current_session(session_manager: Option<&GlobalSystemMediaTransportControlsSessionManager>,
+                                internals: &Mutex<WindowsPlayerInternals>,
+                                notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) {
+    if try_update_current_session(session_manager, internals, notification_sender).await.is_err() {
         internals.lock().unwrap().player_state = PlayerState::default();
     }
 
@@ -190,9 +191,8 @@ async fn get_texts_from_session(session: &GlobalSystemMediaTransportControlsSess
     Ok(get_texts(&media_properties))
 }
 
-async fn init_session_manager(session_manager: &GlobalSystemMediaTransportControlsSessionManager, internals: &Arc<Mutex<WindowsPlayerInternals>>) -> Result<(),
+async fn init_session_manager(session_manager: &GlobalSystemMediaTransportControlsSessionManager, notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(),
     PlayerError> {
-    let notification_sender = internals.lock().unwrap().notification_tx.clone();
     let current_session_change_event_handler = TypedEventHandler::<GlobalSystemMediaTransportControlsSessionManager,
         CurrentSessionChangedEventArgs>::new(move |session_manager, _event_args| -> windows_core::Result<()> {
         debug!("Current session changed handler called");
@@ -214,7 +214,7 @@ async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessi
 }
 
 fn is_current_session(session: &GlobalSystemMediaTransportControlsSession, internals:
-&Arc<Mutex<WindowsPlayerInternals>>) -> bool {
+&Mutex<WindowsPlayerInternals>) -> bool {
     let internals_locked = internals.lock().unwrap();
     if internals_locked.handles.is_none() {
         return false;
@@ -222,31 +222,33 @@ fn is_current_session(session: &GlobalSystemMediaTransportControlsSession, inter
     let handles = internals_locked.handles.as_ref().unwrap();
     *session == handles.session
 }
-async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Receiver<WindowsNotification>,
-                               internals: Arc<Mutex<WindowsPlayerInternals>>) -> Result<(), PlayerError> {
+async fn run_notification_task(internals: Arc<Mutex<WindowsPlayerInternals>>) -> Result<(), PlayerError> {
     let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         debug!("Notification task started");
+        // it is important to create and leave session_manager in this task forever in order not to lose notifications
         let session_manager= get_session_manager().await;
         if session_manager.is_err() {
             debug!("Failed to get session manager");
             oneshot_tx.send(()).unwrap_or_default();
             return;
         }
+        let (notification_sender, mut notification_receiver) = tokio::sync::mpsc::channel::<WindowsNotification>(100);
+
         let session_manager = session_manager.unwrap();
-        if init_session_manager(&session_manager, &internals).await.is_err() {
+        if init_session_manager(&session_manager, notification_sender.clone()).await.is_err() {
             debug!("Failed to init session manager");
             oneshot_tx.send(()).unwrap_or_default();
             return;
         }
-        update_current_session(Some(session_manager.clone()), &internals).await;
+        update_current_session(Some(&session_manager), &internals, notification_sender.clone()).await;
         oneshot_tx.send(()).unwrap_or_default();
 
         while let Some(notification) = notification_receiver.recv().await {
             match notification {
                 WindowsNotification::CurrentSessionChanged(session_manager) => {
                     debug!("Current session changed");
-                    update_current_session(session_manager, &internals).await;
+                    update_current_session(session_manager.as_ref(), &internals, notification_sender.clone()).await;
                 }
                 WindowsNotification::SessionNotification{topic, session} => {
                     debug!("Session notification");
@@ -259,7 +261,7 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
     oneshot_rx.await.map_err(|_| PlayerError::PermissionDenied)
 }
 
-async fn handle_session_notification(internals: &Arc<Mutex<WindowsPlayerInternals>>, topic: SessionNotificationTopic, session: Option<GlobalSystemMediaTransportControlsSession>) {
+async fn handle_session_notification(internals: &Mutex<WindowsPlayerInternals>, topic: SessionNotificationTopic, session: Option<GlobalSystemMediaTransportControlsSession>) {
     if let Some(session) = session {
         if !is_current_session(&session, &internals) {
             return;
@@ -281,7 +283,7 @@ async fn handle_session_notification(internals: &Arc<Mutex<WindowsPlayerInternal
     }
 }
 
-async fn handle_media_properties_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+async fn handle_media_properties_changed(internals: &Mutex<WindowsPlayerInternals>, session: GlobalSystemMediaTransportControlsSession) {
     if let Some(texts) = get_texts_from_session(&session).await.ok() {
         let mut internals_locked = internals.lock().unwrap();
         let player_event_tx = internals_locked.player_event_tx.clone();
@@ -310,7 +312,7 @@ async fn handle_media_properties_changed(internals: &Arc<Mutex<WindowsPlayerInte
     }
 }
 
-fn handle_timeline_properties_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+fn handle_timeline_properties_changed(internals: &Mutex<WindowsPlayerInternals>, session: GlobalSystemMediaTransportControlsSession) {
     let playback_info = session.GetPlaybackInfo().ok();
     let timeline_properties = session.GetTimelineProperties().ok();
     if playback_info.is_none() || timeline_properties.is_none() {
@@ -332,7 +334,7 @@ fn handle_timeline_properties_changed(internals: &Arc<Mutex<WindowsPlayerInterna
     player_event_tx.send(PlayerEvent::TimelineChanged(timeline.clone())).unwrap_or_default();
 }
 
-fn handle_playback_info_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+fn handle_playback_info_changed(internals: &Mutex<WindowsPlayerInternals>, session: GlobalSystemMediaTransportControlsSession) {
     let playback_info = session.GetPlaybackInfo().ok();
     if let Some(playback_info) = playback_info {
         let status = get_status(&playback_info);
@@ -353,20 +355,15 @@ fn handle_playback_info_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, 
 
 impl WindowsSystemPlayer {
     pub async fn new() -> Result<Self, PlayerError> {
-
-
-        let (notification_sender, notification_receiver) = tokio::sync::mpsc::channel::<WindowsNotification>(100);
-
         let (player_event_tx, _) = create_player_events_channel();
 
         let internals = Arc::new(Mutex::new(WindowsPlayerInternals {
             player_state: PlayerState::default(),
             player_event_tx,
-            notification_tx: notification_sender.clone(),
             handles: None,
         }));
 
-        run_notification_task(notification_receiver, internals.clone()).await?;
+        run_notification_task(internals.clone()).await?;
 
         Ok(Self { internals })
     }
