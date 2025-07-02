@@ -228,26 +228,34 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                 }
                 WindowsNotification::PlaybackInfoChanged(session) => {
                     debug!("Playback info changed");
-                    let playback_info = session.map(|session| session.GetPlaybackInfo().ok()).flatten();
-                    if let Some(playback_info) = playback_info {
-                        let status = get_status(&playback_info);
-                        let rate = get_rate(&playback_info);
-                        let mut internals_locked = internals.lock().unwrap();
-                        let player_event_tx = internals_locked.player_event_tx.clone();
-                        let player_state = &mut internals_locked.player_state;
-                        if player_state.status != status {
-                            player_state.status = status;
-                            player_event_tx.send(PlayerEvent::StatusChanged(status)).unwrap_or_default();
+                    if let Some(session) = session {
+                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                            continue;
                         }
-                        if let Some(timeline) = &mut player_state.timeline {
-                            timeline.rate = rate;
-                            player_event_tx.send(PlayerEvent::TimelineChanged(Some(timeline.clone()))).unwrap_or_default();
+                        let playback_info = session.GetPlaybackInfo().ok();
+                        if let Some(playback_info) = playback_info {
+                            let status = get_status(&playback_info);
+                            let rate = get_rate(&playback_info);
+                            let mut internals_locked = internals.lock().unwrap();
+                            let player_event_tx = internals_locked.player_event_tx.clone();
+                            let player_state = &mut internals_locked.player_state;
+                            if player_state.status != status {
+                                player_state.status = status;
+                                player_event_tx.send(PlayerEvent::StatusChanged(status)).unwrap_or_default();
+                            }
+                            if let Some(timeline) = &mut player_state.timeline {
+                                timeline.rate = rate;
+                                player_event_tx.send(PlayerEvent::TimelineChanged(Some(timeline.clone()))).unwrap_or_default();
+                            }
                         }
                     }
                 }
                 WindowsNotification::MediaPropertiesChanged(session) => {
                     debug!("Media properties changed");
                     if let Some(session) = session {
+                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                            continue;
+                        }
                         if let Some(texts) = get_texts_from_session(&session).await.ok() {
                             let mut internals_locked = internals.lock().unwrap();
                             let player_event_tx = internals_locked.player_event_tx.clone();
@@ -279,6 +287,9 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                 WindowsNotification::TimelinePropertiesChanged(session) => {
                     debug!("Timeline properties changed");
                     if let Some(session) = session {
+                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                            continue;
+                        }
                         let playback_info = session.GetPlaybackInfo().ok();
                         let timeline_properties = session.GetTimelineProperties().ok();
                         if playback_info.is_none() || timeline_properties.is_none() {
