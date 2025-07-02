@@ -18,7 +18,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use windows::{
     core::Error as WindowsError,
     Media::Control::{
@@ -27,8 +27,7 @@ use windows::{
     },
 };
 use windows::Foundation::TypedEventHandler;
-use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, SessionsChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use windows_core::Interface;
+use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
 use fsct_core::definitions::{FsctTextMetadata, TimelineInfo};
 use fsct_core::player::{create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata};
 use fsct_core::definitions::FsctStatus;
@@ -62,11 +61,18 @@ pub struct WindowsSystemPlayer {
     internals: Arc<Mutex<WindowsPlayerInternals>>,
 }
 
+enum SessionNotificationTopic {
+    PlaybackInfoChanged,
+    TimelinePropertiesChanged,
+    MediaPropertiesChanged,
+}
+
 enum WindowsNotification {
     CurrentSessionChanged(Option<GlobalSystemMediaTransportControlsSessionManager>),
-    PlaybackInfoChanged(Option<GlobalSystemMediaTransportControlsSession>),
-    TimelinePropertiesChanged(Option<GlobalSystemMediaTransportControlsSession>),
-    MediaPropertiesChanged(Option<GlobalSystemMediaTransportControlsSession>),
+    SessionNotification{
+        topic: SessionNotificationTopic,
+        session: Option<GlobalSystemMediaTransportControlsSession>,
+    }
 }
 
 
@@ -85,10 +91,12 @@ fn register_to_session(session: GlobalSystemMediaTransportControlsSession,
     let playback_info_changed_notification_tx = notification_tx.clone();
     let playback_info_changed_handler = TypedEventHandler::<GlobalSystemMediaTransportControlsSession,
         PlaybackInfoChangedEventArgs>::new(move
-        |session, event_args| -> windows_core::Result<()> {
+        |session, _event_args| -> windows_core::Result<()> {
         debug!("Playback info changed handler called");
-        playback_info_changed_notification_tx.blocking_send(WindowsNotification::PlaybackInfoChanged(session.clone())).map_err(|_|
-            WindowsError::empty())
+        playback_info_changed_notification_tx.blocking_send(WindowsNotification::SessionNotification {
+            topic: SessionNotificationTopic::PlaybackInfoChanged,
+            session: session.clone(),
+        }).map_err(|_| WindowsError::empty())
     });
 
 
@@ -96,16 +104,20 @@ fn register_to_session(session: GlobalSystemMediaTransportControlsSession,
     let timeline_properties_changed_handler = TypedEventHandler::<GlobalSystemMediaTransportControlsSession,
         TimelinePropertiesChangedEventArgs>::new(move |session, _event_args| -> windows_core::Result<()> {
         debug!("Timeline properties changed handler called");
-        timeline_properties_changed_notification_tx.blocking_send(WindowsNotification::TimelinePropertiesChanged(session.clone())).map_err(|_|
-            WindowsError::empty())
+        timeline_properties_changed_notification_tx.blocking_send(WindowsNotification::SessionNotification {
+            topic: SessionNotificationTopic::TimelinePropertiesChanged,
+            session: session.clone(),
+        }).map_err(|_| WindowsError::empty())
     });
 
     let media_properties_changed_notification_tx = notification_tx;
     let media_properties_changed_handler = TypedEventHandler::<GlobalSystemMediaTransportControlsSession,
         MediaPropertiesChangedEventArgs>::new(move |session, _event_args| -> windows_core::Result<()> {
         debug!("Media properties changed handler called");
-        media_properties_changed_notification_tx.blocking_send(WindowsNotification::MediaPropertiesChanged(session.clone())).map_err(|_|
-            WindowsError::empty())
+        media_properties_changed_notification_tx.blocking_send(WindowsNotification::SessionNotification {
+            topic: SessionNotificationTopic::MediaPropertiesChanged,
+            session: session.clone(),
+        }).map_err(|_| WindowsError::empty())
     });
 
 
@@ -165,7 +177,7 @@ async fn try_update_current_session(session_manager: Option<GlobalSystemMediaTra
 
 async fn update_current_session(session_manager: Option<GlobalSystemMediaTransportControlsSessionManager>,
                                 internals: &Arc<Mutex<WindowsPlayerInternals>>) {
-    if (try_update_current_session(session_manager, internals).await.is_err()) {
+    if try_update_current_session(session_manager, internals).await.is_err() {
         internals.lock().unwrap().player_state = PlayerState::default();
     }
 
@@ -203,7 +215,7 @@ async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessi
 
 fn is_current_session(session: &GlobalSystemMediaTransportControlsSession, internals:
 &Arc<Mutex<WindowsPlayerInternals>>) -> bool {
-    let mut internals_locked = internals.lock().unwrap();
+    let internals_locked = internals.lock().unwrap();
     if internals_locked.handles.is_none() {
         return false;
     }
@@ -236,96 +248,107 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                     debug!("Current session changed");
                     update_current_session(session_manager, &internals).await;
                 }
-                WindowsNotification::PlaybackInfoChanged(session) => {
-                    debug!("Playback info changed");
-                    if let Some(session) = session {
-                        if !is_current_session(&session, &internals) {
-                            continue;
-                        }
-                        let playback_info = session.GetPlaybackInfo().ok();
-                        if let Some(playback_info) = playback_info {
-                            let status = get_status(&playback_info);
-                            let rate = get_rate(&playback_info);
-                            let mut internals_locked = internals.lock().unwrap();
-                            let player_event_tx = internals_locked.player_event_tx.clone();
-                            let player_state = &mut internals_locked.player_state;
-                            if player_state.status != status {
-                                player_state.status = status;
-                                player_event_tx.send(PlayerEvent::StatusChanged(status)).unwrap_or_default();
-                            }
-                            if let Some(timeline) = &mut player_state.timeline {
-                                timeline.rate = rate;
-                                player_event_tx.send(PlayerEvent::TimelineChanged(Some(timeline.clone()))).unwrap_or_default();
-                            }
-                        }
-                    }
-                }
-                WindowsNotification::MediaPropertiesChanged(session) => {
-                    debug!("Media properties changed");
-                    if let Some(session) = session {
-                        if !is_current_session(&session, &internals) {
-                            continue;
-                        }
-                        if let Some(texts) = get_texts_from_session(&session).await.ok() {
-                            let mut internals_locked = internals.lock().unwrap();
-                            let player_event_tx = internals_locked.player_event_tx.clone();
-                            let player_state = &mut internals_locked.player_state;
-                            if player_state.texts.title != texts.title {
-                                player_state.texts.title = texts.title.clone();
-                                player_event_tx.send(PlayerEvent::TextChanged((
-                                    FsctTextMetadata::CurrentTitle,
-                                    texts.title,
-                                ))).unwrap_or_default();
-                            }
-                            if player_state.texts.artist != texts.artist {
-                                player_state.texts.artist = texts.artist.clone();
-                                player_event_tx.send(PlayerEvent::TextChanged((
-                                    FsctTextMetadata::CurrentAuthor,
-                                    texts.artist,
-                                ))).unwrap_or_default();
-                            }
-                            if player_state.texts.album != texts.album {
-                                player_state.texts.album = texts.album.clone();
-                                player_event_tx.send(PlayerEvent::TextChanged((
-                                    FsctTextMetadata::CurrentAlbum,
-                                    texts.album,
-                                ))).unwrap_or_default();
-                            }
-                        }
-                    }
-                }
-                WindowsNotification::TimelinePropertiesChanged(session) => {
-                    debug!("Timeline properties changed");
-                    if let Some(session) = session {
-                        if !is_current_session(&session, &internals) {
-                            continue;
-                        }
-                        let playback_info = session.GetPlaybackInfo().ok();
-                        let timeline_properties = session.GetTimelineProperties().ok();
-                        if playback_info.is_none() || timeline_properties.is_none() {
-                            let mut internals_locked = internals.lock().unwrap();
-                            internals_locked.player_state.timeline = None;
-                            internals_locked.player_event_tx.send(PlayerEvent::TimelineChanged(None)).unwrap_or_default();
-                            continue;
-                        }
-                        let playback_info = playback_info.unwrap();
-                        let timeline_properties = timeline_properties.unwrap();
-                        let timeline = get_timeline_info(&playback_info, &timeline_properties).ok().flatten();
-                        let mut internals_locked = internals.lock().unwrap();
-                        let player_event_tx = internals_locked.player_event_tx.clone();
-                        let player_state = &mut internals_locked.player_state;
-                        if timeline == player_state.timeline {
-                            continue;
-                        }
-                        player_state.timeline = timeline.clone();
-                        player_event_tx.send(PlayerEvent::TimelineChanged(timeline.clone())).unwrap_or_default();
-                    }
+                WindowsNotification::SessionNotification{topic, session} => {
+                    debug!("Session notification");
+                    handle_session_notification(&internals, topic, session).await;
                 }
             }
         }
         debug!("Notification task stopped");
     });
     oneshot_rx.await.map_err(|_| PlayerError::PermissionDenied)
+}
+
+async fn handle_session_notification(internals: &Arc<Mutex<WindowsPlayerInternals>>, topic: SessionNotificationTopic, session: Option<GlobalSystemMediaTransportControlsSession>) {
+    if let Some(session) = session {
+        if !is_current_session(&session, &internals) {
+            return;
+        }
+        match topic {
+            SessionNotificationTopic::PlaybackInfoChanged => {
+                debug!("Playback info changed");
+                handle_playback_info_changed(&internals, session);
+            }
+            SessionNotificationTopic::TimelinePropertiesChanged => {
+                debug!("Timeline properties changed");
+                handle_timeline_properties_changed(&internals, session);
+            }
+            SessionNotificationTopic::MediaPropertiesChanged => {
+                debug!("Media properties changed");
+                handle_media_properties_changed(&internals, session).await;
+            }
+        }
+    }
+}
+
+async fn handle_media_properties_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+    if let Some(texts) = get_texts_from_session(&session).await.ok() {
+        let mut internals_locked = internals.lock().unwrap();
+        let player_event_tx = internals_locked.player_event_tx.clone();
+        let player_state = &mut internals_locked.player_state;
+        if player_state.texts.title != texts.title {
+            player_state.texts.title = texts.title.clone();
+            player_event_tx.send(PlayerEvent::TextChanged((
+                FsctTextMetadata::CurrentTitle,
+                texts.title,
+            ))).unwrap_or_default();
+        }
+        if player_state.texts.artist != texts.artist {
+            player_state.texts.artist = texts.artist.clone();
+            player_event_tx.send(PlayerEvent::TextChanged((
+                FsctTextMetadata::CurrentAuthor,
+                texts.artist,
+            ))).unwrap_or_default();
+        }
+        if player_state.texts.album != texts.album {
+            player_state.texts.album = texts.album.clone();
+            player_event_tx.send(PlayerEvent::TextChanged((
+                FsctTextMetadata::CurrentAlbum,
+                texts.album,
+            ))).unwrap_or_default();
+        }
+    }
+}
+
+fn handle_timeline_properties_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+    let playback_info = session.GetPlaybackInfo().ok();
+    let timeline_properties = session.GetTimelineProperties().ok();
+    if playback_info.is_none() || timeline_properties.is_none() {
+        let mut internals_locked = internals.lock().unwrap();
+        internals_locked.player_state.timeline = None;
+        internals_locked.player_event_tx.send(PlayerEvent::TimelineChanged(None)).unwrap_or_default();
+        return;
+    }
+    let playback_info = playback_info.unwrap();
+    let timeline_properties = timeline_properties.unwrap();
+    let timeline = get_timeline_info(&playback_info, &timeline_properties).ok().flatten();
+    let mut internals_locked = internals.lock().unwrap();
+    let player_event_tx = internals_locked.player_event_tx.clone();
+    let player_state = &mut internals_locked.player_state;
+    if timeline == player_state.timeline {
+        return;
+    }
+    player_state.timeline = timeline.clone();
+    player_event_tx.send(PlayerEvent::TimelineChanged(timeline.clone())).unwrap_or_default();
+}
+
+fn handle_playback_info_changed(internals: &Arc<Mutex<WindowsPlayerInternals>>, session: GlobalSystemMediaTransportControlsSession) {
+    let playback_info = session.GetPlaybackInfo().ok();
+    if let Some(playback_info) = playback_info {
+        let status = get_status(&playback_info);
+        let rate = get_rate(&playback_info);
+        let mut internals_locked = internals.lock().unwrap();
+        let player_event_tx = internals_locked.player_event_tx.clone();
+        let player_state = &mut internals_locked.player_state;
+        if player_state.status != status {
+            player_state.status = status;
+            player_event_tx.send(PlayerEvent::StatusChanged(status)).unwrap_or_default();
+        }
+        if let Some(timeline) = &mut player_state.timeline {
+            timeline.rate = rate;
+            player_event_tx.send(PlayerEvent::TimelineChanged(Some(timeline.clone()))).unwrap_or_default();
+        }
+    }
 }
 
 impl WindowsSystemPlayer {
