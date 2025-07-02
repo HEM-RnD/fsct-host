@@ -200,6 +200,16 @@ async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessi
         .into_player_error()?;
     Ok(session_manager)
 }
+
+fn is_current_session(session: &GlobalSystemMediaTransportControlsSession, internals:
+&Arc<Mutex<WindowsPlayerInternals>>) -> bool {
+    let mut internals_locked = internals.lock().unwrap();
+    if internals_locked.handles.is_none() {
+        return false;
+    }
+    let handles = internals_locked.handles.as_ref().unwrap();
+    *session == handles.session
+}
 async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Receiver<WindowsNotification>,
                                internals: Arc<Mutex<WindowsPlayerInternals>>) -> Result<(), PlayerError> {
     let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<()>();
@@ -229,7 +239,7 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                 WindowsNotification::PlaybackInfoChanged(session) => {
                     debug!("Playback info changed");
                     if let Some(session) = session {
-                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                        if !is_current_session(&session, &internals) {
                             continue;
                         }
                         let playback_info = session.GetPlaybackInfo().ok();
@@ -253,7 +263,7 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                 WindowsNotification::MediaPropertiesChanged(session) => {
                     debug!("Media properties changed");
                     if let Some(session) = session {
-                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                        if !is_current_session(&session, &internals) {
                             continue;
                         }
                         if let Some(texts) = get_texts_from_session(&session).await.ok() {
@@ -287,7 +297,7 @@ async fn run_notification_task(mut notification_receiver: tokio::sync::mpsc::Rec
                 WindowsNotification::TimelinePropertiesChanged(session) => {
                     debug!("Timeline properties changed");
                     if let Some(session) = session {
-                        if session != internals.lock().unwrap().handles.as_ref().unwrap().session {
+                        if !is_current_session(&session, &internals) {
                             continue;
                         }
                         let playback_info = session.GetPlaybackInfo().ok();
