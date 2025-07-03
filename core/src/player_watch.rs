@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use anyhow::Error;
 
 #[async_trait]
 pub trait PlayerEventListener: Send + Sync + 'static {
@@ -212,8 +213,11 @@ pub async fn run_player_watch(
     player_event_listener: impl PlayerEventListener,
     player_state: Arc<Mutex<PlayerState>>,
 ) -> Result<tokio::task::JoinHandle<()>, anyhow::Error> {
-    let mut playback_notifications_stream = get_playback_notification_stream(player).await?;
+    let mut playback_notifications_stream = get_playback_notification_stream(player.clone()).await?;
+
     let handle = tokio::spawn(async move {
+        setup_initial_player_state(player, &player_event_listener, &player_state).await.unwrap_or_default();
+        info!("Player watch started");
         loop {
             let event = playback_notifications_stream.recv().await;
             match event {
@@ -238,4 +242,16 @@ pub async fn run_player_watch(
         }
     });
     Ok(handle)
+}
+
+async fn setup_initial_player_state(player: Player, player_event_listener: &impl PlayerEventListener, player_state: &Arc<Mutex<PlayerState>>) -> Result<(), Error> {
+    let initial_state = player.get_current_state().await?;
+    process_player_event(PlayerEvent::TimelineChanged(initial_state.timeline.clone()), player_event_listener, &player_state).await;
+    process_player_event(PlayerEvent::StatusChanged(initial_state.status), player_event_listener, &player_state).await;
+    process_player_event(PlayerEvent::TextChanged((FsctTextMetadata::CurrentTitle, initial_state.texts.title.clone())), player_event_listener, &player_state).await;
+    process_player_event(PlayerEvent::TextChanged((FsctTextMetadata::CurrentAlbum, initial_state.texts.album.clone())), player_event_listener, &player_state).await;
+    process_player_event(PlayerEvent::TextChanged((FsctTextMetadata::CurrentAuthor, initial_state.texts.artist.clone())), player_event_listener, &player_state).await;
+    process_player_event(PlayerEvent::TextChanged((FsctTextMetadata::CurrentGenre, initial_state.texts.genre.clone())), player_event_listener, &player_state).await;
+    *player_state.lock().unwrap() = initial_state;
+    Ok(())
 }

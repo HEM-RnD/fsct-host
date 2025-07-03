@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use std::slice::Iter;
 use std::sync::Arc;
 use thiserror::Error;
+use log::debug;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
@@ -29,6 +30,9 @@ pub enum PlayerError {
 
     #[error("Feature not supported")]
     FeatureNotSupported,
+
+    #[error("Player not found")]
+    PlayerNotFound,
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -117,7 +121,7 @@ pub type PlayerEventsSender = tokio::sync::broadcast::Sender<PlayerEvent>;
 pub type PlayerEventReceiveError = tokio::sync::broadcast::error::RecvError;
 pub type PlayerEventSendError = tokio::sync::broadcast::error::SendError<PlayerEvent>;
 
-const DEFAULT_CAPACITY: usize = 30;
+const DEFAULT_CAPACITY: usize = 100;
 
 pub fn create_player_events_channel() -> (PlayerEventsSender, PlayerEventsReceiver) {
     tokio::sync::broadcast::channel(DEFAULT_CAPACITY)
@@ -190,4 +194,32 @@ impl PlayerInterface for Player {
     async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
         self.player_impl.listen_to_player_notifications().await
     }
+}
+
+pub fn send_all_changed(state: &PlayerState, tx: &PlayerEventsSender) {
+    debug!("Sending all player state change events");
+    debug!("Sending event TextChanged(CurrentTitle, {}) ", state.texts.title.as_ref().map(|s| s.as_str()).unwrap_or("None"));
+    tx.send(PlayerEvent::TextChanged((
+        FsctTextMetadata::CurrentTitle,
+        state.texts.title.clone(),
+    )))
+      .unwrap_or_default();
+    debug!("Sending event TextChanged(CurrentAuthor, {}) ", state.texts.artist.as_ref().map(|s| s.as_str()).unwrap_or("None"));
+    tx.send(PlayerEvent::TextChanged((
+        FsctTextMetadata::CurrentAuthor,
+        state.texts.artist.clone(),
+    )))
+      .unwrap_or_default();
+    debug!("Sending event TextChanged(CurrentAlbum, {}) ", state.texts.album.as_ref().map(|s| s.as_str()).unwrap_or("None"));
+    tx.send(PlayerEvent::TextChanged((
+        FsctTextMetadata::CurrentAlbum,
+        state.texts.album.clone(),
+    )))
+      .unwrap_or_default();
+    debug!("Sending event StatusChanged({:?}) ", state.status);
+    tx.send(PlayerEvent::StatusChanged(state.status))
+      .unwrap_or_default();
+    debug!("Sending event TimelineChanged({:?}) ", state.timeline.as_ref());
+    tx.send(PlayerEvent::TimelineChanged(state.timeline.clone()))
+      .unwrap_or_default();
 }
