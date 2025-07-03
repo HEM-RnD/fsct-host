@@ -18,7 +18,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use async_trait::async_trait;
-use log::{debug, warn};
+use log::{debug, error, warn};
 use windows::{
     core::Error as WindowsError,
     Media::Control::{
@@ -34,7 +34,7 @@ use fsct_core::definitions::FsctStatus;
 use fsct_core::{player, Player};
 
 
-fn get_timeline_info(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo,
+fn get_timeline_info(playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,
                      timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties, ) ->
 Result<Option<TimelineInfo>, PlayerError> {
     let position = timeline_properties.Position().into_player_error()?;
@@ -91,21 +91,30 @@ async fn get_texts_from_session(session: &GlobalSystemMediaTransportControlsSess
     Ok(get_texts(&media_properties))
 }
 
-fn get_rate(playback_info: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f64 {
-    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
-    if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
-        return 0.0;
+fn get_rate(playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>) -> f64 {
+    if let Some(playback_info) = playback_info {
+        use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus;
+        if playback_info.PlaybackStatus().unwrap_or(PlaybackStatus::Closed) != PlaybackStatus::Playing {
+            return 0.0;
+        }
+        playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
+    } else {
+        0.0
     }
-    playback_info.PlaybackRate().map(|rate| rate.Value().unwrap_or(1.0)).unwrap_or(1.0)
 }
 
 async fn get_playback_state(session: &GlobalSystemMediaTransportControlsSession) -> Result<PlayerState, PlayerError> {
-    let playback_info = session.GetPlaybackInfo().into_player_error()?;
-    let timeline_properties = session.GetTimelineProperties().into_player_error()?;
-    let media_properties = session.TryGetMediaPropertiesAsync().into_player_error()?.await.into_player_error()?;
-    let timeline = get_timeline_info(&playback_info, &timeline_properties)?;
-    let status = get_status(&playback_info);
-    let texts = get_texts(&media_properties);
+    let playback_info = session.GetPlaybackInfo().into_player_error()
+        .inspect_err(|e| error!("Failed to get playback info: {:?}", e)).ok();
+    let status = playback_info.as_ref().map(|info| get_status(info)).unwrap_or(FsctStatus::Unknown);
+
+    let timeline_properties = session.GetTimelineProperties().into_player_error()
+        .inspect_err(|e| error!("Failed to get timeline properties: {:?}", e)).ok();
+    let timeline = timeline_properties.as_ref().map(|timeline_properties|
+        get_timeline_info(playback_info.as_ref(), timeline_properties).inspect_err(|e| debug!("Failed to get timeline: {:?}", e)).ok()).flatten().flatten();
+
+    let texts = get_texts_from_session(session).await.inspect_err(|e| error!("Failed to get media properties: {:?}", e)).unwrap_or_default();
+
     Ok(PlayerState {
         status,
         timeline,
@@ -133,6 +142,7 @@ struct WindowsSessionHandles {
 impl WindowsSessionHandles {
     fn new(session: GlobalSystemMediaTransportControlsSession, notification_tx: tokio::sync::mpsc::Sender<WindowsNotification>)
         -> Result<WindowsSessionHandles, PlayerError> {
+        debug!("Creating session handles");
         let playback_info_changed_notification_tx = notification_tx.clone();
         let playback_info_changed_handler = TypedEventHandler::<GlobalSystemMediaTransportControlsSession,
             PlaybackInfoChangedEventArgs>::new(move
@@ -201,6 +211,7 @@ impl WindowsSessionHandles {
             timeline_properties_changed_registration_handle,
             media_properties_changed_registration_handle,
         };
+        debug!("Session handles created");
         Ok(handles)
     }}
 
@@ -209,6 +220,7 @@ impl Drop for WindowsSessionHandles {
         self.session.RemovePlaybackInfoChanged(self.playback_info_change_registration_handle).ok();
         self.session.RemoveTimelinePropertiesChanged(self.timeline_properties_changed_registration_handle).ok();
         self.session.RemoveMediaPropertiesChanged(self.media_properties_changed_registration_handle).ok();
+        debug!("Session handles dropped");
     }
 }
 
@@ -263,7 +275,9 @@ impl WindowsPlayerImplementation {
                                         notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(), PlayerError> {
         let session_manager = session_manager.ok_or(PlayerError::PermissionDenied)?;
         let session = session_manager.GetCurrentSession().into_player_error()?;
+        debug!("Current session: {:?}", session);
         let new_player_state = get_playback_state(&session).await?;
+        debug!("New player state: {:?}", new_player_state);
         self.handles.lock().unwrap().take();
         *self.player_state.lock().unwrap() = new_player_state;
         *self.handles.lock().unwrap() = Some(WindowsSessionHandles::new(session, notification_sender)?);
@@ -275,6 +289,7 @@ impl WindowsPlayerImplementation {
                                     session_manager: Option<&GlobalSystemMediaTransportControlsSessionManager>,
                                     notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) {
         if self.try_update_current_session(session_manager, notification_sender).await.is_err() {
+            debug!("Cannot init current session, resetting state");
             *self.player_state.lock().unwrap() = PlayerState::default();
         }
 
@@ -392,7 +407,7 @@ impl WindowsPlayerImplementation {
         }
         let playback_info = playback_info.unwrap();
         let timeline_properties = timeline_properties.unwrap();
-        let timeline = get_timeline_info(&playback_info, &timeline_properties).ok().flatten();
+        let timeline = get_timeline_info(Some(&playback_info), &timeline_properties).ok().flatten();
 
         if timeline == player_state.timeline {
             return;
@@ -405,7 +420,7 @@ impl WindowsPlayerImplementation {
         let playback_info = session.GetPlaybackInfo().ok();
         if let Some(playback_info) = playback_info {
             let status = get_status(&playback_info);
-            let rate = get_rate(&playback_info);
+            let rate = get_rate(Some(&playback_info));
             let mut player_state = self.player_state.lock().unwrap();
             if player_state.status != status {
                 player_state.status = status;
