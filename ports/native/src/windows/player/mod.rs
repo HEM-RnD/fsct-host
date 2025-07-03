@@ -274,7 +274,10 @@ impl WindowsPlayerImplementation {
                                         session_manager: Option<&GlobalSystemMediaTransportControlsSessionManager>,
                                         notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(), PlayerError> {
         let session_manager = session_manager.ok_or(PlayerError::PermissionDenied)?;
-        let session = session_manager.GetCurrentSession().into_player_error()?;
+        let session = session_manager
+            .GetCurrentSession()
+            .inspect_err(|e| error!("Can't get current session, error: {:?}", e))
+            .into_player_error()?;
         debug!("Current session: {:?}", session);
         let new_player_state = get_playback_state(&session).await?;
         debug!("New player state: {:?}", new_player_state);
