@@ -11,4 +11,3 @@ accepted = [
 ]
 
 private = { ignore = true }
-

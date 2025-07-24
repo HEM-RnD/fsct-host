@@ -309,8 +309,15 @@ try
     if ($LICENSE_ENABLE)
     {
         Write-Host "[INFO] Generating license files..."
-        & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
+        $licenseResult = & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
             -o "$BUILD_DIR/LICENSES.md" 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] License generation failed"
+            Write-Error "[ERROR] Error details: $licenseResult"
+            exit 1
+        }
+        Write-Host "[INFO] License files generated successfully"
     }
     else
     {
