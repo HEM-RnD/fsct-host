@@ -311,14 +311,41 @@ try
     if ($LICENSE_ENABLE)
     {
         Write-Host "[INFO] Generating license files..."
-        $licenseResult = & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
-            -o "$BUILD_DIR/LICENSES.md" 2>&1
-        if ($LASTEXITCODE -ne 0)
-        {
-            Write-Error "[ERROR] License generation failed"
-            Write-Error "[ERROR] Error details: $licenseResult"
+        # Execute cargo about generate and capture output separately
+        $licenseStdout = ""
+        $licenseStderr = ""
+
+        try {
+            # Use Start-Process to better control output handling
+            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "ports/native/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
+
+            $licenseStdout = Get-Content "$env:TEMP\cargo_stdout.txt" -Raw -ErrorAction SilentlyContinue
+            $licenseStderr = Get-Content "$env:TEMP\cargo_stderr.txt" -Raw -ErrorAction SilentlyContinue
+
+            # Clean up temp files
+            Remove-Item "$env:TEMP\cargo_stdout.txt" -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cargo_stderr.txt" -ErrorAction SilentlyContinue
+
+            if ($process.ExitCode -ne 0)
+            {
+                Write-Error "[ERROR] License generation failed with exit code: $($process.ExitCode)"
+                if ($licenseStderr) { Write-Error "[ERROR] Error details: $licenseStderr" }
+                if ($licenseStdout) { Write-Error "[ERROR] Output: $licenseStdout" }
+                exit 1
+            }
+
+            # Display warnings but don't fail the build
+            if ($licenseStderr -and ($licenseStderr -match "WARN" -or $licenseStderr -match "failed to request license information"))
+            {
+                Write-Host "[WARN] License generation completed with warnings:"
+                Write-Host $licenseStderr
+            }
+        }
+        catch {
+            Write-Error "[ERROR] Failed to execute cargo about generate: $_"
             exit 1
         }
+
         Write-Host "[INFO] License files generated successfully"
     }
     else
