@@ -25,6 +25,8 @@ param(
     [switch]$Help
 )
 
+echo $PSVersionTable
+
 # Store initial location
 $initialLocation = Get-Location
 $scriptLocation = Split-Path -Parent $MyInvocation.MyCommand.Path
