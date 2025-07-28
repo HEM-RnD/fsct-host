@@ -43,7 +43,7 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Install cargo-about
-      run: cargo install cargo-about
+      run: cargo install cargo-about --force
 
     - name: Install Pandoc
       run: |
