@@ -47,7 +47,18 @@ jobs:
       run: |
         dotnet tool install --global wix
 
-    - name: Build Windows Installer
+    - name: Install AzureSignTool
+      run: |
+        dotnet tool install --global AzureSignTool
+
+    - name: Build Windows Installer (with Azure Key Vault signing)
+      if: ${{ secrets.AZURE_KEY_VAULT_URL != '' && secrets.AZURE_CERTIFICATE_NAME != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_CLIENT_SECRET != '' }}
+      run: |
+        .\script\build_windows_installer.ps1 -UseAzureKeyVault -AzureKeyVaultUrl "${{ secrets.AZURE_KEY_VAULT_URL }}" -AzureCertificateName "${{ secrets.AZURE_CERTIFICATE_NAME }}" -AzureTenantId "${{ secrets.AZURE_TENANT_ID }}" -AzureClientId "${{ secrets.AZURE_CLIENT_ID }}" -AzureClientSecret "${{ secrets.AZURE_CLIENT_SECRET }}" -BuildNumber ${{ github.run_number }}
+      shell: powershell
+
+    - name: Build Windows Installer (unsigned)
+      if: ${{ secrets.AZURE_KEY_VAULT_URL == '' || secrets.AZURE_CERTIFICATE_NAME == '' || secrets.AZURE_TENANT_ID == '' || secrets.AZURE_CLIENT_ID == '' || secrets.AZURE_CLIENT_SECRET == '' }}
       run: |
         .\script\build_windows_installer.ps1 -NoSign -BuildNumber ${{ github.run_number }}
       shell: powershell
