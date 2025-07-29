@@ -112,6 +112,34 @@ If you encounter certificate-related issues:
 1. Ensure your certificates are valid and not expired
 2. Check that the certificate names in the GitHub secrets match exactly with the certificate names in your keychain
 3. Verify that the P12 file was exported correctly with both the certificate and private key
+4. Make sure the certificate is trusted for all required tools:
+   ```
+   security import certificate.p12 -k build.keychain -P "your-password" -T /usr/bin/codesign -T /usr/bin/pkgbuild -T /usr/bin/productbuild
+   ```
+
+### Keychain Access Issues
+
+If the build process hangs during signing or shows "User interaction is not allowed" errors:
+
+1. Ensure the keychain is properly unlocked:
+   ```
+   security unlock-keychain -p "your-keychain-password" build.keychain
+   ```
+
+2. Set the key partition list to allow access without user interaction:
+   ```
+   security set-key-partition-list -S apple-tool:,apple: -s -k "your-keychain-password" build.keychain
+   ```
+
+3. Verify that the certificates are accessible in the keychain:
+   ```
+   security find-identity -v build.keychain
+   ```
+
+4. Check if the keychain timeout is set appropriately (to prevent it from locking during the build):
+   ```
+   security set-keychain-settings -t 3600 -u build.keychain
+   ```
 
 ### Notarization Issues
 
@@ -121,6 +149,10 @@ If notarization fails:
 2. Verify that your Apple ID, Team ID, and app-specific password are correct
 3. Ensure your Apple Developer Program membership is active
 4. Check that the binary and package are properly signed before notarization
+5. Verify the notarization profile is correctly set up:
+   ```
+   xcrun notarytool store-credentials "APPLE_NOTARY_PROFILE" --apple-id "your-apple-id" --team-id "your-team-id" --password "your-app-password"
+   ```
 
 ### Build Issues
 
@@ -129,6 +161,11 @@ If the build fails:
 1. Check if all required tools are installed on the runner
 2. Verify that the script has execution permissions (`chmod +x`)
 3. Check for any errors in the build logs
+4. If the build hangs at "Building and signing component packages..." or similar steps:
+   - This is likely a certificate access or keychain issue
+   - Check the keychain setup and certificate access as described above
+   - Add verbose flags to the problematic commands for more detailed output
+   - Ensure the KEYCHAIN_PASSWORD environment variable is properly set and passed to the script
 
 ## References
 
