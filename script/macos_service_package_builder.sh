@@ -14,8 +14,8 @@ DAEMON_DIR="/Library/LaunchDaemons"                    # Target install director
 INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
-DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
-DEVELOPER_ID_INSTALLER="Developer ID Installer: HEM Sp. z o.o. (342MS6WA5D)"
+APPLE_DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
+APPLE_DEVELOPER_ID_INSTALLER="Developer ID Installer: HEM Sp. z o.o. (342MS6WA5D)"
 
 KEYCHAIN_PROFILE="APPLE_NOTARY_PROFILE"
 
@@ -144,7 +144,7 @@ cp "${FAT_BUILD_DIR}/${CARGO_BIN_NAME}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
 if [ "$SKIP_SIGNING" = false ]; then
     echo "========================================"
     echo "Signing the binary..."
-    codesign --force --options runtime --sign "${DEVELOPER_ID_APP}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+    codesign --force --options runtime --sign "${APPLE_DEVELOPER_ID_APP}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
     echo "Verifying binary signature..."
     codesign --verify --verbose "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
 fi
@@ -257,21 +257,57 @@ fi
 # Build component packages
 if [ "$SKIP_SIGNING" = false ]; then
     echo "Building and signing component packages..."
+    
+    # Debug: Show available identities
+    echo "Available signing identities:"
+    security find-identity -v -p codesigning
+    
+    echo "Building and signing bin package..."
+    set +e  # Don't exit on error to capture output
     pkgbuild --root "${BIN_ROOT}" \
              --identifier "${IDENTIFIER}.bin" \
              --version "${VERSION}" \
              --install-location "/" \
              --scripts "${PACKAGE_DIR}/bin_scripts" \
-             --sign "${DEVELOPER_ID_INSTALLER}" \
-             "${BIN_PKG}"
-
+             --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
+             --verbose \
+             "${BIN_PKG}" 2>&1
+    BIN_PKG_STATUS=$?
+    
+    if [ $BIN_PKG_STATUS -ne 0 ]; then
+        echo "Error: Failed to build and sign bin package (exit code: $BIN_PKG_STATUS)"
+        echo "Trying again with more debug info..."
+        KEYCHAIN_PATH=$(security list-keychains | grep build.keychain | tr -d '"' | tr -d ' ')
+        if [ -n "$KEYCHAIN_PATH" ]; then
+            echo "Using keychain: $KEYCHAIN_PATH"
+            security unlock-keychain -p "${KEYCHAIN_PASSWORD:-temporary-keychain-password}" "$KEYCHAIN_PATH"
+            security find-identity -v "$KEYCHAIN_PATH"
+        else
+            echo "Warning: build.keychain not found in keychain list"
+        fi
+    else
+        echo "Successfully built and signed bin package"
+    fi
+    
+    echo "Building and signing daemon package..."
     pkgbuild --root "${DAEMON_ROOT}" \
              --identifier "${IDENTIFIER}.daemon" \
              --version "${VERSION}" \
              --install-location "/" \
              --scripts "${PACKAGE_DIR}/daemon_scripts" \
-             --sign "${DEVELOPER_ID_INSTALLER}" \
-             "${DAEMON_PKG}"
+             --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
+             --verbose \
+             "${DAEMON_PKG}" 2>&1
+    DAEMON_PKG_STATUS=$?
+    
+    if [ $DAEMON_PKG_STATUS -ne 0 ]; then
+        echo "Error: Failed to build and sign daemon package (exit code: $DAEMON_PKG_STATUS)"
+        exit $DAEMON_PKG_STATUS
+    else
+        echo "Successfully built and signed daemon package"
+    fi
+    
+    set -e  # Restore exit on error
 else
     echo "Building unsigned component packages..."
     pkgbuild --root "${BIN_ROOT}" \
@@ -295,12 +331,53 @@ PKG_NAME="fsct-driver-${VERSION}.pkg"                  # Output package name
 
 # Build final package with or without signing
 if [ "$SKIP_SIGNING" = false ]; then
+    echo "Building and signing final distribution package..."
+    
+    # Debug: Show available identities again (in case something changed)
+    echo "Available signing identities for productbuild:"
+    security find-identity -v -p codesigning
+    
+    set +e  # Don't exit on error to capture output
     productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
                  --package-path "${COMPONENT_PKGS_DIR}" \
-                 --sign "${DEVELOPER_ID_INSTALLER}" \
+                 --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
                  --resources "${PACKAGE_DIR}" \
-                 "${PACKAGE_DIR}/${PKG_NAME}"
-
+                 --verbose \
+                 "${PACKAGE_DIR}/${PKG_NAME}" 2>&1
+    PRODUCTBUILD_STATUS=$?
+    
+    if [ $PRODUCTBUILD_STATUS -ne 0 ]; then
+        echo "Error: Failed to build and sign final package (exit code: $PRODUCTBUILD_STATUS)"
+        echo "Trying again with more debug info..."
+        KEYCHAIN_PATH=$(security list-keychains | grep build.keychain | tr -d '"' | tr -d ' ')
+        if [ -n "$KEYCHAIN_PATH" ]; then
+            echo "Using keychain: $KEYCHAIN_PATH"
+            security unlock-keychain -p "${KEYCHAIN_PASSWORD:-temporary-keychain-password}" "$KEYCHAIN_PATH"
+            security find-identity -v "$KEYCHAIN_PATH"
+            
+            # Try one more time with explicitly unlocked keychain
+            echo "Retrying productbuild after unlocking keychain..."
+            productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
+                         --package-path "${COMPONENT_PKGS_DIR}" \
+                         --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
+                         --resources "${PACKAGE_DIR}" \
+                         --verbose \
+                         "${PACKAGE_DIR}/${PKG_NAME}" 2>&1
+            RETRY_STATUS=$?
+            if [ $RETRY_STATUS -ne 0 ]; then
+                echo "Error: Failed to build and sign final package on retry (exit code: $RETRY_STATUS)"
+                exit $RETRY_STATUS
+            fi
+        else
+            echo "Warning: build.keychain not found in keychain list"
+            exit $PRODUCTBUILD_STATUS
+        fi
+    else
+        echo "Successfully built and signed final package"
+    fi
+    
+    set -e  # Restore exit on error
+    
     echo "Verifying package signature..."
     pkgutil --check-signature "${PACKAGE_DIR}/${PKG_NAME}"
 else

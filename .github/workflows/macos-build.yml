@@ -1,0 +1,151 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [ '*' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop, 'release/*', 'hotfix/*' ]
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_NOTARY_PROFILE: "APPLE_NOTARY_PROFILE"
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: "temporary-keychain-password"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-apple-darwin, aarch64-apple-darwin
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Install cargo-about
+      run: cargo install cargo-about
+      continue-on-error: true
+
+    - name: Install required tools
+      run: |
+        brew install pandoc
+        
+    - name: Setup certificates
+      if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' }}
+      run: |
+        # Create a temporary keychain
+        security create-keychain -p "${{ env.KEYCHAIN_PASSWORD }}" build.keychain
+        security default-keychain -s build.keychain
+        security unlock-keychain -p "${{ env.KEYCHAIN_PASSWORD }}" build.keychain
+        security set-keychain-settings -t 3600 -u build.keychain
+        
+        # Import the certificate (contains both application and installer certificates)
+        echo "${{ env.APPLE_CERTIFICATE_BASE64 }}" | base64 --decode > certificate.p12
+        security import certificate.p12 -k build.keychain -P "${{ env.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign -T /usr/bin/pkgbuild -T /usr/bin/productbuild
+        
+        # Set key partition list
+        security set-key-partition-list -S apple-tool:,apple: -s -k "${{ env.KEYCHAIN_PASSWORD }}" build.keychain
+        
+        # Verify the keychain is properly set up
+        echo "Verifying keychain setup..."
+        security list-keychains
+        security find-identity -v build.keychain
+        
+        # Clean up
+        rm certificate.p12
+
+    - name: Setup notarization profile
+      if: ${{ env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != '' }}
+      run: |
+        # Create notarization profile
+        xcrun notarytool store-credentials "${{ env.APPLE_NOTARY_PROFILE }}" \
+          --apple-id "${{ env.APPLE_ID }}" \
+          --team-id "${{ env.APPLE_TEAM_ID }}" \
+          --password "${{ env.APPLE_APP_PASSWORD }}"
+
+    # Set a flag to determine if we should notarize
+    - name: Set notarization flag
+      id: set_notarize
+      run: |
+        SHOULD_NOTARIZE=true
+        
+        # Check if we're on a branch that should be notarized
+        if [[ "${{ github.ref }}" == "refs/heads/develop" || 
+              "${{ github.ref }}" == "refs/heads/main" || 
+              "${{ github.ref }}" =~ ^refs/heads/release/.* || 
+              "${{ github.ref }}" =~ ^refs/heads/hotfix/.* || 
+              "${{ github.ref }}" =~ ^refs/tags/v.* ]]; then
+          SHOULD_NOTARIZE=true
+        fi
+        
+        echo "should_notarize=$SHOULD_NOTARIZE" >> $GITHUB_OUTPUT
+        echo "Branch/tag: ${{ github.ref }}"
+        echo "Should notarize: $SHOULD_NOTARIZE"
+
+    # Build with signing and notarization for specific branches/tags
+    - name: Build macOS Package (signed and notarized)
+      if: ${{ steps.set_notarize.outputs.should_notarize == 'true' && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != ''}}
+      run: |
+        chmod +x ./script/macos_service_package_builder.sh
+        # Pass the keychain password to the script
+        export KEYCHAIN_PASSWORD="${{ env.KEYCHAIN_PASSWORD }}"
+        ./script/macos_service_package_builder.sh
+        echo "Package is signed and notarized"
+
+    # Build with signing but without notarization for other branches
+    - name: Build macOS Package (signed only)
+      if: ${{ steps.set_notarize.outputs.should_notarize != 'true' && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' }}
+      run: |
+        chmod +x ./script/macos_service_package_builder.sh
+        # Pass the keychain password to the script
+        export KEYCHAIN_PASSWORD="${{ env.KEYCHAIN_PASSWORD }}"
+        ./script/macos_service_package_builder.sh \
+          --skip-notarization
+        echo "Package is signed but not notarized"
+
+    # Build without signing when certificates are not available
+    - name: Build macOS Package (unsigned)
+      if: ${{ env.APPLE_CERTIFICATE_BASE64 == '' || env.APPLE_CERTIFICATE_PASSWORD == '' }}
+      run: |
+        chmod +x ./script/macos_service_package_builder.sh
+        ./script/macos_service_package_builder.sh --skip-signing --skip-notarization
+        echo "Package is unsigned"
+
+    - name: Upload Package Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: fsct-driver-macos-${{ github.run_number }}
+        path: target/package/fsct-driver-*.pkg
+        retention-days: 30
+
+    - name: Upload to Release
+      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          target/package/fsct-driver-*.pkg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,8 @@
+<component name="ProjectCodeStyleConfiguration">
+  <code_scheme name="Project" version="173">
+    <codeStyleSettings language="Rust">
+      <option name="RIGHT_MARGIN" value="120" />
+      <option name="ALIGN_MULTILINE_CHAINED_METHODS" value="true" />
+    </codeStyleSettings>
+  </code_scheme>
+</component>
