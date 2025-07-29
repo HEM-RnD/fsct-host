@@ -1,0 +1,87 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [ '*' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop, 'release/*', 'hotfix/*' ]
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
+      AZURE_CERTIFICATE_NAME: ${{ secrets.AZURE_CERTIFICATE_NAME }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Install cargo-about
+      run: cargo install cargo-about
+      continue-on-error: true
+
+    - name: Install Pandoc
+      run: |
+        choco install pandoc -y
+
+    - name: Install WiX Toolset v6.0
+      run: |
+        dotnet tool install --global wix
+
+    - name: Install AzureSignTool
+      run: |
+        dotnet tool install --global AzureSignTool
+
+    - name: Build Windows Installer (with Azure Key Vault signing)
+      if: ${{ env.AZURE_KEY_VAULT_URL != '' && env.AZURE_CERTIFICATE_NAME != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != '' && env.AZURE_CLIENT_SECRET != '' }}
+      run: |
+        .\script\build_windows_installer.ps1 -UseAzureKeyVault -AzureKeyVaultUrl "${{ env.AZURE_KEY_VAULT_URL }}" -AzureCertificateName "${{ env.AZURE_CERTIFICATE_NAME }}" -AzureTenantId "${{ env.AZURE_TENANT_ID }}" -AzureClientId "${{ env.AZURE_CLIENT_ID }}" -AzureClientSecret "${{ env.AZURE_CLIENT_SECRET }}" -BuildNumber ${{ github.run_number }}
+      shell: powershell
+
+    - name: Build Windows Installer (unsigned)
+      if: ${{ env.AZURE_KEY_VAULT_URL == '' || env.AZURE_CERTIFICATE_NAME == '' || env.AZURE_TENANT_ID == '' || env.AZURE_CLIENT_ID == '' || env.AZURE_CLIENT_SECRET == '' }}
+      run: |
+        .\script\build_windows_installer.ps1 -NoSign -BuildNumber ${{ github.run_number }}
+      shell: powershell
+
+    - name: Upload EXE Bundle Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: fsct-driver-installer-exe-${{ github.run_number }}
+        path: target\wix_build\FSCTDriverInstaller.exe
+        retention-days: 30
+
+    - name: Upload to Release
+      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          target\wix_build\FSCTDriverInstaller.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

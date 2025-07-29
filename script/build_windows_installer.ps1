@@ -4,17 +4,22 @@
 # This script builds the FSCT Driver Service and creates Windows installers (MSI and EXE bundle).
 # It handles:
 #   1. Building the Rust service
-#   2. Signing the executable (if enabled)
+#   2. Signing the executable (if enabled) - supports both local certificate and Azure Key Vault
 #   3. Downloading the Visual C++ Redistributable
 #   4. Creating an MSI installer using WiX Toolset v6.0
 #   5. Creating an EXE bundle installer
-#   6. Signing the installers (if enabled)
+#   6. Signing the installers (if enabled) - supports both local certificate and Azure Key Vault
+#
+# Signing Methods:
+#   - Local Certificate: Uses signtool with a certificate from the local certificate store
+#   - Azure Key Vault: Uses AzureSignTool with certificates stored in Azure Key Vault
 #
 # Requirements:
 #   - Rust (cargo)
 #       - cargo about
 #   - WiX Toolset v6.0
-#   - signtool (if signing is enabled)
+#   - signtool (if using local certificate signing)
+#   - AzureSignTool (if using Azure Key Vault signing)
 #   - pandoc
 #
 param(
@@ -22,8 +27,16 @@ param(
     [switch]$NoSign,
     [switch]$NoDwnld,
     [switch]$NoLicense,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$UseAzureKeyVault,
+    [string]$AzureKeyVaultUrl = "",
+    [string]$AzureCertificateName = "",
+    [string]$AzureTenantId = "",
+    [string]$AzureClientId = "",
+    [string]$AzureClientSecret = ""
 )
+
+echo $PSVersionTable
 
 # Store initial location
 $initialLocation = Get-Location
@@ -37,13 +50,24 @@ try
     if ($Help)
     {
         Write-Host "FSCT Driver Service Windows Installer Build Script"
-        Write-Host "Usage: .\build_windows_installer.ps1 [-NoSign] [-SkipDwnld] [-NoLicense] [-Help]"
+        Write-Host "Usage: .\build_windows_installer.ps1 [-NoSign] [-NoDwnld] [-NoLicense] [-UseAzureKeyVault] [-Help]"
         Write-Host ""
         Write-Host "Options:"
-        Write-Host "  -NoSign    Skip signing of executables and installers"
-        Write-Host "  -NoDwnld   Skip downloading Visual C++ Redistributable and wix extensions"
-        Write-Host "  -NoLicense Skip generating license files (assumes they already exist)"
-        Write-Host "  -Help      Display this help message"
+        Write-Host "  -NoSign              Skip signing of executables and installers"
+        Write-Host "  -NoDwnld             Skip downloading Visual C++ Redistributable and wix extensions"
+        Write-Host "  -NoLicense           Skip generating license files (assumes they already exist)"
+        Write-Host "  -UseAzureKeyVault    Use Azure Key Vault for signing instead of local certificate"
+        Write-Host "  -AzureKeyVaultUrl    Azure Key Vault URL (required when using Azure Key Vault)"
+        Write-Host "  -AzureCertificateName Certificate name in Azure Key Vault (required when using Azure Key Vault)"
+        Write-Host "  -AzureTenantId       Azure tenant ID (required when using Azure Key Vault)"
+        Write-Host "  -AzureClientId       Azure client ID (required when using Azure Key Vault)"
+        Write-Host "  -AzureClientSecret   Azure client secret (required when using Azure Key Vault)"
+        Write-Host "  -Help                Display this help message"
+        Write-Host ""
+        Write-Host "Examples:"
+        Write-Host "  .\build_windows_installer.ps1"
+        Write-Host "  .\build_windows_installer.ps1 -NoSign"
+        Write-Host "  .\build_windows_installer.ps1 -UseAzureKeyVault -AzureKeyVaultUrl 'https://vault.vault.azure.net/' -AzureCertificateName 'MyCert' -AzureTenantId 'tenant-id' -AzureClientId 'client-id' -AzureClientSecret 'secret'"
         exit 0
     }
 
@@ -75,6 +99,123 @@ try
         $LICENSE_ENABLE = $false
     }
 
+    # Validate Azure Key Vault parameters
+    if ($UseAzureKeyVault -and $SIGN_ENABLED)
+    {
+        $missingParams = @()
+        if ([string]::IsNullOrEmpty($AzureKeyVaultUrl)) { $missingParams += "AzureKeyVaultUrl" }
+        if ([string]::IsNullOrEmpty($AzureCertificateName)) { $missingParams += "AzureCertificateName" }
+        if ([string]::IsNullOrEmpty($AzureTenantId)) { $missingParams += "AzureTenantId" }
+        if ([string]::IsNullOrEmpty($AzureClientId)) { $missingParams += "AzureClientId" }
+        if ([string]::IsNullOrEmpty($AzureClientSecret)) { $missingParams += "AzureClientSecret" }
+
+        if ($missingParams.Count -gt 0)
+        {
+            Write-Error "[ERROR] When using Azure Key Vault signing, the following parameters are required: $($missingParams -join ', ')"
+            exit 1
+        }
+
+        Write-Host "[INFO] Using Azure Key Vault for signing"
+        Write-Host "[INFO] Key Vault URL: $AzureKeyVaultUrl"
+        Write-Host "[INFO] Certificate Name: $AzureCertificateName"
+    }
+    elseif ($SIGN_ENABLED)
+    {
+        Write-Host "[INFO] Using local certificate for signing"
+        Write-Host "[INFO] Certificate Thumbprint: $SIGN_CERT_THUMBPRINT"
+    }
+
+    # === Signing Functions ===
+    function Sign-FileWithLocalCertificate
+    {
+        param(
+            [string]$FilePath,
+            [string]$Description = ""
+        )
+
+        Write-Host "[INFO] Signing $Description with local certificate..."
+        $signResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 /tr $TIMESTAMP_URL /td SHA256 $FilePath 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to sign $Description"
+            Write-Error "[ERROR] Error details: $signResult"
+            return $false
+        }
+        Write-Host "[INFO] $Description signed successfully"
+        return $true
+    }
+
+    function Sign-FileWithAzureKeyVault
+    {
+        param(
+            [string]$FilePath,
+            [string]$Description = ""
+        )
+
+        Write-Host "[INFO] Signing $Description with Azure Key Vault..."
+        
+        # Use AzureSignTool for Azure Key Vault signing
+        # AzureSignTool parameters:
+        # -kvu: Key Vault URL
+        # -kvc: Certificate name in Key Vault
+        # -kvi: Azure Client ID (Application ID)
+        # -kvs: Azure Client Secret
+        # -kvt: Azure Tenant ID
+        # -tr: Timestamp server URL
+        # -td: Timestamp digest algorithm
+        # -fd: File digest algorithm
+        $azureSignArgs = @(
+            "sign"
+            "-kvu", $AzureKeyVaultUrl
+            "-kvc", $AzureCertificateName
+            "-kvi", $AzureClientId
+            "-kvs", $AzureClientSecret
+            "-kvt", $AzureTenantId
+            "-tr", $TIMESTAMP_URL
+            "-td", "sha256"
+            "-fd", "sha256"
+            $FilePath
+        )
+
+        $signResult = & AzureSignTool @azureSignArgs 2>&1
+        if ($LASTEXITCODE -ne 0)
+        {
+            Write-Error "[ERROR] Failed to sign $Description with Azure Key Vault"
+            Write-Error "[ERROR] Error details: $signResult"
+            return $false
+        }
+        Write-Host "[INFO] $Description signed successfully with Azure Key Vault"
+        return $true
+    }
+
+    function Sign-File
+    {
+        param(
+            [string]$FilePath,
+            [string]$Description = ""
+        )
+
+        # Main signing abstraction function
+        # This function provides a unified interface for signing files regardless of the signing method
+        # It automatically chooses between local certificate and Azure Key Vault signing based on parameters
+        # The signing logic and order is independent of the signing method used
+
+        if (-not $SIGN_ENABLED)
+        {
+            Write-Host "[INFO] Skipping signing of $Description (signing disabled)"
+            return $true
+        }
+
+        if ($UseAzureKeyVault)
+        {
+            return Sign-FileWithAzureKeyVault -FilePath $FilePath -Description $Description
+        }
+        else
+        {
+            return Sign-FileWithLocalCertificate -FilePath $FilePath -Description $Description
+        }
+    }
+
     # === Checking dependencies ===
     function Check-Tool
     {
@@ -104,14 +245,21 @@ try
 
     Write-Host "[INFO] Using WiX Toolset: $wixVersion"
 
-    # Check if signtool is available in PATH
+    # Check signing tools
     if ($SIGN_ENABLED)
     {
-        Check-Tool -toolName "signtool"
+        if ($UseAzureKeyVault)
+        {
+            Check-Tool -toolName "AzureSignTool"
+        }
+        else
+        {
+            Check-Tool -toolName "signtool"
+        }
     }
     else
     {
-        Write-Host "[INFO] Skipping signtool check in no-sign mode"
+        Write-Host "[INFO] Skipping signing tool checks in no-sign mode"
     }
 
     # Check if pandoc is available in PATH
@@ -239,21 +387,9 @@ try
     Write-Host "[INFO] Installer version: $installerVersion"
 
     # === Signing EXE ===
-    if ($SIGN_ENABLED)
+    if (-not (Sign-File -FilePath "$BUILD_DIR\$PROJECT_NAME.exe" -Description "EXE"))
     {
-        Write-Host "[INFO] Signing EXE..."
-        $signResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\$PROJECT_NAME.exe" 2>&1
-        if ($LASTEXITCODE -ne 0)
-        {
-            Write-Error "[ERROR] Failed to sign EXE"
-            Write-Error "[ERROR] Error details: $signResult"
-            exit 1
-        }
-        Write-Host "[INFO] EXE signed successfully"
-    }
-    else
-    {
-        Write-Host "[INFO] Skipping EXE signing (developer mode)"
+        exit 1
     }
 
     # === Copying WiX source files ===
@@ -309,8 +445,42 @@ try
     if ($LICENSE_ENABLE)
     {
         Write-Host "[INFO] Generating license files..."
-        & cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs    `
-            -o "$BUILD_DIR/LICENSES.md" 2>&1
+        # Execute cargo about generate and capture output separately
+        $licenseStdout = ""
+        $licenseStderr = ""
+
+        try {
+            # Use Start-Process to better control output handling
+            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "ports/native/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
+
+            $licenseStdout = Get-Content "$env:TEMP\cargo_stdout.txt" -Raw -ErrorAction SilentlyContinue
+            $licenseStderr = Get-Content "$env:TEMP\cargo_stderr.txt" -Raw -ErrorAction SilentlyContinue
+
+            # Clean up temp files
+            Remove-Item "$env:TEMP\cargo_stdout.txt" -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cargo_stderr.txt" -ErrorAction SilentlyContinue
+
+            if ($process.ExitCode -ne 0)
+            {
+                Write-Error "[ERROR] License generation failed with exit code: $($process.ExitCode)"
+                if ($licenseStderr) { Write-Error "[ERROR] Error details: $licenseStderr" }
+                if ($licenseStdout) { Write-Error "[ERROR] Output: $licenseStdout" }
+                exit 1
+            }
+
+            # Display warnings but don't fail the build
+            if ($licenseStderr -and ($licenseStderr -match "WARN" -or $licenseStderr -match "failed to request license information"))
+            {
+                Write-Host "[WARN] License generation completed with warnings:"
+                Write-Host $licenseStderr
+            }
+        }
+        catch {
+            Write-Error "[ERROR] Failed to execute cargo about generate: $_"
+            exit 1
+        }
+
+        Write-Host "[INFO] License files generated successfully"
     }
     else
     {
@@ -374,18 +544,9 @@ For complete license information, please build with license generation enabled.
     }
 
     # === Signing MSI ===
-    if ($SIGN_ENABLED)
+    if (-not (Sign-File -FilePath "$BUILD_DIR\FSCTServiceInstaller.msi" -Description "MSI"))
     {
-        Write-Host "[INFO] Signing MSI..."
-        $msiSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 `
-            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\FSCTServiceInstaller.msi" 2>&1
-        if ($LASTEXITCODE -ne 0)
-        {
-            Write-Error "[ERROR] Failed to sign MSI"
-            Write-Error "[ERROR] Error details: $msiSignResult"
-            exit 1
-        }
-        Write-Host "[INFO] MSI signed successfully"
+        exit 1
     }
 
     # === Bundle Compilation ===
@@ -421,13 +582,8 @@ For complete license information, please build with license generation enabled.
             exit 1
         }
 
-        Write-Host "[INFO] Signing detached bundle engine..."
-        $engineSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256    `
-            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\bundle_engine.exe" 2>&1
-        if ($LASTEXITCODE -ne 0)
+        if (-not (Sign-File -FilePath "$BUILD_DIR\bundle_engine.exe" -Description "bundle engine"))
         {
-            Write-Error "[ERROR] Failed to sign bundle engine"
-            Write-Error "[ERROR] Error details: $engineSignResult"
             exit 1
         }
 
@@ -441,16 +597,10 @@ For complete license information, please build with license generation enabled.
             exit 1
         }
 
-        Write-Host "[INFO] Signing complete bundle EXE..."
-        $bundleSignResult = signtool sign /sha1 $SIGN_CERT_THUMBPRINT /fd SHA256 `
-            /tr $TIMESTAMP_URL /td SHA256 "$BUILD_DIR\FSCTDriverInstaller.exe" 2>&1
-        if ($LASTEXITCODE -ne 0)
+        if (-not (Sign-File -FilePath "$BUILD_DIR\FSCTDriverInstaller.exe" -Description "bundle EXE"))
         {
-            Write-Error "[ERROR] Failed to sign bundle EXE"
-            Write-Error "[ERROR] Error details: $bundleSignResult"
             exit 1
         }
-        Write-Host "[INFO] Bundle EXE signed successfully"
     }
 
     # === Done ===
