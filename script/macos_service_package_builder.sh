@@ -14,8 +14,8 @@ DAEMON_DIR="/Library/LaunchDaemons"                    # Target install director
 INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
-DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
-DEVELOPER_ID_INSTALLER="Developer ID Installer: HEM Sp. z o.o. (342MS6WA5D)"
+APPLE_DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
+APPLE_DEVELOPER_ID_INSTALLER="Developer ID Installer: HEM Sp. z o.o. (342MS6WA5D)"
 
 KEYCHAIN_PROFILE="APPLE_NOTARY_PROFILE"
 
@@ -144,7 +144,7 @@ cp "${FAT_BUILD_DIR}/${CARGO_BIN_NAME}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
 if [ "$SKIP_SIGNING" = false ]; then
     echo "========================================"
     echo "Signing the binary..."
-    codesign --force --options runtime --sign "${DEVELOPER_ID_APP}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
+    codesign --force --options runtime --sign "${APPLE_DEVELOPER_ID_APP}" "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
     echo "Verifying binary signature..."
     codesign --verify --verbose "${BIN_ROOT}${INSTALL_DIR}/${APP_NAME}"
 fi
@@ -262,7 +262,7 @@ if [ "$SKIP_SIGNING" = false ]; then
              --version "${VERSION}" \
              --install-location "/" \
              --scripts "${PACKAGE_DIR}/bin_scripts" \
-             --sign "${DEVELOPER_ID_INSTALLER}" \
+             --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
              "${BIN_PKG}"
 
     pkgbuild --root "${DAEMON_ROOT}" \
@@ -270,7 +270,7 @@ if [ "$SKIP_SIGNING" = false ]; then
              --version "${VERSION}" \
              --install-location "/" \
              --scripts "${PACKAGE_DIR}/daemon_scripts" \
-             --sign "${DEVELOPER_ID_INSTALLER}" \
+             --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
              "${DAEMON_PKG}"
 else
     echo "Building unsigned component packages..."
@@ -297,7 +297,7 @@ PKG_NAME="fsct-driver-${VERSION}.pkg"                  # Output package name
 if [ "$SKIP_SIGNING" = false ]; then
     productbuild --distribution "${PACKAGE_DIR}/distribution.xml" \
                  --package-path "${COMPONENT_PKGS_DIR}" \
-                 --sign "${DEVELOPER_ID_INSTALLER}" \
+                 --sign "${APPLE_DEVELOPER_ID_INSTALLER}" \
                  --resources "${PACKAGE_DIR}" \
                  "${PACKAGE_DIR}/${PKG_NAME}"
 
