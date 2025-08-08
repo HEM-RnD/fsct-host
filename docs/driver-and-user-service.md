@@ -73,17 +73,17 @@ The FSCT driver follows a layered architecture pattern with clear separation of 
 │  - Manages player registrations                                  │
 │  - Handles player-device assignments                             │
 │  - Processes player state updates                                │
-│  - (Not fully implemented yet)                                   │
-└───────────────┬───────────────────────────────────┬─────────────┘
-                │                                   │
-                ▼                                   ▼
-┌───────────────────────────────┐   ┌───────────────────────────────┐
-│        Device Watch           │   │      Player Watch             │
-│  - Device enumeration         │◄──┼──► - Player event handling    │
-│  - Device discovery           │   │  - State synchronization      │
-│  - Device initialization      │   │  - Event propagation          │
-│  - Device-player assignment   │   │                               │
-└───────────────┬───────────────┘   └───────────────────────────────┘
+│  - Maintains PlayerState objects                                 │
+└───────────────┬─────────────────────────────────────────────────┘
+                │                                   
+                ▼                                   
+┌───────────────────────────────┐   
+│        Device Watch           │   
+│  - Device enumeration         │   
+│  - Device discovery           │   
+│  - Device initialization      │   
+│  - Device-player assignment   │   
+└───────────────┬───────────────┘
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -110,8 +110,7 @@ The FSCT driver follows a layered architecture pattern with clear separation of 
 ### Internal Communication
 - **Player Manager ↔ Device Watch**: Player state updates and device assignments
 - **Device Watch ↔ FSCT USB Drivers**: Device initialization and command execution
-- **Player Watch ↔ Player Manager**: Player event propagation
-- **Player Watch ↔ Device Watch**: Player state synchronization to devices
+- **User Service ↔ Player Manager**: Player state updates from OS-specific implementations
 
 ## Component Responsibilities
 
@@ -129,6 +128,8 @@ The FSCT driver follows a layered architecture pattern with clear separation of 
 - Central coordination point for player registrations
 - Maintains player-device assignment mappings
 - Routes player state updates to appropriate devices
+- Maintains PlayerState objects (data structures only)
+- Receives player state updates from User Service
 
 ### Device Watch
 - Monitors USB device connections/disconnections
@@ -136,10 +137,10 @@ The FSCT driver follows a layered architecture pattern with clear separation of 
 - Applies player state to connected devices
 - Manages device lifecycle and resource cleanup
 
-### Player Watch
-- Listens for player state changes
-- Propagates player events to interested components
-- Maintains current player state information
+### User Service (External to Driver)
+- Implements platform-specific player detection (Windows, macOS)
+- Monitors OS-level player state changes
+- Sends player state updates to Driver Service
 
 ### FSCT USB Device Drivers
 - Implements FSCT-specific USB protocol
