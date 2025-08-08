@@ -18,8 +18,9 @@
 use crate::definitions::FsctTextMetadata;
 use crate::player::{
     Player, PlayerError, PlayerEvent, PlayerEventReceiveError, PlayerEventsReceiver,
-    PlayerEventsSender, PlayerInterface, PlayerState, create_player_events_channel,
+    PlayerEventsSender, PlayerInterface, create_player_events_channel,
 };
+use crate::player_state::PlayerState;
 use async_trait::async_trait;
 
 use log::{debug, error, info, warn};

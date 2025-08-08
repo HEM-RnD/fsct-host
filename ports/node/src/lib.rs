@@ -28,7 +28,8 @@ use fsct_core::player::{
     create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver,
     PlayerEventsSender,
 };
-use fsct_core::{player::Player, player::PlayerInterface, player::PlayerState, FsctServiceState};
+use fsct_core::player_state::PlayerState;
+use fsct_core::{player::Player, player::PlayerInterface, FsctServiceState};
 use std::sync::{Arc, Mutex};
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 

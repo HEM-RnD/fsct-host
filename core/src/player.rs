@@ -18,10 +18,11 @@
 use crate::definitions::FsctStatus;
 use crate::definitions::*;
 use async_trait::async_trait;
-use std::slice::Iter;
 use std::sync::Arc;
 use thiserror::Error;
 use log::debug;
+
+use super::player_state::*;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
@@ -36,76 +37,6 @@ pub enum PlayerError {
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
-}
-
-
-#[derive(Debug, PartialEq, Clone, Default)]
-pub struct TrackMetadata {
-    pub title: Option<String>,  //CurrentTitle
-    pub artist: Option<String>, //CurrentAuthor
-    pub album: Option<String>,  //CurrentAlbum
-    pub genre: Option<String>,  //CurrentGenre
-}
-
-const TRACK_METADATA_IDS: [FsctTextMetadata; 4] = [
-    FsctTextMetadata::CurrentTitle,
-    FsctTextMetadata::CurrentAuthor,
-    FsctTextMetadata::CurrentAlbum,
-    FsctTextMetadata::CurrentGenre,
-];
-
-pub struct TrackMetadataIterator<'a> {
-    metadata: &'a TrackMetadata,
-    id_iterator: Iter<'static, FsctTextMetadata>,
-}
-
-impl<'a> Iterator for TrackMetadataIterator<'a> {
-    type Item = (FsctTextMetadata, &'a Option<String>);
-    fn next(&mut self) -> Option<(FsctTextMetadata, &'a Option<String>)> {
-        if let Some(id) = self.id_iterator.next() {
-            return Some((*id, self.metadata.get_text(*id)));
-        }
-        None
-    }
-}
-
-impl TrackMetadata {
-    pub fn get_text(&self, text_type: FsctTextMetadata) -> &Option<String> {
-        match text_type {
-            FsctTextMetadata::CurrentTitle => &self.title,
-            FsctTextMetadata::CurrentAuthor => &self.artist,
-            FsctTextMetadata::CurrentAlbum => &self.album,
-            FsctTextMetadata::CurrentGenre => &self.genre,
-            _ => panic!("Unknown text type"),
-        }
-    }
-    pub fn get_mut_text(&mut self, text_type: FsctTextMetadata) -> &mut Option<String> {
-        match text_type {
-            FsctTextMetadata::CurrentTitle => &mut self.title,
-            FsctTextMetadata::CurrentAuthor => &mut self.artist,
-            FsctTextMetadata::CurrentAlbum => &mut self.album,
-            FsctTextMetadata::CurrentGenre => &mut self.genre,
-            _ => panic!("Unknown text type"),
-        }
-    }
-
-    pub fn iter(&self) -> TrackMetadataIterator {
-        TrackMetadataIterator {
-            metadata: self,
-            id_iterator: TRACK_METADATA_IDS.iter(),
-        }
-    }
-
-    pub fn iter_id(&self) -> Iter<'static, FsctTextMetadata> {
-        TRACK_METADATA_IDS.iter()
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Default)]
-pub struct PlayerState {
-    pub status: FsctStatus,
-    pub timeline: Option<TimelineInfo>,
-    pub texts: TrackMetadata,
 }
 
 #[derive(Debug, PartialEq, Clone)]

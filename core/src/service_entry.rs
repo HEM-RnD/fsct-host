@@ -18,7 +18,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
-use crate::player::{Player, PlayerState};
+use crate::player::{Player};
+use crate::player_state::PlayerState;
 use crate::{devices_watch, player_watch, DevicesWatchHandle};
 use crate::devices_watch::DevicesPlayerEventApplier;
 

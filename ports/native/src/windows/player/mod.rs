@@ -29,7 +29,8 @@ use windows::{
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
 use fsct_core::definitions::{FsctTextMetadata, TimelineInfo};
-use fsct_core::player::{create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata};
+use fsct_core::player::{create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface};
+use fsct_core::player_state::{PlayerState, TrackMetadata};
 use fsct_core::definitions::FsctStatus;
 use fsct_core::{player, Player};
 

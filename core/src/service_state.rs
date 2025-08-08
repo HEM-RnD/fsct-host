@@ -76,7 +76,7 @@ impl FsctServiceState {
 
         // Create shared state for devices and player state
         let fsct_devices = Arc::new(Mutex::new(std::collections::HashMap::new()));
-        let player_state = Arc::new(Mutex::new(crate::player::PlayerState::default()));
+        let player_state = Arc::new(Mutex::new(crate::player_state::PlayerState::default()));
 
         // Set up player event listener
         let player_event_listener = DevicesPlayerEventApplier::new(fsct_devices.clone());

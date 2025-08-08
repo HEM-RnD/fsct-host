@@ -16,21 +16,37 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 pub mod usb;
 pub mod definitions;
+
+#[deprecated]
 pub mod player;
 
+#[deprecated]
 mod player_watch;
+
+mod player_manager;
 mod service_entry;
+
+#[deprecated]
 mod devices_watch;
+pub mod device_manager;
+pub mod usb_device_watch;
+pub mod player_state;
 mod service_state;
 
 pub use service_entry::run_service;
 pub use player_watch::run_player_watch;
 pub use devices_watch::run_devices_watch;
 pub use devices_watch::DevicesWatchHandle;
+pub use devices_watch::DevicesPlayerEventApplier;
 pub use player::Player;
 pub use player_watch::NoopPlayerEventListener;
 
+pub use player_manager::{PlayerId, PlayerManager};
+pub use player_state::PlayerState;
+
+// Export device management types
+pub use device_manager::{DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId, DeviceEvent, DeviceManagerError};
+pub use usb_device_watch::{run_usb_device_watch, UsbDeviceWatchHandle};
+
 pub use nusb::DeviceId;
-pub use devices_watch::DeviceMap;
-pub use devices_watch::DevicesPlayerEventApplier;
 pub use service_state::FsctServiceState;
