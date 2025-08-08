@@ -66,9 +66,7 @@ pub trait DeviceManagement {
 
     /// Get all devices managed ID
     fn get_all_managed_ids(&self) -> Vec<ManagedDeviceId>;
-    
-    /// Subscribe to device events
-    fn subscribe(&self) -> broadcast::Receiver<DeviceEvent>;
+
 }
 
 /// Trait for device control operations
@@ -87,6 +85,9 @@ pub trait DeviceControl {
     
     /// Set status for a device
     fn set_status(&self, managed_id: ManagedDeviceId, status: FsctStatus) -> impl std::future::Future<Output =Result<(), DeviceManagerError>> + Send + Sync;
+
+    /// Subscribe to device events
+    fn subscribe(&self) -> broadcast::Receiver<DeviceEvent>;
 }
 
 /// Device manager that handles device ID management and provides a unified API for device operations
@@ -199,10 +200,6 @@ impl DeviceManagement for DeviceManager {
         let devices = self.devices.lock().unwrap();
         devices.keys().copied().collect()
     }
-    
-    fn subscribe(&self) -> broadcast::Receiver<DeviceEvent> {
-        self.event_sender.subscribe()
-    }
 }
 
 impl DeviceControl for DeviceManager {
@@ -229,6 +226,11 @@ impl DeviceControl for DeviceManager {
     async fn set_status(&self, managed_id: ManagedDeviceId, status: FsctStatus) -> Result<(), DeviceManagerError> {
         let device = self.get_device(managed_id)?;
         device.set_status(status).await.map_err(DeviceManagerError::from)
+    }
+
+
+    fn subscribe(&self) -> broadcast::Receiver<DeviceEvent> {
+        self.event_sender.subscribe()
     }
 }
 
