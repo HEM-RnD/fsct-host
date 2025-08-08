@@ -22,7 +22,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use log::debug;
 
-use super::player_state::*;
+pub use super::player_state::*;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
