@@ -21,10 +21,10 @@ use anyhow::Error;
 use log::{debug, error, info};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use nusb::DeviceId;
 
+use crate::device_manager::{DeviceControl, DeviceManagerError, ManagedDeviceId};
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::player_state::PlayerState;
-use crate::usb::fsct_device::FsctDevice;
 
 /// Type alias for player ID
 pub type PlayerId = u32;
@@ -34,22 +34,22 @@ pub struct RegisteredPlayer {
     pub id: PlayerId,
     pub name: String,
     pub state: Arc<Mutex<PlayerState>>,
-    pub assigned_device: Option<DeviceId>,
+    pub assigned_device: Option<ManagedDeviceId>,
 }
 
 /// Manages players and their device assignments
-pub struct PlayerManager {
+pub struct PlayerManager<T: DeviceControl + Send + Sync + 'static> {
     players: Arc<Mutex<HashMap<PlayerId, RegisteredPlayer>>>,
-    devices: Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>,
+    device_control: Arc<T>,
     next_player_id: Arc<Mutex<PlayerId>>,
 }
 
-impl PlayerManager {
+impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
     /// Creates a new PlayerManager
-    pub fn new(devices: Arc<Mutex<HashMap<DeviceId, Arc<FsctDevice>>>>) -> Self {
+    pub fn new(device_control: Arc<T>) -> Self {
         Self {
             players: Arc::new(Mutex::new(HashMap::new())),
-            devices,
+            device_control,
             next_player_id: Arc::new(Mutex::new(1)), // Start from 1
         }
     }
@@ -84,7 +84,7 @@ impl PlayerManager {
     pub async fn unregister_player(&mut self, player_id: PlayerId) -> Result<(), Error> {
         let mut players = self.players.lock().unwrap();
         if let Some(player) = players.remove(&player_id) {
-            // Unassign from all devices
+            // Unassign from device if assigned
             if let Some(device_id) = player.assigned_device {
                 self.unassign_player_from_device_internal(player_id, device_id).await?;
             }
@@ -96,21 +96,12 @@ impl PlayerManager {
     }
 
     /// Assigns a player to a device
-    pub async fn assign_player_to_device(&mut self, player_id: PlayerId, device_id: DeviceId) -> Result<(), Error> {
+    pub async fn assign_player_to_device(&mut self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         // Check if player exists
         {
             let players = self.players.lock().unwrap();
             if !players.contains_key(&player_id) {
                 return Err(anyhow::anyhow!("Player not found"));
-            }
-        };
-
-        // Check if device exists
-        let device = {
-            let devices = self.devices.lock().unwrap();
-            match devices.get(&device_id) {
-                Some(device) => device.clone(),
-                None => return Err(anyhow::anyhow!("Device not found")),
             }
         };
 
@@ -128,19 +119,19 @@ impl PlayerManager {
             players.get(&player_id).unwrap().state.lock().unwrap().clone()
         };
 
-        self.apply_player_state_to_device(&device, &player_state).await?;
+        self.apply_player_state_to_device(device_id, &player_state).await?;
 
-        info!("Player {} assigned to device {:?}", player_id, device_id);
+        info!("Player {} assigned to device {}", player_id, device_id);
         Ok(())
     }
 
     /// Unassigns a player from a device
-    pub async fn unassign_player_from_device(&mut self, player_id: PlayerId, device_id: DeviceId) -> Result<(), Error> {
+    pub async fn unassign_player_from_device(&mut self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         self.unassign_player_from_device_internal(player_id, device_id).await
     }
 
     /// Internal implementation of unassign_player_from_device
-    async fn unassign_player_from_device_internal(&self, player_id: PlayerId, device_id: DeviceId) -> Result<(), Error> {
+    async fn unassign_player_from_device_internal(&self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
@@ -154,15 +145,15 @@ impl PlayerManager {
             }
         }
 
-        info!("Player {} unassigned from device {:?}", player_id, device_id);
+        info!("Player {} unassigned from device {}", player_id, device_id);
         Ok(())
     }
 
     /// Gets the devices assigned to a player
-    pub fn get_player_assigned_devices(&self, player_id: PlayerId) -> Result<Option<DeviceId>, Error> {
+    pub fn get_player_assigned_devices(&self, player_id: PlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         let players = self.players.lock().unwrap();
         if let Some(player) = players.get(&player_id) {
-            Ok(player.assigned_device.clone())
+            Ok(player.assigned_device)
         } else {
             Err(anyhow::anyhow!("Player not found"))
         }
@@ -176,7 +167,7 @@ impl PlayerManager {
             if let Some(player) = players.get(&player_id) {
                 // Update the state
                 *player.state.lock().unwrap() = new_state.clone();
-                player.assigned_device.clone()
+                player.assigned_device
             } else {
                 return Err(anyhow::anyhow!("Player not found"));
             }
@@ -184,16 +175,8 @@ impl PlayerManager {
 
         // Apply state to assigned device
         if let Some(device_id) = assigned_device {
-            let device = {
-                let devices = self.devices.lock().unwrap();
-                match devices.get(&device_id) {
-                    Some(device) => device.clone(),
-                    None => return Ok(()), // Return if device not found
-                }
-            };
-
-            if let Err(e) = self.apply_player_state_to_device(&device, &new_state).await {
-                error!("Failed to apply state to device {:?}: {}", device_id, e);
+            if let Err(e) = self.apply_player_state_to_device(device_id, &new_state).await {
+                error!("Failed to apply state to device {}: {}", device_id, e);
             }
         } else {
             // todo apply state to all unassigned devices
@@ -203,16 +186,22 @@ impl PlayerManager {
     }
 
     /// Applies a player state to a device
-    async fn apply_player_state_to_device(&self, device: &FsctDevice, state: &PlayerState) -> Result<(), Error> {
+    async fn apply_player_state_to_device(&self, device_id: ManagedDeviceId, state: &PlayerState) -> Result<(), Error> {
         // Apply status
-        device.set_status(state.status).await?;
+        if let Err(e) = self.device_control.set_status(device_id, state.status).await {
+            return Err(anyhow::anyhow!("Failed to set status: {}", e));
+        }
 
         // Apply timeline
-        device.set_progress(state.timeline.clone()).await?;
+        if let Err(e) = self.device_control.set_progress(device_id, state.timeline.clone()).await {
+            return Err(anyhow::anyhow!("Failed to set progress: {}", e));
+        }
 
         // Apply texts
         for (text_id, text) in state.texts.iter() {
-            device.set_current_text(text_id, text.as_deref()).await?;
+            if let Err(e) = self.device_control.set_current_text(device_id, text_id, text.as_deref()).await {
+                return Err(anyhow::anyhow!("Failed to set text: {}", e));
+            }
         }
 
         Ok(())
