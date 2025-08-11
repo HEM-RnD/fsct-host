@@ -19,13 +19,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::Error;
-use log::{debug, error, info};
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
+use log::{error, info};
 
-use crate::device_manager::{DeviceControl, DeviceManagerError, ManagedDeviceId};
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::device_manager::ManagedDeviceId;
+use crate::player_events::PlayerEvent;
 use crate::player_state::PlayerState;
+use tokio::sync::broadcast;
 
 /// Type alias for player ID
 pub type ManagedPlayerId = u32;
@@ -39,20 +38,26 @@ pub struct RegisteredPlayer {
 }
 
 /// Manages players and their device assignments
-pub struct PlayerManager<T: DeviceControl + Send + Sync + 'static> {
+pub struct PlayerManager {
     players: Arc<Mutex<HashMap<ManagedPlayerId, RegisteredPlayer>>>,
-    device_control: Arc<T>,
+    events_tx: broadcast::Sender<PlayerEvent>,
     next_player_id: AtomicU32,
 }
 
-impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
+impl PlayerManager {
     /// Creates a new PlayerManager
-    pub fn new(device_control: Arc<T>) -> Self {
+    pub fn new() -> Self {
+        let (events_tx, _) = broadcast::channel(256);
         Self {
             players: Arc::new(Mutex::new(HashMap::new())),
-            device_control,
+            events_tx,
             next_player_id: AtomicU32::new(1), // Start from 1
         }
+    }
+
+    /// Subscribes to player events emitted by this manager.
+    pub fn subscribe(&self) -> broadcast::Receiver<PlayerEvent> {
+        self.events_tx.subscribe()
     }
 
     /// Registers a new player
@@ -64,13 +69,16 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
         // Create player entry
         let registered_player = RegisteredPlayer {
             id: player_id,
-            self_id,
+            self_id: self_id.clone(),
             state: player_state,
             assigned_device: None,
         };
 
         // Add to players map
         self.players.lock().unwrap().insert(player_id, registered_player);
+
+        // Notify listeners
+        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id });
 
         info!("Player {} registered", player_id);
         Ok(player_id)
@@ -88,6 +96,9 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
             if let Some(device_id) = player.assigned_device {
                 self.unassign_player_from_device_internal(player_id, device_id).await?;
             }
+            // Notify listeners
+            let _ = self.events_tx.send(PlayerEvent::Unregistered { player_id });
+
             info!("Player {} unregistered", player_id);
             Ok(())
         } else {
@@ -107,7 +118,10 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
             }
         };
 
-        self.apply_player_state_to_device(device_id, &player_state).await?;
+        // Notify about assignment
+        let _ = self.events_tx.send(PlayerEvent::Assigned { player_id, device_id });
+        // Also emit current state so consumers may immediately propagate it if needed
+        let _ = self.events_tx.send(PlayerEvent::StateUpdated { player_id, state: player_state });
 
         info!("Player {} assigned to device {}", player_id, device_id);
         Ok(())
@@ -133,6 +147,9 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
             }
         }
 
+        // Notify listeners about unassignment
+        let _ = self.events_tx.send(PlayerEvent::Unassigned { player_id, device_id });
+
         info!("Player {} unassigned from device {}", player_id, device_id);
         Ok(())
     }
@@ -149,48 +166,17 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
 
     /// Updates a player's state
     pub async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
-        // Update player state
-        let assigned_device = {
+        {
             let players = self.players.lock().unwrap();
             if let Some(player) = players.get(&player_id) {
-                // Update the state
                 *player.state.lock().unwrap() = new_state.clone();
-                player.assigned_device
             } else {
                 return Err(anyhow::anyhow!("Player not found"));
             }
-        };
-
-        // Apply state to assigned device
-        if let Some(device_id) = assigned_device {
-            if let Err(e) = self.apply_player_state_to_device(device_id, &new_state).await {
-                error!("Failed to apply state to device {}: {}", device_id, e);
-            }
-        } else {
-            // todo apply state to all unassigned devices
         }
 
-        Ok(())
-    }
-
-    /// Applies a player state to a device
-    async fn apply_player_state_to_device(&self, device_id: ManagedDeviceId, state: &PlayerState) -> Result<(), Error> {
-        // Apply status
-        if let Err(e) = self.device_control.set_status(device_id, state.status).await {
-            return Err(anyhow::anyhow!("Failed to set status: {}", e));
-        }
-
-        // Apply timeline
-        if let Err(e) = self.device_control.set_progress(device_id, state.timeline.clone()).await {
-            return Err(anyhow::anyhow!("Failed to set progress: {}", e));
-        }
-
-        // Apply texts
-        for (text_id, text) in state.texts.iter() {
-            if let Err(e) = self.device_control.set_current_text(device_id, text_id, text.as_deref()).await {
-                return Err(anyhow::anyhow!("Failed to set text: {}", e));
-            }
-        }
+        // Notify listeners about the new state
+        let _ = self.events_tx.send(PlayerEvent::StateUpdated { player_id, state: new_state });
 
         Ok(())
     }
