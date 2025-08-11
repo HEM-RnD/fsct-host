@@ -105,18 +105,6 @@ impl Orchestrator {
                         info!("Orchestrator shutdown requested");
                         break;
                     }
-                    recv_res = self.player_rx.recv() => {
-                        match recv_res {
-                            Ok(evt) => self.on_player_event(evt).await,
-                            Err(broadcast::error::RecvError::Lagged(n)) => {
-                                warn!("PlayerEvent lagged by {} messages; catching up", n);
-                            }
-                            Err(broadcast::error::RecvError::Closed) => {
-                                info!("PlayerEvent channel closed; stopping orchestrator");
-                                break;
-                            }
-                        }
-                    }
                     recv_res = self.device_rx.recv() => {
                         match recv_res {
                             Ok(evt) => self.on_device_event(evt).await,
@@ -125,6 +113,18 @@ impl Orchestrator {
                             }
                             Err(broadcast::error::RecvError::Closed) => {
                                 info!("DeviceEvent channel closed; stopping orchestrator");
+                                break;
+                            }
+                        }
+                    }
+                    recv_res = self.player_rx.recv() => {
+                        match recv_res {
+                            Ok(evt) => self.on_player_event(evt).await,
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                warn!("PlayerEvent lagged by {} messages; catching up", n);
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                info!("PlayerEvent channel closed; stopping orchestrator");
                                 break;
                             }
                         }
