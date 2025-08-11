@@ -15,7 +15,8 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
 use std::future::Future;
@@ -39,11 +40,15 @@ pub trait PlayerStateApplier: Send + Sync {
 /// Keeps behavior identical to previous PlayerManager logic while decoupling responsibilities.
 pub struct DirectDeviceControlApplier<T: DeviceControl + Send + Sync + 'static> {
     device_control: Arc<T>,
+    last_applied: Mutex<HashMap<ManagedDeviceId, PlayerState>>, // per-device snapshot to diff against
 }
 
 impl<T: DeviceControl + Send + Sync + 'static> DirectDeviceControlApplier<T> {
     pub fn new(device_control: Arc<T>) -> Self {
-        Self { device_control }
+        Self {
+            device_control,
+            last_applied: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -51,28 +56,72 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
         -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
-            // Apply status
-            self.device_control
-                .set_status(device_id, state.status)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to set status: {}", e))?;
+            // Take a snapshot of the previous state for this device without holding the lock across awaits.
+            let prev_state = {
+                let guard = self
+                    .last_applied
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+                guard.get(&device_id).cloned()
+            };
 
-            // Apply timeline
-            self.device_control
-                .set_progress(device_id, state.timeline.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to set progress: {}", e))?;
+            // Decide what changed
+            let status_changed = prev_state
+                .as_ref()
+                .map(|p| p.status != state.status)
+                .unwrap_or(true);
 
-            // Apply texts
-            for (text_id, text) in state.texts.iter() {
+            let progress_changed = prev_state
+                .as_ref()
+                .map(|p| p.timeline != state.timeline)
+                .unwrap_or(true);
+
+            // Collect text changes (covers both set and clear)
+            let mut text_changes: Vec<(crate::definitions::FsctTextMetadata, Option<&str>)> = Vec::new();
+            for text_id in state.texts.iter_id() {
+                let new_val = state.texts.get_text(*text_id);
+                let changed = match prev_state.as_ref() {
+                    Some(prev) => prev.texts.get_text(*text_id) != new_val,
+                    None => new_val.is_some(),
+                };
+                if changed {
+                    text_changes.push((*text_id, new_val.as_deref()));
+                }
+            }
+
+            // Apply only the changed parts
+            if status_changed {
+                self.device_control
+                    .set_status(device_id, state.status)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to set status: {}", e))?;
+            }
+
+            if progress_changed {
+                self.device_control
+                    .set_progress(device_id, state.timeline.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to set progress: {}", e))?;
+            }
+
+            for (text_id, new_val) in text_changes {
                 if let Err(e) = self
                     .device_control
-                    .set_current_text(device_id, text_id, text.as_deref())
+                    .set_current_text(device_id, text_id, new_val)
                     .await
                 {
-                    // Fail-fast behavior kept to match previous logic.
+                    // Fail-fast to keep behavior consistent
                     return Err(anyhow::anyhow!("Failed to set text: {}", e));
                 }
+            }
+
+            // Update snapshot
+            {
+                let mut guard = self
+                    .last_applied
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+                guard.insert(device_id, state.clone());
             }
 
             Ok(())
