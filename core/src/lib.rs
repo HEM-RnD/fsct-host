@@ -32,6 +32,7 @@ pub mod device_manager;
 pub mod usb_device_watch;
 pub mod player_state;
 mod service_state;
+mod device_uuid_calculator;
 
 pub use service_entry::run_service;
 pub use player_watch::run_player_watch;

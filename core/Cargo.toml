@@ -12,7 +12,7 @@ repository.workspace = true
 [dependencies]
 log = "0.4.25"
 nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
-uuid = { version = "1.16.0", features = ["v4"] }
+uuid = { version = "1.17.0", features = ["v4", "v5"] }
 bitflags = "2.8.0"
 futures.workspace = true
 async-trait.workspace = true

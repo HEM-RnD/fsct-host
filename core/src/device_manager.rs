@@ -19,15 +19,17 @@ use std::collections::HashMap;
 use std::mem::swap;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use nusb::DeviceId;
+use nusb::{DeviceId, DeviceInfo};
 use tokio::sync::broadcast;
 use thiserror::Error;
+use uuid::Uuid;
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::usb::errors::FsctDeviceError;
 use crate::usb::fsct_device::FsctDevice;
+use crate::device_uuid_calculator::calculate_uuid;
 
 /// Unique identifier for managed devices
-pub type ManagedDeviceId = u64;
+pub type ManagedDeviceId = Uuid;
 
 /// Device event types that can be broadcast by the DeviceManager
 #[derive(Debug, Clone)]
@@ -53,7 +55,7 @@ pub enum DeviceManagerError {
 /// Trait for device management operations
 pub trait DeviceManagement {
     /// Add a device to the manager and return its managed ID
-    fn add_device(&self, device: Arc<FsctDevice>, device_id: DeviceId) -> ManagedDeviceId;
+    fn add_device(&self, device: Arc<FsctDevice>, device_info: &DeviceInfo) -> ManagedDeviceId;
     
     /// Remove a device from the manager by its USB device ID
     fn remove_device_by_usb_id(&self, device_id: DeviceId) -> Option<Arc<FsctDevice>>;
@@ -98,9 +100,6 @@ pub struct DeviceManager {
     /// Map of USB device IDs to managed device IDs
     usb_id_to_managed_id: Arc<Mutex<HashMap<DeviceId, ManagedDeviceId>>>,
     
-    /// Counter for generating unique managed device IDs
-    next_id: Arc<Mutex<ManagedDeviceId>>,
-    
     /// Broadcast sender for device events
     event_sender: broadcast::Sender<DeviceEvent>,
 }
@@ -114,17 +113,8 @@ impl DeviceManager {
         Self {
             devices: Arc::new(Mutex::new(HashMap::new())),
             usb_id_to_managed_id: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(Mutex::new(1)), // Start IDs from 1
             event_sender,
         }
-    }
-    
-    /// Generate a new unique managed device ID
-    fn generate_id(&self) -> ManagedDeviceId {
-        let mut next_id = self.next_id.lock().unwrap();
-        let id = *next_id;
-        *next_id += 1;
-        id
     }
 
     fn get_device(&self, managed_id: ManagedDeviceId) -> Result<Arc<FsctDevice>, DeviceManagerError> {
@@ -134,8 +124,12 @@ impl DeviceManager {
 }
 
 impl DeviceManagement for DeviceManager {
-    fn add_device(&self, device: Arc<FsctDevice>, device_id: DeviceId) -> ManagedDeviceId {
-        let managed_id = self.generate_id();
+    fn add_device(&self, device: Arc<FsctDevice>, device_info: &DeviceInfo) -> ManagedDeviceId {
+        // Compute UUID from VID, PID, and Serial Number
+        let vid = device_info.vendor_id();
+        let pid = device_info.product_id();
+        let sn = device_info.serial_number().unwrap_or("");
+        let managed_id = calculate_uuid(vid, pid, sn);
         
         // Add to devices map
         {
@@ -146,7 +140,7 @@ impl DeviceManagement for DeviceManager {
         // Add to USB ID mapping
         {
             let mut usb_id_map = self.usb_id_to_managed_id.lock().unwrap();
-            usb_id_map.insert(device_id, managed_id);
+            usb_id_map.insert(device_info.id(), managed_id);
         }
         
         // Broadcast device added event

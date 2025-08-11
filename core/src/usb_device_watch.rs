@@ -66,7 +66,7 @@ async fn try_initialize_device_and_add_to_manager<T: DeviceManagement>(
     device.set_enable(true).await?;
 
     // Add to device manager
-    let managed_id = device_manager.add_device(Arc::new(device), device_info.id());
+    let managed_id = device_manager.add_device(Arc::new(device), device_info);
 
     Ok(managed_id)
 }
