@@ -42,7 +42,7 @@ pub use devices_watch::DevicesPlayerEventApplier;
 pub use player::Player;
 pub use player_watch::NoopPlayerEventListener;
 
-pub use player_manager::{PlayerId, PlayerManager};
+pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
 
 // Export device management types

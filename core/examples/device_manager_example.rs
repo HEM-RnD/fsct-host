@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
 use fsct_core::{
-    DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId,
-    run_usb_device_watch, DeviceEvent, DeviceId
+    DeviceManager, DeviceManagement, DeviceControl,
+    run_usb_device_watch, DeviceEvent
 };
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use log::{info, warn};

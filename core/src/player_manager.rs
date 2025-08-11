@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::Error;
 use log::{debug, error, info};
 use tokio::sync::oneshot;
@@ -27,21 +28,21 @@ use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::player_state::PlayerState;
 
 /// Type alias for player ID
-pub type PlayerId = u32;
+pub type ManagedPlayerId = u32;
 
 /// Represents a registered player with its state and device assignments
 pub struct RegisteredPlayer {
-    pub id: PlayerId,
-    pub name: String,
+    pub id: ManagedPlayerId,
+    pub self_id: String, /// Player's self identifier
     pub state: Arc<Mutex<PlayerState>>,
     pub assigned_device: Option<ManagedDeviceId>,
 }
 
 /// Manages players and their device assignments
 pub struct PlayerManager<T: DeviceControl + Send + Sync + 'static> {
-    players: Arc<Mutex<HashMap<PlayerId, RegisteredPlayer>>>,
+    players: Arc<Mutex<HashMap<ManagedPlayerId, RegisteredPlayer>>>,
     device_control: Arc<T>,
-    next_player_id: Arc<Mutex<PlayerId>>,
+    next_player_id: AtomicU32,
 }
 
 impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
@@ -50,25 +51,20 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
         Self {
             players: Arc::new(Mutex::new(HashMap::new())),
             device_control,
-            next_player_id: Arc::new(Mutex::new(1)), // Start from 1
+            next_player_id: AtomicU32::new(1), // Start from 1
         }
     }
 
     /// Registers a new player
-    pub async fn register_player(&mut self, name: String) -> Result<PlayerId, Error> {
-        let player_id = {
-            let mut id = self.next_player_id.lock().unwrap();
-            let current_id = *id;
-            *id += 1;
-            current_id
-        };
+    pub async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error> {
+        let player_id = self.assign_new_player_id();
 
         let player_state = Arc::new(Mutex::new(Default::default()));
 
         // Create player entry
         let registered_player = RegisteredPlayer {
             id: player_id,
-            name,
+            self_id,
             state: player_state,
             assigned_device: None,
         };
@@ -79,9 +75,13 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
         info!("Player {} registered", player_id);
         Ok(player_id)
     }
+    fn assign_new_player_id(&self) -> u32 {
+        let player_id = self.next_player_id.fetch_add(1, Ordering::SeqCst);
+        player_id
+    }
 
     /// Unregisters a player
-    pub async fn unregister_player(&mut self, player_id: PlayerId) -> Result<(), Error> {
+    pub async fn unregister_player(&mut self, player_id: ManagedPlayerId) -> Result<(), Error> {
         let mut players = self.players.lock().unwrap();
         if let Some(player) = players.remove(&player_id) {
             // Unassign from device if assigned
@@ -96,27 +96,15 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
     }
 
     /// Assigns a player to a device
-    pub async fn assign_player_to_device(&mut self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        // Check if player exists
-        {
-            let players = self.players.lock().unwrap();
-            if !players.contains_key(&player_id) {
-                return Err(anyhow::anyhow!("Player not found"));
-            }
-        };
-
-        // Set device as player's assigned device
-        {
+    pub async fn assign_player_to_device(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+        let player_state = {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
                 player.assigned_device = Some(device_id);
+                player.state.lock().unwrap().clone()
+            } else {
+                return Err(anyhow::anyhow!("Player not found"));
             }
-        }
-
-        // Apply current player state to the device
-        let player_state = {
-            let players = self.players.lock().unwrap();
-            players.get(&player_id).unwrap().state.lock().unwrap().clone()
         };
 
         self.apply_player_state_to_device(device_id, &player_state).await?;
@@ -126,19 +114,19 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
     }
 
     /// Unassigns a player from a device
-    pub async fn unassign_player_from_device(&mut self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    pub async fn unassign_player_from_device(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         self.unassign_player_from_device_internal(player_id, device_id).await
     }
 
     /// Internal implementation of unassign_player_from_device
-    async fn unassign_player_from_device_internal(&self, player_id: PlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    async fn unassign_player_from_device_internal(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
                 if player.assigned_device == Some(device_id) {
                     player.assigned_device = None;
                 } else {
-                    return Err(anyhow::anyhow!("Player not assigned to device"));
+                    return Err(anyhow::anyhow!("Player not assigned to the device"));
                 }
             } else {
                 return Err(anyhow::anyhow!("Player not found"));
@@ -150,7 +138,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
     }
 
     /// Gets the devices assigned to a player
-    pub fn get_player_assigned_devices(&self, player_id: PlayerId) -> Result<Option<ManagedDeviceId>, Error> {
+    pub fn get_player_assigned_devices(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         let players = self.players.lock().unwrap();
         if let Some(player) = players.get(&player_id) {
             Ok(player.assigned_device)
@@ -160,7 +148,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerManager<T> {
     }
 
     /// Updates a player's state
-    pub async fn update_player_state(&self, player_id: PlayerId, new_state: PlayerState) -> Result<(), Error> {
+    pub async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
         // Update player state
         let assigned_device = {
             let players = self.players.lock().unwrap();
