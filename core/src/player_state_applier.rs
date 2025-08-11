@@ -56,6 +56,13 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
         -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
+            // todo consider better error handling
+            
+            // in multitasking, this could be a race condition if the device is set to a different state in the meantime
+            // but then it would be better to implement queue-based applier instead
+            // then applying task would be only one that changes the state
+            // so it would be write it the same way as here
+
             // Take a snapshot of the previous state for this device without holding the lock across awaits.
             let prev_state = {
                 let guard = self
