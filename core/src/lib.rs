@@ -26,6 +26,7 @@ mod player_watch;
 mod player_manager;
 pub mod player_state_applier;
 pub mod player_events;
+pub mod orchestrator;
 mod service_entry;
 
 #[deprecated]
@@ -47,6 +48,7 @@ pub use player_watch::NoopPlayerEventListener;
 pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
 pub use player_events::PlayerEvent;
+pub use orchestrator::{Orchestrator, OrchestratorHandle};
 
 // Export device management types
 pub use device_manager::{DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId, DeviceEvent, DeviceManagerError};
