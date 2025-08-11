@@ -20,7 +20,7 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::Error;
-use log::{error, info};
+use log::{info};
 
 use crate::device_manager::ManagedDeviceId;
 use crate::player_events::PlayerEvent;

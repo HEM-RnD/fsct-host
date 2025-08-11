@@ -295,3 +295,297 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Error;
+    use std::sync::Mutex;
+    use tokio::time::{sleep, Duration};
+    use uuid::Uuid;
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct ApplyCall {
+        device: ManagedDeviceId,
+        state: PlayerState,
+    }
+
+    struct MockApplier {
+        calls: Mutex<Vec<ApplyCall>>,
+    }
+
+    impl MockApplier {
+        fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()) }) }
+        fn take(&self) -> Vec<ApplyCall> { std::mem::take(&mut self.calls.lock().unwrap()) }
+    }
+
+    impl PlayerStateApplier for MockApplier {
+        fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
+            let st = state.clone();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(ApplyCall { device: device_id, state: st });
+                Ok(())
+            })
+        }
+    }
+
+    fn make_ids(n: usize) -> Vec<ManagedDeviceId> { (0..n).map(|_| Uuid::new_v4()).collect() }
+    fn pid(n: u32) -> ManagedPlayerId { std::num::NonZeroU32::new(n).unwrap() }
+
+    fn default_state_with_title(title: &str) -> PlayerState {
+        let mut s = PlayerState::default();
+        s.texts.get_mut_text(crate::definitions::FsctTextMetadata::CurrentTitle).replace(title.to_string());
+        s
+    }
+
+    // Helper to build orchestrator and the senders
+    fn build_orchestrator(applier: Arc<MockApplier>) -> (
+        Orchestrator<MockApplier>,
+        tokio::sync::broadcast::Sender<PlayerEvent>,
+        tokio::sync::broadcast::Sender<DeviceEvent>,
+    ) {
+        let (player_tx, player_rx) = tokio::sync::broadcast::channel(256);
+        let (device_tx, device_rx) = tokio::sync::broadcast::channel(256);
+        let orch = Orchestrator::new_with_applier(player_rx, device_rx, applier);
+        (orch, player_tx, device_tx)
+    }
+
+    async fn run_orchestrator(orch: Orchestrator<MockApplier>) -> OrchestratorHandle {
+        orch.run()
+    }
+
+    async fn short_wait() { sleep(Duration::from_millis(10)).await }
+
+    #[tokio::test]
+    async fn zero_players_zero_devices_no_apply() {
+        let applier = MockApplier::new();
+        let (orch, _ptx, _dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        short_wait().await;
+        assert!(applier.take().is_empty());
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn one_player_zero_devices_state_update_no_apply() {
+        let applier = MockApplier::new();
+        let (orch, ptx, _dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(1);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1 });
+
+        short_wait().await;
+        assert!(applier.take().is_empty());
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn zero_players_one_device_add_no_apply() {
+        let applier = MockApplier::new();
+        let (orch, _ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        assert!(applier.take().is_empty());
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn unassigned_state_then_device_added_applies_to_device() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(1);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+
+        short_wait().await;
+        let calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s1);
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn assign_before_connect_then_connect_then_update() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(1);
+        let d = make_ids(1)[0];
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d });
+        // give orchestrator a moment to record the assignment before device connects
+        short_wait().await;
+        // device connects after assignment
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        // should apply s1 once due to device added with assigned player
+        let mut calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s1);
+
+        // update to S2 -> apply again to assigned device
+        let s2 = default_state_with_title("S2");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s2.clone() });
+        short_wait().await;
+        calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s2);
+
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn multiple_players_one_device_unassigned_and_assignment_switch() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let d = make_ids(1)[0];
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let mut calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].state, s1);
+
+        // P2 updates -> becomes active_unassigned; should propagate to unassigned device d
+        let s2 = default_state_with_title("S2");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        short_wait().await;
+        calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s2);
+
+        // Now assign P1 to d -> should apply P1's latest state to d
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d });
+        short_wait().await;
+        calls = applier.take();
+        // P1 has known state s1 and device connected, assignment applies s1
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s1);
+
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn one_player_multiple_devices_unassigned_then_assign() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let ids = make_ids(2);
+        let d1 = ids[0];
+        let d2 = ids[1];
+        let _ = dtx.send(DeviceEvent::Added(d1));
+        let _ = dtx.send(DeviceEvent::Added(d2));
+        short_wait().await;
+        let mut calls = applier.take();
+        // both devices should have received s1 (order may match send order)
+        assert_eq!(calls.len(), 2);
+        calls.sort_by_key(|c| c.device);
+        let mut devices = vec![calls[0].device, calls[1].device];
+        devices.sort();
+        let mut expected = vec![d1, d2]; expected.sort();
+        assert_eq!(devices, expected);
+        assert_eq!(calls[0].state, s1);
+        assert_eq!(calls[1].state, s1);
+
+        // Assign player to d1 -> should apply s1 to d1 again; d2 remains unassigned with prior state
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d1 });
+        short_wait().await;
+        calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d1);
+        assert_eq!(calls[0].state, s1);
+
+        // Update to S2 -> applies only to assigned device d1
+        let s2 = default_state_with_title("S2");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s2.clone() });
+        short_wait().await;
+        calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d1);
+        assert_eq!(calls[0].state, s2);
+
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn preferred_change_does_not_apply() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        let _ = ptx.send(PlayerEvent::PreferredChanged { preferred: Some(p1) });
+        short_wait().await;
+        // No state known, preferred change should not cause any apply
+        assert!(applier.take().is_empty());
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn unassign_propagates_active_unassigned_to_device() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let d = make_ids(1)[0];
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let _ = applier.take(); // clear initial apply to unassigned device
+        // Assign P1 to d
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d });
+        short_wait().await;
+        let _ = applier.take(); // assignment may apply s1; clear
+        // P2 updates -> becomes active_unassigned
+        let s2 = default_state_with_title("S2");
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        short_wait().await;
+        let _ = applier.take(); // since d is assigned, no apply now
+        // Unassign P1 from d -> should propagate active_unassigned (P2) to d
+        let _ = ptx.send(PlayerEvent::Unassigned { player_id: p1, device_id: d });
+        short_wait().await;
+        let calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state, s2);
+        let _ = handle.shutdown().await;
+    }
+}

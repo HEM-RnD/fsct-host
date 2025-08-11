@@ -26,7 +26,6 @@ use tokio::task::JoinHandle;
 use crate::device_manager::{DeviceManagement, ManagedDeviceId};
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;
-use crate::usb::fsct_device::FsctDevice;
 
 /// Handle for the USB device watch task
 pub struct UsbDeviceWatchHandle {
