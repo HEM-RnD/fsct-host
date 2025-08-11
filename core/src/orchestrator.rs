@@ -138,67 +138,19 @@ impl Orchestrator {
     async fn on_player_event(&mut self, evt: PlayerEvent) {
         match evt {
             PlayerEvent::Registered { player_id, .. } => {
-                debug!("Player registered: {}", player_id);
+                self.handle_player_registered(player_id).await;
             }
             PlayerEvent::Unregistered { player_id } => {
-                debug!("Player unregistered: {}", player_id);
-                self.last_state_per_player.remove(&player_id);
-                if let Some(dev) = self.player_to_device.remove(&player_id) {
-                    self.device_to_player.remove(&dev);
-                    // Device becomes unassigned; if we have an active unassigned, update it
-                    if let Some(active) = self.active_unassigned {
-                        if let Some(state) = self.last_state_per_player.get(&active) {
-                            if self.connected_devices.contains(&dev) {
-                                let _ = self.applier.apply_to_device(dev, state).await;
-                            }
-                        }
-                    }
-                }
-                if self.active_unassigned == Some(player_id) {
-                    self.active_unassigned = self.pick_active_unassigned();
-                    self.propagate_unassigned().await;
-                }
+                self.handle_player_unregistered(player_id).await;
             }
             PlayerEvent::Assigned { player_id, device_id } => {
-                debug!("Assigned: player {} -> device {}", player_id, device_id);
-                self.player_to_device.insert(player_id, device_id);
-                self.device_to_player.insert(device_id, player_id);
-                if let Some(state) = self.last_state_per_player.get(&player_id) {
-                    if self.connected_devices.contains(&device_id) {
-                        let _ = self.applier.apply_to_device(device_id, state).await;
-                    }
-                }
-                // If this player was the active unassigned, recompute and propagate
-                if self.active_unassigned == Some(player_id) {
-                    self.active_unassigned = self.pick_active_unassigned();
-                    self.propagate_unassigned().await;
-                }
+                self.handle_player_assigned(player_id, device_id).await;
             }
             PlayerEvent::Unassigned { player_id, device_id } => {
-                debug!("Unassigned: player {} -/-> device {}", player_id, device_id);
-                self.player_to_device.remove(&player_id);
-                self.device_to_player.remove(&device_id);
-                // Device becomes unassigned: if we have an active unassigned, update it
-                if let Some(active) = self.active_unassigned {
-                    if let Some(state) = self.last_state_per_player.get(&active) {
-                        if self.connected_devices.contains(&device_id) {
-                            let _ = self.applier.apply_to_device(device_id, state).await;
-                        }
-                    }
-                }
+                self.handle_player_unassigned(player_id, device_id).await;
             }
             PlayerEvent::StateUpdated { player_id, state } => {
-                debug!("StateUpdated: player {}", player_id);
-                self.last_state_per_player.insert(player_id, state.clone());
-                if let Some(device_id) = self.player_to_device.get(&player_id).copied() {
-                    if self.connected_devices.contains(&device_id) {
-                        let _ = self.applier.apply_to_device(device_id, &state).await;
-                    }
-                } else {
-                    // Unassigned: update policy and propagate to all unassigned devices
-                    self.active_unassigned = Some(player_id);
-                    self.propagate_unassigned().await;
-                }
+                self.handle_player_state_updated(player_id, state).await;
             }
         }
     }
@@ -206,26 +158,104 @@ impl Orchestrator {
     async fn on_device_event(&mut self, evt: DeviceEvent) {
         match evt {
             DeviceEvent::Added(device_id) => {
-                debug!("Device added: {}", device_id);
-                self.connected_devices.insert(device_id);
-                // If device has assigned player -> apply its state; otherwise apply active unassigned
-                if let Some(player_id) = self.device_to_player.get(&device_id).copied() {
-                    if let Some(state) = self.last_state_per_player.get(&player_id) {
-                        let _ = self.applier.apply_to_device(device_id, state).await;
-                    }
-                } else if let Some(active) = self.active_unassigned {
-                    if let Some(state) = self.last_state_per_player.get(&active) {
-                        let _ = self.applier.apply_to_device(device_id, state).await;
-                    }
-                }
+                self.handle_device_added(device_id).await;
             }
             DeviceEvent::Removed(device_id) => {
-                debug!("Device removed: {}", device_id);
-                self.connected_devices.remove(&device_id);
-                if let Some(player_id) = self.device_to_player.remove(&device_id) {
-                    self.player_to_device.remove(&player_id);
+                self.handle_device_removed(device_id).await;
+            }
+        }
+    }
+
+    // Dedicated handlers for PlayerEvent variants
+    async fn handle_player_registered(&mut self, player_id: ManagedPlayerId) {
+        debug!("Player registered: {}", player_id);
+    }
+
+    async fn handle_player_unregistered(&mut self, player_id: ManagedPlayerId) {
+        debug!("Player unregistered: {}", player_id);
+        self.last_state_per_player.remove(&player_id);
+        if let Some(dev) = self.player_to_device.remove(&player_id) {
+            self.device_to_player.remove(&dev);
+            // Device becomes unassigned; if we have an active unassigned, update it
+            if let Some(active) = self.active_unassigned {
+                if let Some(state) = self.last_state_per_player.get(&active) {
+                    if self.connected_devices.contains(&dev) {
+                        let _ = self.applier.apply_to_device(dev, state).await;
+                    }
                 }
             }
+        }
+        if self.active_unassigned == Some(player_id) {
+            self.active_unassigned = self.pick_active_unassigned();
+            self.propagate_unassigned().await;
+        }
+    }
+
+    async fn handle_player_assigned(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) {
+        debug!("Assigned: player {} -> device {}", player_id, device_id);
+        self.player_to_device.insert(player_id, device_id);
+        self.device_to_player.insert(device_id, player_id);
+        if let Some(state) = self.last_state_per_player.get(&player_id) {
+            if self.connected_devices.contains(&device_id) {
+                let _ = self.applier.apply_to_device(device_id, state).await;
+            }
+        }
+        // If this player was the active unassigned, recompute and propagate
+        if self.active_unassigned == Some(player_id) {
+            self.active_unassigned = self.pick_active_unassigned();
+            self.propagate_unassigned().await;
+        }
+    }
+
+    async fn handle_player_unassigned(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) {
+        debug!("Unassigned: player {} -/-> device {}", player_id, device_id);
+        self.player_to_device.remove(&player_id);
+        self.device_to_player.remove(&device_id);
+        // Device becomes unassigned: if we have an active unassigned, update it
+        if let Some(active) = self.active_unassigned {
+            if let Some(state) = self.last_state_per_player.get(&active) {
+                if self.connected_devices.contains(&device_id) {
+                    let _ = self.applier.apply_to_device(device_id, state).await;
+                }
+            }
+        }
+    }
+
+    async fn handle_player_state_updated(&mut self, player_id: ManagedPlayerId, state: PlayerState) {
+        debug!("StateUpdated: player {}", player_id);
+        self.last_state_per_player.insert(player_id, state.clone());
+        if let Some(device_id) = self.player_to_device.get(&player_id).copied() {
+            if self.connected_devices.contains(&device_id) {
+                let _ = self.applier.apply_to_device(device_id, &state).await;
+            }
+        } else {
+            // Unassigned: update policy and propagate to all unassigned devices
+            self.active_unassigned = Some(player_id);
+            self.propagate_unassigned().await;
+        }
+    }
+
+    // Dedicated handlers for DeviceEvent variants
+    async fn handle_device_added(&mut self, device_id: ManagedDeviceId) {
+        debug!("Device added: {}", device_id);
+        self.connected_devices.insert(device_id);
+        // If device has assigned player -> apply its state; otherwise apply active unassigned
+        if let Some(player_id) = self.device_to_player.get(&device_id).copied() {
+            if let Some(state) = self.last_state_per_player.get(&player_id) {
+                let _ = self.applier.apply_to_device(device_id, state).await;
+            }
+        } else if let Some(active) = self.active_unassigned {
+            if let Some(state) = self.last_state_per_player.get(&active) {
+                let _ = self.applier.apply_to_device(device_id, state).await;
+            }
+        }
+    }
+
+    async fn handle_device_removed(&mut self, device_id: ManagedDeviceId) {
+        debug!("Device removed: {}", device_id);
+        self.connected_devices.remove(&device_id);
+        if let Some(player_id) = self.device_to_player.remove(&device_id) {
+            self.player_to_device.remove(&player_id);
         }
     }
 
