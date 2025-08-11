@@ -36,4 +36,7 @@ pub enum PlayerEvent {
 
     /// Player's state has been updated. Consumers decide where to propagate it.
     StateUpdated { player_id: ManagedPlayerId, state: PlayerState },
+
+    /// Preferred player selection changed. Contains the new preferred player id or None.
+    PreferredChanged { preferred: Option<ManagedPlayerId> },
 }

@@ -63,6 +63,7 @@ pub struct Orchestrator<A: PlayerStateApplier> {
     connected_devices: HashSet<ManagedDeviceId>,
     last_state_per_player: HashMap<ManagedPlayerId, PlayerState>,
     active_unassigned: Option<ManagedPlayerId>, // policy: last updated among unassigned
+    preferred_player: Option<ManagedPlayerId>, // user-preferred player (stored only; not applied yet)
 }
 
 impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
@@ -81,6 +82,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             connected_devices: HashSet::new(),
             last_state_per_player: HashMap::new(),
             active_unassigned: None,
+            preferred_player: None,
         }
     }
 }
@@ -156,6 +158,9 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             PlayerEvent::StateUpdated { player_id, state } => {
                 self.handle_player_state_updated(player_id, state).await;
             }
+            PlayerEvent::PreferredChanged { preferred } => {
+                self.handle_preferred_changed(preferred).await;
+            }
         }
     }
 
@@ -192,6 +197,10 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         if self.active_unassigned == Some(player_id) {
             self.active_unassigned = self.pick_active_unassigned();
             self.propagate_unassigned().await;
+        }
+        // Clear preferred if it pointed to the unregistered player
+        if self.preferred_player == Some(player_id) {
+            self.preferred_player = None;
         }
     }
 
@@ -237,6 +246,12 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             self.active_unassigned = Some(player_id);
             self.propagate_unassigned().await;
         }
+    }
+
+    async fn handle_preferred_changed(&mut self, preferred: Option<ManagedPlayerId>) {
+        debug!("PreferredChanged: {:?}", preferred);
+        self.preferred_player = preferred;
+        // Intentionally no further action for now (policy changes to be added later)
     }
 
     // Dedicated handlers for DeviceEvent variants
