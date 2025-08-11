@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     // Demo: create a player and update some state
     let player_id = player_manager.register_player("demo-player".to_string()).await?;
 
-    let mut state = PlayerState {
+    let state = PlayerState {
          status: FsctStatus::Playing,
          timeline: Some(TimelineInfo{
              position: Duration::from_secs(13),

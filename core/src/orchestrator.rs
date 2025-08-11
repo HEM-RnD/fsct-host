@@ -18,13 +18,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::Error;
 use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::device_manager::{DeviceControl, DeviceEvent, DeviceManager, ManagedDeviceId};
+use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
+use crate::device_manager::DeviceControl;
 use crate::player_events::PlayerEvent;
 use crate::player_manager::ManagedPlayerId;
 use crate::player_state::PlayerState;
@@ -49,13 +49,13 @@ impl OrchestratorHandle {
 
 /// Orchestrator subscribes to PlayerManager and DeviceManager events
 /// and applies routing policy to update devices using a PlayerStateApplier.
-pub struct Orchestrator {
+pub struct Orchestrator<A: PlayerStateApplier> {
     // Receivers
     player_rx: broadcast::Receiver<PlayerEvent>,
     device_rx: broadcast::Receiver<DeviceEvent>,
 
     // Applier that performs device I/O
-    applier: Arc<dyn PlayerStateApplier>,
+    applier: Arc<A>,
 
     // Routing state
     player_to_device: HashMap<ManagedPlayerId, ManagedDeviceId>,
@@ -65,22 +65,12 @@ pub struct Orchestrator {
     active_unassigned: Option<ManagedPlayerId>, // policy: last updated among unassigned
 }
 
-impl Orchestrator {
-    /// Create orchestrator using a DeviceManager directly (DirectDeviceControlApplier).
-    pub fn with_device_manager(
-        player_rx: broadcast::Receiver<PlayerEvent>,
-        device_manager: Arc<DeviceManager>,
-    ) -> Self {
-        let applier = Arc::new(DirectDeviceControlApplier::new(device_manager.clone()));
-        let device_rx = device_manager.subscribe();
-        Self::new_with_applier(player_rx, device_rx, applier)
-    }
-
+impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     /// Create orchestrator with a custom PlayerStateApplier and a device events receiver.
     pub fn new_with_applier(
         player_rx: broadcast::Receiver<PlayerEvent>,
         device_rx: broadcast::Receiver<DeviceEvent>,
-        applier: Arc<dyn PlayerStateApplier>,
+        applier: Arc<A>,
     ) -> Self {
         Self {
             player_rx,
@@ -93,7 +83,21 @@ impl Orchestrator {
             active_unassigned: None,
         }
     }
+}
 
+impl Orchestrator<DirectDeviceControlApplier<DeviceManager>> {
+    /// Create orchestrator using a DeviceManager directly (DirectDeviceControlApplier).
+    pub fn with_device_manager(
+        player_rx: broadcast::Receiver<PlayerEvent>,
+        device_manager: Arc<DeviceManager>,
+    ) -> Self {
+        let applier = Arc::new(DirectDeviceControlApplier::new(device_manager.clone()));
+        let device_rx = device_manager.subscribe();
+        Self::new_with_applier(player_rx, device_rx, applier)
+    }
+}
+
+impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     /// Spawn the orchestrator event loop in background and return a handle.
     pub fn run(mut self) -> OrchestratorHandle {
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
