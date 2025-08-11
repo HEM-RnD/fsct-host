@@ -33,17 +33,6 @@ pub trait PlayerStateApplier: Send + Sync {
     /// Apply the given player state to a specific device.
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
         -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
-
-    /// Apply the currently active unassigned player state to all devices that do not
-    /// have a player assigned. The strategy for choosing the active unassigned player
-    /// lives above this layer; this method only propagates a given state to devices.
-    ///
-    /// For now, this is a no-op default in the direct implementation and can be
-    /// implemented by a higher-level component that knows the set of unassigned devices.
-    fn apply_to_unassigned_devices<'a>(&'a self, _state: &'a PlayerState)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 /// Direct implementation that wraps a DeviceControl provider.
@@ -88,14 +77,6 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
 
             Ok(())
         })
-    }
-
-    fn apply_to_unassigned_devices<'a>(&'a self, _state: &'a PlayerState)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
-        // In the direct variant we do nothing by default because we don't have
-        // a device inventory here. A higher-level orchestrator should call
-        // apply_to_device for each unassigned device as needed.
-        Box::pin(async { Ok(()) })
     }
 }
 
