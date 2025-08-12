@@ -1016,4 +1016,94 @@ mod tests {
         assert!(stable);
         assert_eq!(winner, idle_unassigned, "Idle unassigned should be preferred over playing assigned to other device");
     }
+
+    #[test]
+    fn is_better_selection_both_playing_assignment_order() {
+        // Verify assignment precedence when both are playing:
+        // AssignedToThisDevice > UserSelected > Unassigned > AssignedToOtherDevice
+        let playing_here = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+        let playing_user = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
+        let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
+        let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+
+        // Pairwise checks via order-independence helper
+        let cases = vec![
+            (vec![playing_here, playing_user], playing_here),
+            (vec![playing_here, playing_unassigned], playing_here),
+            (vec![playing_here, playing_other], playing_here),
+            (vec![playing_user, playing_unassigned], playing_user),
+            (vec![playing_user, playing_other], playing_user),
+            (vec![playing_unassigned, playing_other], playing_unassigned),
+        ];
+        for (items, expected) in cases {
+            let (stable, winner) = selection_is_order_independent(&items);
+            assert!(stable, "Winner should be order independent for pairwise playing comparison");
+            assert_eq!(winner, expected);
+        }
+    }
+
+    #[test]
+    fn is_better_selection_playing_unassigned_beats_idle_assigned_here() {
+        // No special-case should override generic rule that playing beats non-playing
+        let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
+        let idle_here = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+        let items = vec![idle_here, playing_unassigned];
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, playing_unassigned, "Playing unassigned should beat idle assigned-here");
+    }
+
+    #[test]
+    fn is_better_selection_playing_user_selected_beats_playing_unassigned() {
+        // When both are playing, assignment decides and UserSelected > Unassigned
+        let playing_user = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
+        let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
+        let items = vec![playing_user, playing_unassigned];
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, playing_user);
+    }
+
+    #[test]
+    fn is_better_selection_last_selected_breaks_tie_when_both_playing_same_assignment() {
+        // Identical state except last_selected, both playing and unassigned
+        let a = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
+        let b = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: true };
+        let items = vec![a, b];
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, b, "Last selected should win among identical playing candidates");
+    }
+
+    #[test]
+    fn is_better_selection_four_players_permutation_and_sort() {
+        // A nuanced set to test full permutation stability and deterministic sorting
+        // Compose so that final order (best to worst) should be:
+        // 1) playing assigned here, 2) playing user-selected, 3) idle user-selected, 4) playing assigned to other
+        let p1 = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+        let p2 = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
+        let p3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected, is_last_selected: false };
+        let p4 = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let items = vec![p1, p2, p3, p4];
+
+        // Winner must be p1 for all permutations
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, p1);
+
+        // Sorting stability across all permutations
+        let baseline_sorted = sort_by_preference(&items);
+        // Confirm expected sorting shape quickly
+        assert_eq!(baseline_sorted[0], p1);
+        assert_eq!(baseline_sorted[1], p2);
+        // Positions 3 and 4 follow rules: p3 (idle user-selected) should beat p4 (playing assigned to other) due to special-case penalty
+        assert_eq!(baseline_sorted[2], p3);
+        assert_eq!(baseline_sorted[3], p4);
+
+        for perm in permute_indices(items.len()) {
+            let permuted: Vec<PlayerSelectionParams> = perm.iter().map(|&i| items[i]).collect();
+            let sorted = sort_by_preference(&permuted);
+            assert_eq!(sorted, baseline_sorted, "Sorting should be stable for the 4-player nuanced set");
+        }
+    }
 }
