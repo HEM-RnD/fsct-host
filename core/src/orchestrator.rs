@@ -939,35 +939,23 @@ mod tests {
             is_last_selected: false,
         };
 
-        let items = [a_playing_unassigned, b_non_playing_user_selected, c_non_playing_assigned_here];
-
-        // Generate all 6 permutations of indices 0,1,2
-        let perms: Vec<[usize; 3]> = vec![
-            [0, 1, 2],
-            [0, 2, 1],
-            [1, 0, 2],
-            [1, 2, 0],
-            [2, 0, 1],
-            [2, 1, 0],
+        let items = vec![
+            a_playing_unassigned,
+            b_non_playing_user_selected,
+            c_non_playing_assigned_here,
         ];
 
-        // For each permutation, run fold using is_better_selection
-        let mut winners: Vec<PlayerSelectionParams> = Vec::new();
-        for perm in perms {
-            let mut current: Option<PlayerSelectionParams> = None;
-            for &idx in &perm {
-                let candidate = items[idx];
-                if is_better_selection(&candidate, &current) {
-                    current = Some(candidate);
-                }
-            }
-            winners.push(current.unwrap());
-        }
+        // Use helper to verify order-independence and assert expected winner
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable, "Winner should be identical across all permutations");
+        assert_eq!(winner, b_non_playing_user_selected, "Non-playing user-selected should beat playing unassigned and idle assigned-here in this triad");
 
-        // Compare whether all permutations gave the same result
-        let first = winners[0];
-        for (i, w) in winners.iter().enumerate() {
-            assert_eq!(*w, first, "Different winner for permutation {} test: got {:?} vs {:?}", i, w, first);
+        // Additionally, verify sorting stability across all permutations using the helper sort
+        let baseline_sorted = sort_by_preference(&items);
+        for perm in permute_indices(items.len()) {
+            let permuted: Vec<PlayerSelectionParams> = perm.iter().map(|&i| items[i]).collect();
+            let sorted = sort_by_preference(&permuted);
+            assert_eq!(sorted, baseline_sorted, "Sorting should be stable regardless of input order for the 3-case scenario");
         }
     }
 
