@@ -40,6 +40,12 @@ For Node.js users, the bindings are available as npm package. Install using:
 npm install @hemspzoo/fsct-lib
 ```
 
+## Documentation
+
+- Active player selection (authoritative): see docs/active_player_selection.md
+- Proposed architecture and background: see docs/proposed_architecture.md
+- Device management overview: see docs/device_management.md
+
 ## Building the Project
 
 Make sure you have Rust installed. To build the Rust library, run:

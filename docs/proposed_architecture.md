@@ -1,5 +1,7 @@
 # Proposed Architecture: Event-driven Player Manager and Orchestrator
 
+Status: Draft/proposal. For the authoritative, implementation-aligned selection behavior, see docs/active_player_selection.md. Where this document conflicts with that one, the active_player_selection.md document prevails.
+
 ## Current Architecture
 
 The current architecture has these key components:
@@ -129,6 +131,7 @@ With this setup, Player Manager remains a pure store/event source and does not n
 2. Player without assigned device
    - Orchestrator selects the currently active player among unassigned players (e.g., last_active, highest_priority, explicit focus). The chosen state is then propagated to all devices with no assigned player, using PlayerStateApplier to apply per-device.
    - Concrete propagation requires the orchestrator to know the set of unassigned devices; this project keeps that logic outside of Player Manager for clarity.
+   - Note (current implementation): There is no separate global "general group" selection memory. Each unassigned device makes its selection independently using the comparator described in docs/active_player_selection.md. In practice, multiple devices often converge on the same player due to identical inputs.
 
 ### Synchronization considerations and potential problems
 - Contention on Player Manager state: Guarded by a mutex per player and a global players map. Keep lock hold times short; do not perform device I/O while holding locks. The proposed applier ensures device I/O is outside Player Manager locks.
