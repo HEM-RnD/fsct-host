@@ -430,6 +430,72 @@ mod tests {
     use uuid::Uuid;
     use crate::definitions::FsctStatus;
 
+    // ----------------- Helpers for selection testing -----------------
+    fn fold_best(items: &[PlayerSelectionParams]) -> PlayerSelectionParams {
+        let mut current: Option<PlayerSelectionParams> = None;
+        for cand in items {
+            if is_better_selection(cand, &current) {
+                current = Some(*cand);
+            }
+        }
+        current.expect("fold_best requires at least one item")
+    }
+
+    fn permute_indices_rec(n: usize, current: &mut Vec<usize>, used: &mut Vec<bool>, out: &mut Vec<Vec<usize>>) {
+        if current.len() == n {
+            out.push(current.clone());
+            return;
+        }
+        for i in 0..n {
+            if !used[i] {
+                used[i] = true;
+                current.push(i);
+                permute_indices_rec(n, current, used, out);
+                current.pop();
+                used[i] = false;
+            }
+        }
+    }
+
+    fn permute_indices(n: usize) -> Vec<Vec<usize>> {
+        let mut out = Vec::new();
+        let mut used = vec![false; n];
+        let mut cur = Vec::with_capacity(n);
+        permute_indices_rec(n, &mut cur, &mut used, &mut out);
+        out
+    }
+
+    fn selection_is_order_independent(items: &[PlayerSelectionParams]) -> (bool, PlayerSelectionParams) {
+        let base = fold_best(items);
+        for perm in permute_indices(items.len()) {
+            let permuted: Vec<PlayerSelectionParams> = perm.iter().map(|&i| items[i]).collect();
+            let w = fold_best(&permuted);
+            if w != base {
+                return (false, base);
+            }
+        }
+        (true, base)
+    }
+
+    // Physically sort by repeatedly picking the best remaining (deterministic for tests)
+    fn sort_by_preference(items: &[PlayerSelectionParams]) -> Vec<PlayerSelectionParams> {
+        let mut rest: Vec<PlayerSelectionParams> = items.to_vec();
+        let mut out = Vec::with_capacity(rest.len());
+        while !rest.is_empty() {
+            // find index of the best element
+            let mut best_idx = 0;
+            let mut best_opt: Option<PlayerSelectionParams> = None;
+            for (i, cand) in rest.iter().enumerate() {
+                if is_better_selection(cand, &best_opt) {
+                    best_opt = Some(*cand);
+                    best_idx = i;
+                }
+            }
+            out.push(rest.remove(best_idx));
+        }
+        out
+    }
+
     #[derive(Debug, Clone, PartialEq)]
     struct ApplyCall {
         device: ManagedDeviceId,
@@ -903,5 +969,63 @@ mod tests {
         for (i, w) in winners.iter().enumerate() {
             assert_eq!(*w, first, "Different winner for permutation {} test: got {:?} vs {:?}", i, w, first);
         }
+    }
+
+    #[test]
+    fn is_better_selection_order_independence_six_players_and_sort_stability() {
+        let p_a_playing_assigned_here = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+        let p_b_user_selected_idle   = PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected,         is_last_selected: false };
+        let p_c_playing_unassigned   = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned,           is_last_selected: false };
+        let p_d_playing_assigned_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let p_e_idle_assigned_here   = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+        let p_f_idle_unassigned_last = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned,           is_last_selected: true };
+
+        let items = vec![
+            p_a_playing_assigned_here,
+            p_b_user_selected_idle,
+            p_c_playing_unassigned,
+            p_d_playing_assigned_other,
+            p_e_idle_assigned_here,
+            p_f_idle_unassigned_last,
+        ];
+
+        // Check order independence of the winner
+        let (stable, base_winner) = selection_is_order_independent(&items);
+        assert!(stable, "Winner should be the same for all permutations");
+        assert_eq!(base_winner, p_a_playing_assigned_here, "Expected the strongest candidate to win");
+
+        // Check that the full sorting is stable across permutations (deterministic for this set)
+        let baseline_sorted = sort_by_preference(&items);
+        for perm in permute_indices(items.len()) {
+            let permuted: Vec<PlayerSelectionParams> = perm.iter().map(|&i| items[i]).collect();
+            let sorted = sort_by_preference(&permuted);
+            assert_eq!(sorted, baseline_sorted, "Sorting should be stable regardless of input order");
+        }
+    }
+
+    #[test]
+    fn is_better_selection_tie_broken_by_last_selected() {
+        // All identical except is_last_selected
+        let x1 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+        let x2 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: true  }; // should win
+        let x3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+        let x4 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+        let items = vec![x1, x2, x3, x4];
+
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable, "Tie breaker by last selected must be order independent");
+        assert_eq!(winner, x2, "The one flagged as last selected should be preferred among equals");
+    }
+
+    #[test]
+    fn is_better_selection_penalizes_assigned_to_other_device() {
+        // Playing but assigned elsewhere should lose to an idle unassigned
+        let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let idle_unassigned = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+        let items = vec![playing_other, idle_unassigned];
+
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, idle_unassigned, "Idle unassigned should be preferred over playing assigned to other device");
     }
 }
