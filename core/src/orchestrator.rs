@@ -58,7 +58,7 @@ struct RegisteredPlayer {
 #[derive(Debug, Clone, Default)]
 struct ConnectedDevice {
     player_id: Option<ManagedPlayerId>,
-    requires_update: bool
+    requires_update: bool,
 }
 
 
@@ -210,7 +210,8 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         }
 
         self.update_selected_players_for_devices();
-        self.apply_on_devices_requiring_update().await;    }
+        self.apply_on_devices_requiring_update().await;
+    }
 
     async fn handle_player_unassigned(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) {
         debug!("Unassigned: player {} -/-> device {}", player_id, device_id);
@@ -290,18 +291,18 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         let last_selected = self.connected_devices.get(device_id)?.lock().unwrap().player_id.clone();
         for (player_id, player) in self.players.iter() {
             let assignment_state = if player.assigned_device.as_ref() == Some(device_id) {
-                PlayerAssignmentState::AssignedToThisDevice
+                Assignment::AssignedToThisDevice
             } else if player.is_assigned_device_attached {
-                PlayerAssignmentState::AssignedToOtherDevice
+                Assignment::AssignedToOtherDevice
             } else if Some(player_id) == self.preferred_player.as_ref() {
-                PlayerAssignmentState::UserSelected
+                Assignment::UserSelected
             } else {
-                PlayerAssignmentState::Unassigned
+                Assignment::Unassigned
             };
             let player_selection_params = PlayerSelectionParams {
                 is_playing: player.state.status == FsctStatus::Playing,
                 is_last_selected: last_selected.map(|id| id == *player_id).unwrap_or(false),
-                assignment_state,
+                assignment: assignment_state,
             };
             if is_better_selection(&player_selection_params, &selected_params) {
                 selected = Some(*player_id);
@@ -356,7 +357,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
 
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd)]
-enum PlayerAssignmentState {
+enum Assignment {
     /// Player is assigned to a connected device, but it is not this device
     AssignedToOtherDevice,
     /// Player is not assigned to any device nor preferred by OS/user
@@ -367,6 +368,7 @@ enum PlayerAssignmentState {
     AssignedToThisDevice,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PlayerSelectionParams {
     // is_preferred: bool, // it means that player is prefered by user, even over playing player, but it only can be true
     // when there is no other player assigned to this device, which means that assigned to this device has higher
@@ -374,7 +376,7 @@ struct PlayerSelectionParams {
     is_playing: bool, // we prefer playing players than assigned to this device
     // is_assigned_to_this_device: bool, // but we prefer players assigned to this device when playing
     // is_assigned_to_connected_device: bool, // we don't prefer players assigned to other devices
-    assignment_state: PlayerAssignmentState,
+    assignment: Assignment,
     is_last_selected: bool, // we prefer last selected player over others, but only when other options are the same
 }
 
@@ -384,35 +386,41 @@ fn is_better_selection(player_params: &PlayerSelectionParams, current_selection:
         (None, _) => true, // no selection yet, so it's the best
         (Some(current), player) => {
             // when players are in identical situation, we prefer previously selected player over others
-            if player.assignment_state == current.assignment_state && player.is_playing == current.is_playing {
+            if player.assignment == current.assignment && player.is_playing == current.is_playing {
                 return player.is_last_selected;
             }
             // when one is playing, and another is not, and they are in identical state, we prefer playing player over
             // others
-            if player.assignment_state == current.assignment_state {
+            if player.assignment == current.assignment {
                 return player.is_playing;
             }
-            // when both are playing or both are not playing, we prefer in order of assignment state
+            // when both are playing or both are not playing
             if player.is_playing == current.is_playing {
-                return player.assignment_state > current.assignment_state;
+                if !current.is_playing && current.assignment == Assignment::UserSelected {
+                    return false; // prefer user selected over unassigned, when both not playing
+                }
+                if !player.is_playing && player.assignment == Assignment::UserSelected {
+                    return true; // prefer user selected over unassigned, when both not playing
+                }
+                return player.assignment > current.assignment;
             }
 
             // when one is playing and another is not
-            match (player.is_playing, player.assignment_state, current.assignment_state) {
+            match (player.is_playing, player.assignment, current.assignment) {
                 // prefer user selected over unassigned, even when playing
-                (true, PlayerAssignmentState::Unassigned, PlayerAssignmentState::UserSelected) => false,
+                (true, Assignment::Unassigned, Assignment::UserSelected) => false,
 
                 // prefer not playing over assigned to other device, even when playing
-                (true, PlayerAssignmentState::AssignedToOtherDevice, _) => false,
+                (true, Assignment::AssignedToOtherDevice, _) => false,
 
                 // ok, in other cases, playing is better
                 (true, _, _) => true,
 
                 // prefer user selected over unassigned, even when not playing
-                (false, PlayerAssignmentState::UserSelected, PlayerAssignmentState::Unassigned) => true,
+                (false, Assignment::UserSelected, Assignment::Unassigned) => true,
 
                 // prefer not playing over assigned to other device
-                (false, _, PlayerAssignmentState::AssignedToOtherDevice) => true,
+                (false, _, Assignment::AssignedToOtherDevice) => true,
 
                 // ok, in other cases, playing is better, so we leave it as it is
                 (false, _, _) => false,
@@ -850,5 +858,59 @@ mod tests {
         assert!(calls.iter().any(|c| c.device == d1 && c.state == s1));
         assert!(calls.iter().any(|c| c.device == d2 && c.state == s2));
         let _ = handle.shutdown().await;
+    }
+
+    #[test]
+    fn is_better_selection_order_independence_three_cases() {
+        // Build three elements as requested:
+        // 1) playing unassigned
+        // 2) non-playing user-selected
+        // 3) non-playing assigned to current device
+        let a_playing_unassigned = PlayerSelectionParams {
+            is_playing: true,
+            assignment: Assignment::Unassigned,
+            is_last_selected: false,
+        };
+        let b_non_playing_user_selected = PlayerSelectionParams {
+            is_playing: false,
+            assignment: Assignment::UserSelected,
+            is_last_selected: false,
+        };
+        let c_non_playing_assigned_here = PlayerSelectionParams {
+            is_playing: false,
+            assignment: Assignment::AssignedToThisDevice,
+            is_last_selected: false,
+        };
+
+        let items = [a_playing_unassigned, b_non_playing_user_selected, c_non_playing_assigned_here];
+
+        // Generate all 6 permutations of indices 0,1,2
+        let perms: Vec<[usize; 3]> = vec![
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+
+        // For each permutation, run fold using is_better_selection
+        let mut winners: Vec<PlayerSelectionParams> = Vec::new();
+        for perm in perms {
+            let mut current: Option<PlayerSelectionParams> = None;
+            for &idx in &perm {
+                let candidate = items[idx];
+                if is_better_selection(&candidate, &current) {
+                    current = Some(candidate);
+                }
+            }
+            winners.push(current.unwrap());
+        }
+
+        // Compare whether all permutations gave the same result
+        let first = winners[0];
+        for (i, w) in winners.iter().enumerate() {
+            assert_eq!(*w, first, "Different winner for permutation {} test: got {:?} vs {:?}", i, w, first);
+        }
     }
 }
