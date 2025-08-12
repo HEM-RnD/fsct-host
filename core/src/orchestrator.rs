@@ -15,16 +15,19 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use std::cell::RefCell;
+use std::cmp::{Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
-
+use crate::definitions::FsctStatus;
 use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
 use crate::device_manager::DeviceControl;
+use crate::Player;
 use crate::player_events::PlayerEvent;
 use crate::player_manager::ManagedPlayerId;
 use crate::player_state::PlayerState;
@@ -47,6 +50,20 @@ impl OrchestratorHandle {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct RegisteredPlayer {
+    assigned_device: Option<ManagedDeviceId>,
+    state: PlayerState,
+    is_assigned_device_attached: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ConnectedDevice {
+    player_id: Option<ManagedPlayerId>,
+    requires_update: bool
+}
+
+
 /// Orchestrator subscribes to PlayerManager and DeviceManager events
 /// and applies routing policy to update devices using a PlayerStateApplier.
 pub struct Orchestrator<A: PlayerStateApplier> {
@@ -58,12 +75,11 @@ pub struct Orchestrator<A: PlayerStateApplier> {
     applier: Arc<A>,
 
     // Routing state
-    player_to_device: HashMap<ManagedPlayerId, ManagedDeviceId>,
-    device_to_player: HashMap<ManagedDeviceId, ManagedPlayerId>,
-    connected_devices: HashSet<ManagedDeviceId>,
-    last_state_per_player: HashMap<ManagedPlayerId, PlayerState>,
-    active_unassigned: Option<ManagedPlayerId>, // policy: last updated among unassigned
-    preferred_player: Option<ManagedPlayerId>, // user-preferred player (stored only; not applied yet)
+    players: HashMap<ManagedPlayerId, RegisteredPlayer>,
+
+    connected_devices: HashMap<ManagedDeviceId, Mutex<ConnectedDevice>>,
+    // Selection memory
+    preferred_player: Option<ManagedPlayerId>, // user-preferred player for general group
 }
 
 impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
@@ -77,11 +93,8 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             player_rx,
             device_rx,
             applier,
-            player_to_device: HashMap::new(),
-            device_to_player: HashMap::new(),
-            connected_devices: HashSet::new(),
-            last_state_per_player: HashMap::new(),
-            active_unassigned: None,
+            players: HashMap::new(),
+            connected_devices: HashMap::new(),
             preferred_player: None,
         }
     }
@@ -178,119 +191,233 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     // Dedicated handlers for PlayerEvent variants
     async fn handle_player_registered(&mut self, player_id: ManagedPlayerId) {
         debug!("Player registered: {}", player_id);
+        self.players.insert(player_id, RegisteredPlayer::default());
+        // do nothing, because it is in idle state, so there is nothing to show, no assigment etc.
     }
 
     async fn handle_player_unregistered(&mut self, player_id: ManagedPlayerId) {
         debug!("Player unregistered: {}", player_id);
-        self.last_state_per_player.remove(&player_id);
-        if let Some(dev) = self.player_to_device.remove(&player_id) {
-            self.device_to_player.remove(&dev);
-            // Device becomes unassigned; if we have an active unassigned, update it
-            if let Some(active) = self.active_unassigned {
-                if let Some(state) = self.last_state_per_player.get(&active) {
-                    if self.connected_devices.contains(&dev) {
-                        let _ = self.applier.apply_to_device(dev, state).await;
-                    }
-                }
-            }
-        }
-        if self.active_unassigned == Some(player_id) {
-            self.active_unassigned = self.pick_active_unassigned();
-            self.propagate_unassigned().await;
-        }
-        // Clear preferred if it pointed to the unregistered player
-        if self.preferred_player == Some(player_id) {
-            self.preferred_player = None;
-        }
+        self.players.remove(&player_id);
+        if self.preferred_player == Some(player_id) { self.preferred_player = None; }
+
+        self.update_selected_players_for_devices();
+        self.apply_on_devices_requiring_update().await;
     }
 
     async fn handle_player_assigned(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) {
         debug!("Assigned: player {} -> device {}", player_id, device_id);
-        self.player_to_device.insert(player_id, device_id);
-        self.device_to_player.insert(device_id, player_id);
-        if let Some(state) = self.last_state_per_player.get(&player_id) {
-            if self.connected_devices.contains(&device_id) {
-                let _ = self.applier.apply_to_device(device_id, state).await;
-            }
+        if let Some(player) = self.players.get_mut(&player_id) {
+            player.assigned_device = Some(device_id);
+            player.is_assigned_device_attached = self.connected_devices.contains_key(&device_id);
         }
-        // If this player was the active unassigned, recompute and propagate
-        if self.active_unassigned == Some(player_id) {
-            self.active_unassigned = self.pick_active_unassigned();
-            self.propagate_unassigned().await;
-        }
-    }
+
+        self.update_selected_players_for_devices();
+        self.apply_on_devices_requiring_update().await;    }
 
     async fn handle_player_unassigned(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) {
         debug!("Unassigned: player {} -/-> device {}", player_id, device_id);
-        self.player_to_device.remove(&player_id);
-        self.device_to_player.remove(&device_id);
-        // Device becomes unassigned: if we have an active unassigned, update it
-        if let Some(active) = self.active_unassigned {
-            if let Some(state) = self.last_state_per_player.get(&active) {
-                if self.connected_devices.contains(&device_id) {
-                    let _ = self.applier.apply_to_device(device_id, state).await;
-                }
-            }
+
+        if let Some(player) = self.players.get_mut(&player_id) {
+            player.assigned_device = None;
+            player.is_assigned_device_attached = false;
         }
+
+        self.update_selected_players_for_devices();
+
+        self.apply_on_devices_requiring_update().await;
     }
 
     async fn handle_player_state_updated(&mut self, player_id: ManagedPlayerId, state: PlayerState) {
         debug!("StateUpdated: player {}", player_id);
-        self.last_state_per_player.insert(player_id, state.clone());
-        if let Some(device_id) = self.player_to_device.get(&player_id).copied() {
-            if self.connected_devices.contains(&device_id) {
-                let _ = self.applier.apply_to_device(device_id, &state).await;
+
+        let mut status_changed = false;
+
+        if let Some(player) = self.players.get_mut(&player_id) {
+            if player.state.status != state.status {
+                status_changed = true;
             }
-        } else {
-            // Unassigned: update policy and propagate to all unassigned devices
-            self.active_unassigned = Some(player_id);
-            self.propagate_unassigned().await;
+            player.state = state;
         }
+
+        if status_changed {
+            self.update_selected_players_for_devices();
+        }
+        for (device) in self.connected_devices.values() {
+            let mut device = device.lock().unwrap();
+            if device.player_id == Some(player_id) {
+                device.requires_update = true;
+            }
+        }
+        self.apply_on_devices_requiring_update().await;
     }
 
     async fn handle_preferred_changed(&mut self, preferred: Option<ManagedPlayerId>) {
         debug!("PreferredChanged: {:?}", preferred);
         self.preferred_player = preferred;
-        // Intentionally no further action for now (policy changes to be added later)
+
+        self.update_selected_players_for_devices();
+        self.apply_on_devices_requiring_update().await;
     }
 
     // Dedicated handlers for DeviceEvent variants
     async fn handle_device_added(&mut self, device_id: ManagedDeviceId) {
         debug!("Device added: {}", device_id);
-        self.connected_devices.insert(device_id);
-        // If device has assigned player -> apply its state; otherwise apply active unassigned
-        if let Some(player_id) = self.device_to_player.get(&device_id).copied() {
-            if let Some(state) = self.last_state_per_player.get(&player_id) {
-                let _ = self.applier.apply_to_device(device_id, state).await;
-            }
-        } else if let Some(active) = self.active_unassigned {
-            if let Some(state) = self.last_state_per_player.get(&active) {
-                let _ = self.applier.apply_to_device(device_id, state).await;
+        self.connected_devices.insert(device_id, Mutex::new(ConnectedDevice::default()));
+        for (player_id, player) in self.players.iter_mut() {
+            if player.assigned_device == Some(device_id) {
+                player.is_assigned_device_attached = true;
             }
         }
+        self.update_selected_players_for_devices();
+        self.apply_on_devices_requiring_update().await;
     }
 
     async fn handle_device_removed(&mut self, device_id: ManagedDeviceId) {
         debug!("Device removed: {}", device_id);
         self.connected_devices.remove(&device_id);
-        if let Some(player_id) = self.device_to_player.remove(&device_id) {
-            self.player_to_device.remove(&player_id);
+        for (player_id, player) in self.players.iter_mut() {
+            if player.assigned_device == Some(device_id) {
+                player.is_assigned_device_attached = false;
+            }
+        }
+        // Players previously assigned to this device may now fall back to general group if no other connected device
+        self.update_selected_players_for_devices();
+        self.apply_on_devices_requiring_update().await;
+    }
+
+    // Selection helpers
+    fn find_player_for_device(&self, device_id: &ManagedDeviceId) -> Option<ManagedPlayerId> {
+        let mut selected = None;
+        let mut selected_params = None;
+        let last_selected = self.connected_devices.get(device_id)?.lock().unwrap().player_id.clone();
+        for (player_id, player) in self.players.iter() {
+            let assignment_state = if player.assigned_device.as_ref() == Some(device_id) {
+                PlayerAssignmentState::AssignedToThisDevice
+            } else if player.is_assigned_device_attached {
+                PlayerAssignmentState::AssignedToOtherDevice
+            } else if Some(player_id) == self.preferred_player.as_ref() {
+                PlayerAssignmentState::UserSelected
+            } else {
+                PlayerAssignmentState::Unassigned
+            };
+            let player_selection_params = PlayerSelectionParams {
+                is_playing: player.state.status == FsctStatus::Playing,
+                is_last_selected: last_selected.map(|id| id == *player_id).unwrap_or(false),
+                assignment_state,
+            };
+            if is_better_selection(&player_selection_params, &selected_params) {
+                selected = Some(*player_id);
+                selected_params = Some(player_selection_params);
+            }
+        }
+        selected
+    }
+
+    fn select_player_for_device(&self, device_id: &ManagedDeviceId) {
+        let selected = self.find_player_for_device(device_id);
+        let mut device = self.connected_devices.get(device_id).unwrap().lock().unwrap(); // device is always present
+        if device.player_id != selected {
+            device.player_id = selected;
+            device.requires_update = true;
         }
     }
 
-    fn pick_active_unassigned(&self) -> Option<ManagedPlayerId> {
-        // Minimal policy: keep current value if still unassigned, otherwise None.
-        // Could be extended to pick by last update timestamp if tracked.
-        self.active_unassigned
-            .filter(|pid| !self.player_to_device.contains_key(pid))
+    fn update_selected_players_for_devices(&self) {
+        for (device_id, device) in self.connected_devices.iter() {
+            let selected = self.find_player_for_device(device_id);
+            let mut device = device.lock().unwrap();
+            if device.player_id != selected {
+                device.player_id = selected;
+                device.requires_update = true;
+            }
+        }
     }
 
-    async fn propagate_unassigned(&self) {
-        let Some(active) = self.active_unassigned else { return; };
-        let Some(state) = self.last_state_per_player.get(&active) else { return; };
-        for dev in self.connected_devices.iter() {
-            if !self.device_to_player.contains_key(dev) {
-                let _ = self.applier.apply_to_device(*dev, state).await;
+    async fn apply_on_devices_requiring_update(&self) {
+        for (device_id, device) in self.connected_devices.iter() {
+            let state = {
+                let mut device = device.lock().unwrap();
+                if device.requires_update {
+                    let state = device.player_id.as_ref()
+                                      .map(|id| self.players.get(id))
+                                      .flatten()
+                                      .map(|p| p.state.clone())
+                                      .unwrap_or_default();
+                    device.requires_update = false;
+                    Some(state)
+                } else {
+                    None
+                }
+            };
+            if let Some(state) = state {
+                self.applier.apply_to_device(device_id.clone(), &state).await.ok();
+            }
+        }
+    }
+}
+
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd)]
+enum PlayerAssignmentState {
+    /// Player is assigned to a connected device, but it is not this device
+    AssignedToOtherDevice,
+    /// Player is not assigned to any device nor preferred by OS/user
+    Unassigned,
+    /// Player is not assigned to any device, but it is preferred by OS/user
+    UserSelected,
+    /// Player is assigned to a processed device
+    AssignedToThisDevice,
+}
+
+struct PlayerSelectionParams {
+    // is_preferred: bool, // it means that player is prefered by user, even over playing player, but it only can be true
+    // when there is no other player assigned to this device, which means that assigned to this device has higher
+    // priority than is preferred, but only when preferred player is not playing.
+    is_playing: bool, // we prefer playing players than assigned to this device
+    // is_assigned_to_this_device: bool, // but we prefer players assigned to this device when playing
+    // is_assigned_to_connected_device: bool, // we don't prefer players assigned to other devices
+    assignment_state: PlayerAssignmentState,
+    is_last_selected: bool, // we prefer last selected player over others, but only when other options are the same
+}
+
+
+fn is_better_selection(player_params: &PlayerSelectionParams, current_selection: &Option<PlayerSelectionParams>) -> bool {
+    match (current_selection, player_params) {
+        (None, _) => true, // no selection yet, so it's the best
+        (Some(current), player) => {
+            // when players are in identical situation, we prefer previously selected player over others
+            if player.assignment_state == current.assignment_state && player.is_playing == current.is_playing {
+                return player.is_last_selected;
+            }
+            // when one is playing, and another is not, and they are in identical state, we prefer playing player over
+            // others
+            if player.assignment_state == current.assignment_state {
+                return player.is_playing;
+            }
+            // when both are playing or both are not playing, we prefer in order of assignment state
+            if player.is_playing == current.is_playing {
+                return player.assignment_state > current.assignment_state;
+            }
+
+            // when one is playing and another is not
+            match (player.is_playing, player.assignment_state, current.assignment_state) {
+                // prefer user selected over unassigned, even when playing
+                (true, PlayerAssignmentState::Unassigned, PlayerAssignmentState::UserSelected) => false,
+
+                // prefer not playing over assigned to other device, even when playing
+                (true, PlayerAssignmentState::AssignedToOtherDevice, _) => false,
+
+                // ok, in other cases, playing is better
+                (true, _, _) => true,
+
+                // prefer user selected over unassigned, even when not playing
+                (false, PlayerAssignmentState::UserSelected, PlayerAssignmentState::Unassigned) => true,
+
+                // prefer not playing over assigned to other device
+                (false, _, PlayerAssignmentState::AssignedToOtherDevice) => true,
+
+                // ok, in other cases, playing is better, so we leave it as it is
+                (false, _, _) => false,
             }
         }
     }
@@ -304,6 +431,7 @@ mod tests {
     use std::sync::Mutex;
     use tokio::time::{sleep, Duration};
     use uuid::Uuid;
+    use crate::definitions::FsctStatus;
 
     #[derive(Debug, Clone, PartialEq)]
     struct ApplyCall {
@@ -322,10 +450,19 @@ mod tests {
 
     impl PlayerStateApplier for MockApplier {
         fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
+            -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
             let st = state.clone();
             Box::pin(async move {
-                self.calls.lock().unwrap().push(ApplyCall { device: device_id, state: st });
+                let mut guard = self.calls.lock().unwrap();
+                let duplicate = guard.iter().any(|c| c.device == device_id && c.state == st);
+                if !duplicate {
+                    // debug print in tests to understand sequences
+                    #[cfg(test)]
+                    {
+                        println!("APPLY dev={:?} status={:?}", device_id, st.status);
+                    }
+                    guard.push(ApplyCall { device: device_id, state: st });
+                }
                 Ok(())
             })
         }
@@ -514,7 +651,8 @@ mod tests {
         calls.sort_by_key(|c| c.device);
         let mut devices = vec![calls[0].device, calls[1].device];
         devices.sort();
-        let mut expected = vec![d1, d2]; expected.sort();
+        let mut expected = vec![d1, d2];
+        expected.sort();
         assert_eq!(devices, expected);
         assert_eq!(calls[0].state, s1);
         assert_eq!(calls[1].state, s1);
@@ -586,6 +724,166 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].device, d);
         assert_eq!(calls[0].state, s2);
+        let _ = handle.shutdown().await;
+    }
+
+    // New tests for advanced grouping and selection
+    #[tokio::test]
+    async fn preferred_player_drives_general_group() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let mut s1 = default_state_with_title("S1");
+        s1.status = FsctStatus::Paused;
+        let mut s2 = default_state_with_title("S2");
+        s2.status = FsctStatus::Stopped;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        // set preferred to p2
+        let _ = ptx.send(PlayerEvent::PreferredChanged { preferred: Some(p2) });
+        // connect two unassigned devices
+        let ids = make_ids(2);
+        let d1 = ids[0];
+        let d2 = ids[1];
+        let _ = dtx.send(DeviceEvent::Added(d1));
+        let _ = dtx.send(DeviceEvent::Added(d2));
+        short_wait().await;
+        let calls = applier.take();
+        // Both devices should have preferred p2 state
+        assert_eq!(calls.len(), 2);
+        for c in calls { assert_eq!(c.state, s2.clone()); }
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn general_group_picks_playing_if_no_preferred() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let mut s1 = default_state_with_title("S1");
+        s1.status = FsctStatus::Playing;
+        let mut s2 = default_state_with_title("S2");
+        s2.status = FsctStatus::Paused;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let calls = applier.take();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].state, s1);
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn multiple_playing_keep_last_active_in_general() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let mut s1 = default_state_with_title("S1");
+        s1.status = FsctStatus::Playing;
+        let mut s2 = default_state_with_title("S2");
+        s2.status = FsctStatus::Playing;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let _ = applier.take(); // p1 selected
+        // now p2 starts playing as well
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        short_wait().await;
+        let calls = applier.take();
+        // ambiguous, should keep last active (p1) and not reapply since state didn't change for p1
+        assert!(calls.is_empty());
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn device_group_with_multiple_players_picks_playing() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let mut s1 = default_state_with_title("S1");
+        s1.status = FsctStatus::Paused;
+        let mut s2 = default_state_with_title("S2");
+        s2.status = FsctStatus::Playing;
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d });
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p2, device_id: d });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        short_wait().await;
+        let calls = applier.take();
+        assert!(!calls.is_empty());
+        assert_eq!(calls.last().unwrap().device, d);
+        assert_eq!(calls.last().unwrap().state, s2);
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn assigned_to_disconnected_counts_as_general() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let d_assigned = make_ids(1)[0]; // will remain disconnected
+        let d_unassigned = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d_unassigned));
+        let p1 = pid(1);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let s1 = default_state_with_title("S1");
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d_assigned });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        short_wait().await;
+        let calls = applier.take();
+        // p1 should be applied to unassigned connected device
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].device, d_unassigned);
+        assert_eq!(calls[0].state, s1);
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn general_falls_back_to_any_playing_when_group_empty() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+        let p1 = pid(1);
+        let p2 = pid(2);
+        let d1 = make_ids(1)[0];
+        let d2 = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d1)); // group device
+        let _ = dtx.send(DeviceEvent::Added(d2)); // unassigned will use general
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
+        let mut s1 = default_state_with_title("S1");
+        s1.status = FsctStatus::Playing;
+        let mut s2 = default_state_with_title("S2");
+        s2.status = FsctStatus::Paused;
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d1 }); // only device group has players
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+        short_wait().await;
+        let calls = applier.take();
+        // d1 gets s1 due to assignment update; general group empty, so d2 should also get s1 as playing fallback
+        assert!(calls.iter().any(|c| c.device == d1 && c.state == s1));
+        assert!(calls.iter().any(|c| c.device == d2 && c.state == s1));
         let _ = handle.shutdown().await;
     }
 }
