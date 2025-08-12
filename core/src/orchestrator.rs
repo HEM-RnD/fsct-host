@@ -389,41 +389,32 @@ fn is_better_selection(player_params: &PlayerSelectionParams, current_selection:
             if player.assignment == current.assignment && player.is_playing == current.is_playing {
                 return player.is_last_selected;
             }
-            // when one is playing, and another is not, and they are in identical state, we prefer playing player over
-            // others
+            // when one is playing, and another is not, and they are in identical state, we prefer playing one
             if player.assignment == current.assignment {
                 return player.is_playing;
             }
-            // when both are playing or both are not playing
-            if player.is_playing == current.is_playing {
-                if !current.is_playing && current.assignment == Assignment::UserSelected {
-                    return false; // prefer user selected over unassigned, when both not playing
-                }
-                if !player.is_playing && player.assignment == Assignment::UserSelected {
-                    return true; // prefer user selected over unassigned, when both not playing
-                }
-                return player.assignment > current.assignment;
-            }
 
-            // when one is playing and another is not
-            match (player.is_playing, player.assignment, current.assignment) {
+            // the rest cases are more complex, so we need to compare them:
+            match (player.is_playing, player.assignment, current.is_playing, current.assignment) {
                 // prefer user selected over unassigned, even when playing
-                (true, Assignment::Unassigned, Assignment::UserSelected) => false,
+                (true, Assignment::Unassigned, false, Assignment::UserSelected) => false,
+                (false, Assignment::UserSelected, true, Assignment::Unassigned) => true,
 
                 // prefer not playing over assigned to other device, even when playing
-                (true, Assignment::AssignedToOtherDevice, _) => false,
+                (true, Assignment::AssignedToOtherDevice, false,  _) => false,
+                (false, _, true, Assignment::AssignedToOtherDevice) => true,
 
                 // ok, in other cases, playing is better
-                (true, _, _) => true,
+                (true, _, false, _) => true,
+                (false, _, true, _) => false,
 
-                // prefer user selected over unassigned, even when not playing
-                (false, Assignment::UserSelected, Assignment::Unassigned) => true,
+                // prefer user selected over others, when not playing
+                (false, Assignment::UserSelected, false, _) => true,
+                (false, _, false, Assignment::UserSelected) => false,
 
-                // prefer not playing over assigned to other device
-                (false, _, Assignment::AssignedToOtherDevice) => true,
-
-                // ok, in other cases, playing is better, so we leave it as it is
-                (false, _, _) => false,
+                // the rest of cases includes only situations when both players are playing or both are not playing,
+                // so we can compare assignments directly
+                (_, player_assignment, _, current_assignment) => player_assignment > current_assignment,
             }
         }
     }
