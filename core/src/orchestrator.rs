@@ -312,15 +312,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         selected
     }
 
-    fn select_player_for_device(&self, device_id: &ManagedDeviceId) {
-        let selected = self.find_player_for_device(device_id);
-        let mut device = self.connected_devices.get(device_id).unwrap().lock().unwrap(); // device is always present
-        if device.player_id != selected {
-            device.player_id = selected;
-            device.requires_update = true;
-        }
-    }
-
     fn update_selected_players_for_devices(&self) {
         for (device_id, device) in self.connected_devices.iter() {
             let selected = self.find_player_for_device(device_id);
@@ -1105,5 +1096,22 @@ mod tests {
             let sorted = sort_by_preference(&permuted);
             assert_eq!(sorted, baseline_sorted, "Sorting should be stable for the 4-player nuanced set");
         }
+    }
+
+    #[test]
+    fn is_better_selection_all_assigned_to_other_device_picks_playing() {
+        // All candidates are AssignedToOtherDevice; playing should win even if an idle one was last selected
+        let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let idle_other_1 = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let idle_other_2_last = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true };
+        let idle_other_3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+        let items = vec![idle_other_1, playing_other, idle_other_2_last, idle_other_3];
+
+        let (stable, winner) = selection_is_order_independent(&items);
+        assert!(stable);
+        assert_eq!(winner, playing_other, "Among candidates all assigned to other devices, the playing one should win");
+
+        let sorted = sort_by_preference(&items);
+        assert_eq!(sorted[0], playing_other);
     }
 }
