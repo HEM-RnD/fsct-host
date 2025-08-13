@@ -18,14 +18,11 @@
 use std::future::Future;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use futures::future::join_all;
 
 /// A handle passed to background tasks that lets them observe a stop/shutdown request.
 ///
 /// It wraps a oneshot Receiver and provides a mutable reference for use in select! statements.
-use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
 pub struct StopHandle {
     shutdown_rx: oneshot::Receiver<()>,
 }
@@ -70,31 +67,20 @@ impl StopHandle {
 /// A unified handle for background service tasks that support cooperative shutdown and abort.
 pub struct ServiceHandle {
     join: JoinHandle<()>,
-    shutdown_tx: Option<oneshot::Sender<()>>,
+    shutdown_tx: oneshot::Sender<()>,
 }
 
 impl ServiceHandle {
     /// Construct a new ServiceHandle from a spawned task handle and a oneshot shutdown sender.
     pub fn new(join: JoinHandle<()>, shutdown_tx: oneshot::Sender<()>) -> Self {
-        Self { join, shutdown_tx: Some(shutdown_tx) }
+        Self { join, shutdown_tx: shutdown_tx }
     }
 
-    /// Request cooperative shutdown signal without awaiting task completion.
-    pub fn request_shutdown(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-    }
-
-    /// Await task completion without sending a shutdown signal.
-    pub async fn await_join(self) -> Result<(), tokio::task::JoinError> {
-        self.join.await
-    }
 
     /// Request cooperative shutdown and await task completion.
     pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
-        self.request_shutdown();
-        self.await_join().await
+        let _ = self.shutdown_tx.send(());
+        self.join.await
     }
 
     /// Forcefully abort the underlying task.
@@ -148,22 +134,8 @@ impl MultiServiceHandle {
     /// Request shutdown for all services, then await their completion.
     /// Returns Ok(()) if all joins succeed; otherwise returns the first JoinError encountered.
     pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
-        // First, request shutdown on all
-        for h in &mut self.handles {
-            h.request_shutdown();
-        }
-        // Then, await all joins, capturing first error if any
-        let mut first_err: Option<tokio::task::JoinError> = None;
-        for h in self.handles.into_iter() {
-            if let Err(e) = h.await_join().await {
-                if first_err.is_none() {
-                    first_err = Some(e);
-                }
-            }
-        }
-        match first_err {
-            Some(e) => Err(e),
-            None => Ok(())
-        }
+        let futures = self.handles.into_iter().map(|h| h.shutdown()).collect::<Vec<_>>();
+        let res = join_all(futures).await;
+        res.into_iter().find(|r| r.is_err()).unwrap_or(Ok(()))
     }
 }
