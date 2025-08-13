@@ -70,19 +70,31 @@ impl StopHandle {
 /// A unified handle for background service tasks that support cooperative shutdown and abort.
 pub struct ServiceHandle {
     join: JoinHandle<()>,
-    shutdown_tx: oneshot::Sender<()>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl ServiceHandle {
     /// Construct a new ServiceHandle from a spawned task handle and a oneshot shutdown sender.
     pub fn new(join: JoinHandle<()>, shutdown_tx: oneshot::Sender<()>) -> Self {
-        Self { join, shutdown_tx }
+        Self { join, shutdown_tx: Some(shutdown_tx) }
+    }
+
+    /// Request cooperative shutdown signal without awaiting task completion.
+    pub fn request_shutdown(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    /// Await task completion without sending a shutdown signal.
+    pub async fn await_join(self) -> Result<(), tokio::task::JoinError> {
+        self.join.await
     }
 
     /// Request cooperative shutdown and await task completion.
-    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        let _ = self.shutdown_tx.send(());
-        self.join.await
+    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+        self.request_shutdown();
+        self.await_join().await
     }
 
     /// Forcefully abort the underlying task.
@@ -106,4 +118,52 @@ where
         f(stop).await;
     });
     ServiceHandle::new(join, shutdown_tx)
+}
+
+/// A container for multiple ServiceHandles with a single shutdown method.
+pub struct MultiServiceHandle {
+    handles: Vec<ServiceHandle>,
+}
+
+impl Default for MultiServiceHandle {
+    fn default() -> Self { Self { handles: Vec::new() } }
+}
+
+impl MultiServiceHandle {
+    /// Create an empty MultiServiceHandle
+    pub fn new() -> Self { Self::default() }
+
+    /// Create with reserved capacity
+    pub fn with_capacity(cap: usize) -> Self { Self { handles: Vec::with_capacity(cap) } }
+
+    /// Add a ServiceHandle to be managed
+    pub fn add(&mut self, handle: ServiceHandle) { self.handles.push(handle); }
+
+    /// Number of contained handles
+    pub fn len(&self) -> usize { self.handles.len() }
+
+    /// Whether there are no handles
+    pub fn is_empty(&self) -> bool { self.handles.is_empty() }
+
+    /// Request shutdown for all services, then await their completion.
+    /// Returns Ok(()) if all joins succeed; otherwise returns the first JoinError encountered.
+    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+        // First, request shutdown on all
+        for h in &mut self.handles {
+            h.request_shutdown();
+        }
+        // Then, await all joins, capturing first error if any
+        let mut first_err: Option<tokio::task::JoinError> = None;
+        for h in self.handles.into_iter() {
+            if let Err(e) = h.await_join().await {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(())
+        }
+    }
 }

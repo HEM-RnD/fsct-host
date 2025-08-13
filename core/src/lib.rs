@@ -54,7 +54,7 @@ pub use orchestrator::Orchestrator;
 // Export device management types
 pub use device_manager::{DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId, DeviceEvent, DeviceManagerError};
 pub use usb_device_watch::run_usb_device_watch;
-pub use service::{ServiceHandle, StopHandle, spawn_service};
+pub use service::{ServiceHandle, StopHandle, spawn_service, MultiServiceHandle};
 
 pub use nusb::DeviceId;
 pub use service_state::FsctServiceState;
