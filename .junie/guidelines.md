@@ -1,5 +1,8 @@
 # FSCT Host Development Guidelines
 
+## Natural Language
+All project documentation and comments are written in English
+
 ## Project Overview
 This is a Rust workspace implementing Ferrum Streaming Control Technology™ (FSCT) for controlling FSCT-compatible audio devices. The project consists of three main components:
 - **core**: Core Rust library with USB communication and device handling
