@@ -93,31 +93,38 @@ impl PlayerManager {
     }
 
     /// Unregisters a player
-    pub async fn unregister_player(&mut self, player_id: ManagedPlayerId) -> Result<(), Error> {
-        let mut players = self.players.lock().unwrap();
-        if let Some(player) = players.remove(&player_id) {
-            // Unassign from device if assigned
-            if let Some(device_id) = player.assigned_device {
-                self.unassign_player_from_device_internal(player_id, device_id).await?;
+    pub async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error> {
+        // Remove the player and capture assigned device without holding the lock across await
+        let assigned_device = {
+            let mut players = self.players.lock().unwrap();
+            if let Some(player) = players.remove(&player_id) {
+                player.assigned_device
+            } else {
+                return Err(anyhow::anyhow!("Player not found"));
             }
-            // If this player was preferred, clear preference and notify
-            let current_pref = self.preferred_player_id.load(Ordering::SeqCst);
-            if current_pref == player_id.get() {
-                let _ = self.preferred_player_id.compare_exchange(player_id.get(), 0, Ordering::SeqCst, Ordering::SeqCst);
-                let _ = self.events_tx.send(PlayerEvent::PreferredChanged { preferred: None });
-            }
-            // Notify listeners
-            let _ = self.events_tx.send(PlayerEvent::Unregistered { player_id });
+        };
 
-            info!("Player {} unregistered", player_id);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Player not found"))
+        // Unassign from device if assigned (no players lock held here)
+        if let Some(device_id) = assigned_device {
+            let _ = self.events_tx.send(PlayerEvent::Unassigned { player_id, device_id });
+            info!("Player {} unassigned from device {}", player_id, device_id);
         }
+
+        // If this player was preferred, clear preference and notify
+        let current_pref = self.preferred_player_id.load(Ordering::SeqCst);
+        if current_pref == player_id.get() {
+            let _ = self.preferred_player_id.compare_exchange(player_id.get(), 0, Ordering::SeqCst, Ordering::SeqCst);
+            let _ = self.events_tx.send(PlayerEvent::PreferredChanged { preferred: None });
+        }
+        // Notify listeners
+        let _ = self.events_tx.send(PlayerEvent::Unregistered { player_id });
+
+        info!("Player {} unregistered", player_id);
+        Ok(())
     }
 
     /// Assigns a player to a device
-    pub async fn assign_player_to_device(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    pub async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         let player_state = {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
@@ -138,7 +145,7 @@ impl PlayerManager {
     }
 
     /// Unassigns a player from a device
-    pub async fn unassign_player_from_device(&mut self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    pub async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
         self.unassign_player_from_device_internal(player_id, device_id).await
     }
 

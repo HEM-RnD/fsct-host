@@ -29,6 +29,7 @@ pub mod player_events;
 pub mod orchestrator;
 mod service_entry;
 pub mod service;
+pub mod driver;
 
 #[deprecated]
 mod devices_watch;
@@ -50,6 +51,9 @@ pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
 pub use player_events::PlayerEvent;
 pub use orchestrator::Orchestrator;
+
+// Export driver abstraction
+pub use driver::{FsctDriver, LocalDriver};
 
 // Export device management types
 pub use device_manager::{DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId, DeviceEvent, DeviceManagerError};
