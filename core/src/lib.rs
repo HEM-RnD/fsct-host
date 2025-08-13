@@ -28,6 +28,7 @@ pub mod player_state_applier;
 pub mod player_events;
 pub mod orchestrator;
 mod service_entry;
+pub mod service;
 
 #[deprecated]
 mod devices_watch;
@@ -48,11 +49,12 @@ pub use player_watch::NoopPlayerEventListener;
 pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
 pub use player_events::PlayerEvent;
-pub use orchestrator::{Orchestrator, OrchestratorHandle};
+pub use orchestrator::Orchestrator;
 
 // Export device management types
 pub use device_manager::{DeviceManager, DeviceManagement, DeviceControl, ManagedDeviceId, DeviceEvent, DeviceManagerError};
-pub use usb_device_watch::{run_usb_device_watch, UsbDeviceWatchHandle};
+pub use usb_device_watch::run_usb_device_watch;
+pub use service::{ServiceHandle, StopHandle, spawn_service};
 
 pub use nusb::DeviceId;
 pub use service_state::FsctServiceState;

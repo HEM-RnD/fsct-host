@@ -30,23 +30,7 @@ use crate::player_events::PlayerEvent;
 use crate::player_manager::ManagedPlayerId;
 use crate::player_state::PlayerState;
 use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
-
-/// Handle to control the orchestrator task
-pub struct OrchestratorHandle {
-    join: JoinHandle<()>,
-    shutdown_tx: oneshot::Sender<()>,
-}
-
-impl OrchestratorHandle {
-    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        let _ = self.shutdown_tx.send(());
-        self.join.await
-    }
-
-    pub fn abort(self) {
-        self.join.abort();
-    }
-}
+use crate::service::{ServiceHandle, spawn_service};
 
 #[derive(Debug, Clone, Default)]
 struct RegisteredPlayer {
@@ -112,13 +96,12 @@ impl Orchestrator<DirectDeviceControlApplier<DeviceManager>> {
 
 impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     /// Spawn the orchestrator event loop in background and return a handle.
-    pub fn run(mut self) -> OrchestratorHandle {
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        let join = tokio::spawn(async move {
+    pub fn run(mut self) -> ServiceHandle {
+        spawn_service(move |mut stop_handle| async move {
             loop {
                 select! {
                     biased;
-                    _ = &mut shutdown_rx => {
+                    _ = stop_handle.signaled() => {
                         info!("Orchestrator shutdown requested");
                         break;
                     }
@@ -148,8 +131,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
                     }
                 }
             }
-        });
-        OrchestratorHandle { join, shutdown_tx }
+        })
     }
 
     async fn on_player_event(&mut self, evt: PlayerEvent) {
@@ -543,7 +525,7 @@ mod tests {
         (orch, player_tx, device_tx)
     }
 
-    async fn run_orchestrator(orch: Orchestrator<MockApplier>) -> OrchestratorHandle {
+    async fn run_orchestrator(orch: Orchestrator<MockApplier>) -> ServiceHandle {
         orch.run()
     }
 

@@ -26,33 +26,7 @@ use tokio::task::JoinHandle;
 use crate::device_manager::{DeviceManagement, ManagedDeviceId};
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;
-
-/// Handle for the USB device watch task
-pub struct UsbDeviceWatchHandle {
-    handle: JoinHandle<()>,
-    shutdown_sender: oneshot::Sender<()>,
-}
-
-impl UsbDeviceWatchHandle {
-    /// Creates a new UsbDeviceWatchHandle
-    pub fn new(handle: JoinHandle<()>, shutdown_sender: oneshot::Sender<()>) -> Self {
-        Self {
-            handle,
-            shutdown_sender,
-        }
-    }
-
-    /// Shuts down the USB device watch task
-    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        let _ = self.shutdown_sender.send(());
-        self.handle.await
-    }
-
-    /// Aborts the USB device watch task
-    pub fn abort(self) {
-        self.handle.abort();
-    }
-}
+use crate::service::{ServiceHandle, spawn_service, StopHandle};
 
 /// Tries to initialize a device and add it to the device manager
 async fn try_initialize_device_and_add_to_manager<T: DeviceManagement>(
@@ -148,11 +122,10 @@ async fn deinitialize_devices<T: DeviceManagement>(device_manager: &T) {
 /// Runs the USB device watch task
 pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
     device_manager: Arc<T>,
-) -> Result<UsbDeviceWatchHandle, anyhow::Error> {
+) -> Result<ServiceHandle, anyhow::Error> {
     let mut devices_plug_events_stream = nusb::watch_devices()?;
-    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
 
-    let join_handle = tokio::spawn(async move {
+    let handle = spawn_service(move |mut stop_handle| async move {
         // Initialize existing devices
         let devices = list_devices().unwrap();
         for device_info in devices {
@@ -161,8 +134,6 @@ pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
         }
 
         // Process events until shutdown is requested or stream ends
-        let mut shutdown_future = shutdown_receiver;
-
         loop {
             // Use tokio::select! to wait for either a device event or shutdown signal
             tokio::select! {
@@ -172,7 +143,7 @@ pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
                             match event {
                                 HotplugEvent::Connected(device_info) => {
                                     run_device_initialization(
-                                        device_info, 
+                                        device_info,
                                         device_manager.clone(),
                                     ).await;
                                 }
@@ -192,7 +163,7 @@ pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
                         }
                     }
                 },
-                _ = &mut shutdown_future => {
+                _ = stop_handle.signaled() => {
                     debug!("Shutdown requested, stopping USB device watch task");
                     deinitialize_devices(&*device_manager).await;
                     break;
@@ -201,5 +172,5 @@ pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
         }
     });
 
-    Ok(UsbDeviceWatchHandle::new(join_handle, shutdown_sender))
+    Ok(handle)
 }
