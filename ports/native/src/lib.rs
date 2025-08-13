@@ -28,5 +28,7 @@ pub mod macos;
 use macos::*;
 
 
+#[cfg(target_os = "windows")]
 pub use player::initialize_native_platform_player;
+
 pub use service::fsct_main;
