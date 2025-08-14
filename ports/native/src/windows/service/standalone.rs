@@ -17,9 +17,10 @@
 
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
-use fsct_core::run_service;
+use std::sync::Arc;
+use fsct_core::LocalDriver;
 
-use crate::initialize_native_platform_player;
+use crate::windows::player::WindowsSystemPlayer;
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
@@ -55,27 +56,26 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        debug!("Initializing native platform player");
-        let platform_global_player = match initialize_native_platform_player().await {
-            Ok(player) => player,
+        debug!("Creating LocalDriver and starting services");
+        let driver = Arc::new(LocalDriver::with_new_managers());
+
+        debug!("Starting orchestrator + USB watch via LocalDriver::run()");
+        let services = match driver.run().await {
+            Ok(handle) => {
+                debug!("Services started successfully");
+                Some(handle)
+            }
             Err(e) => {
-                error!("Failed to initialize player: {}", e);
-                return;
+                error!("Failed to start services: {}", e);
+                None
             }
         };
 
-        // Start the service
-        debug!("Starting service");
-        let service_result = run_service(platform_global_player).await;
-
-        // Handle service start result
-        let devices_watch_handle = match service_result {
-            Ok(handle) => {
-                debug!("Service started successfully");
-                Some(handle)
-            },
+        debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
+        let _watcher = match WindowsSystemPlayer::new_with_driver(driver.clone()).await {
+            Ok(w) => Some(w),
             Err(e) => {
-                error!("Service error: {}", e);
+                error!("Failed to start GSMTC watcher: {:?}", e);
                 None
             }
         };
@@ -83,14 +83,13 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
         // Wait for Ctrl+C or shutdown signal
         shutdown_signal().await;
 
-        // Shutdown service if it was started successfully
-        if let Some(handle) = devices_watch_handle {
-            debug!("Shutting down service");
+        // Shutdown services if they were started successfully
+        if let Some(handle) = services {
+            debug!("Shutting down services");
             if let Err(e) = handle.shutdown().await {
-                error!("Error shutting down service: {}", e);
+                error!("Error shutting down services: {}", e);
             }
         }
-
     });
 
     debug!("Standalone mode exited");
