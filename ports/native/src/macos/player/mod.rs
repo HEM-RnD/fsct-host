@@ -18,25 +18,22 @@
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player_state::{PlayerState, TrackMetadata};
 use fsct_core::{FsctDriver, ManagedPlayerId};
+use fsct_core::service::{ServiceHandle, spawn_service};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use anyhow::anyhow;
+use tokio::sync::mpsc;
 
+#[allow(dead_code)]
 struct NowPlayingWrapper {
     now_playing: NowPlaying,
 }
 
 unsafe impl Send for NowPlayingWrapper {}
 
-pub struct MacOSWatcherHandle {
-    // Keep the Now Playing instances alive while service runs
-    jxa: Option<NowPlayingJXA>,
-    native: Option<Mutex<NowPlayingWrapper>>,
-    _player_id: ManagedPlayerId,
-}
 
 fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
@@ -83,10 +80,13 @@ fn build_state(info: &NowPlayingInfo) -> PlayerState {
     }
 }
 
-async fn push_state(driver: Arc<dyn FsctDriver>, player_id: ManagedPlayerId, info: Option<NowPlayingInfo>) {
+async fn push_state(driver: Arc<dyn FsctDriver>, player_id: ManagedPlayerId, previous_state: &mut PlayerState, info: Option<NowPlayingInfo>) {
     if let Some(info) = info {
         let state = build_state(&info);
-        let _ = driver.update_player_state(player_id, state).await;
+        if *previous_state != state {
+            *previous_state = state.clone();
+            let _ = driver.update_player_state(player_id, state).await;
+        }
     }
 }
 
@@ -105,54 +105,70 @@ fn get_macos_version() -> Option<(u32, u32)> {
     }
 }
 
-pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<MacOSWatcherHandle> {
+#[allow(dead_code)]
+enum NowPlayingImpl {
+    JXA(NowPlayingJXA),
+    Native(NowPlayingWrapper),
+}
+
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
     // Register a single native macOS player (for the OS global now playing)
     let player_id = driver
         .register_player("native-macos-nowplaying".to_string())
         .await
         .map_err(|e| anyhow!(e))?;
 
-    let driver_closure = driver.clone();
-    let pid_closure = player_id;
-    let current_tokio_runtime = tokio::runtime::Handle::current();
+    // Spawn a single service task that consumes the queue and updates state
+    let handle = spawn_service(move |mut stop| async move {
+        // Channel to move updates from callback context to our service task
+        let (tx, mut rx) = mpsc::unbounded_channel::<Option<NowPlayingInfo>>();
 
-    // Choose implementation based on macOS version
-    if let Some((major, minor)) = get_macos_version() {
-        if major > 15 || (major == 15 && minor >= 4) {
-            let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
-
-            now_playing.subscribe(move |guard| {
-                let d = driver_closure.clone();
-                let opt = guard.as_ref().cloned();
-                current_tokio_runtime.spawn(async move {
-                    push_state(d, pid_closure, opt).await;
+        // Choose implementation based on macOS version and set up subscriptions
+        let _now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version() && (major > 15 || (major == 15 && minor >= 4)) {
+                let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
+                let tx_clone = tx.clone();
+                now_playing.subscribe(move |guard| {
+                    let _ = tx_clone.send(guard.as_ref().cloned());
                 });
+                // push initial state via the same queue
+                let initial = now_playing.get_info().as_ref().cloned();
+                let _ = tx.send(initial);
+
+                NowPlayingImpl::JXA(now_playing)
+        } else {
+            // Fallback to native implementation
+            let now_playing = NowPlaying::new();
+            let tx_clone = tx.clone();
+            now_playing.subscribe(move |guard| {
+                let _ = tx_clone.send(guard.as_ref().cloned());
             });
-            // push initial state
-            let initial_guard = now_playing.get_info();
-            let initial = initial_guard.as_ref().cloned();
-            tokio::spawn(push_state(driver.clone(), player_id, initial));
+            // push initial state via the same queue
+            let initial = now_playing.get_info().as_ref().cloned();
+            let _ = tx.send(initial);
 
-            drop(initial_guard);
-            return Ok(MacOSWatcherHandle { jxa: Some(now_playing), native: None, _player_id: player_id });
+            NowPlayingImpl::Native(NowPlayingWrapper { now_playing })
+        };
+
+        let mut previous_state = PlayerState::default();
+        loop {
+            tokio::select! {
+                _ = stop.signaled() => {
+                    break;
+                }
+                maybe = rx.recv() => {
+                    match maybe {
+                        Some(opt) => {
+                            push_state(driver.clone(), player_id, &mut previous_state, opt).await;
+                        }
+                        None => {
+                            // Sender dropped; exit loop
+                            break;
+                        }
+                    }
+                }
+            }
         }
-    }
-
-    // Fallback to native implementation
-    let now_playing = NowPlaying::new();
-
-    now_playing.subscribe(move |guard| {
-        let d = driver_closure.clone();
-        let opt = guard.as_ref().cloned();
-        current_tokio_runtime.spawn(async move {
-            push_state(d, pid_closure, opt).await;
-        });
     });
-    // push initial state
-    let initial_guard = now_playing.get_info();
-    let initial = initial_guard.as_ref().cloned();
-    tokio::spawn(push_state(driver.clone(), player_id, initial));
 
-    drop(initial_guard);
-    Ok(MacOSWatcherHandle { jxa: None, native: Some(Mutex::new(NowPlayingWrapper { now_playing })), _player_id: player_id })
+    Ok(handle)
 }

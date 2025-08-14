@@ -17,7 +17,7 @@
 
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver, FsctDriver};
+use fsct_core::{LocalDriver};
 use std::sync::Arc;
 use crate::run_os_watcher;
 
@@ -30,15 +30,18 @@ pub async fn fsct_main() -> anyhow::Result<()> {
 
     // Initialize local driver and run background services (orchestrator + USB watch)
     let driver = Arc::new(LocalDriver::with_new_managers());
-    let handle = driver.run().await.map_err(|e| anyhow!(e))?;
+    let mut handle = driver.run().await.map_err(|e| anyhow!(e))?;
 
     // Start macOS Now Playing watcher, registering a player and streaming state via the driver
-    let _watcher = run_os_watcher(driver.clone()).await?;
+    let watcher = run_os_watcher(driver.clone()).await?;
+
+    handle.add(watcher);
 
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to listen for Ctrl+C signal");
     println!("Stopping service.");
+
     let res = handle.shutdown().await;
     if let Err(e) = res {
         println!("Error while stopping service: {}", e);
