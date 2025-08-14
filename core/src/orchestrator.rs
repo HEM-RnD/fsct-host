@@ -558,6 +558,21 @@ mod tests {
                 Ok(())
             })
         }
+
+        fn apply_status<'a>(&'a self, _device_id: ManagedDeviceId, _status: crate::definitions::FsctStatus)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn apply_timeline<'a>(&'a self, _device_id: ManagedDeviceId, _timeline: Option<crate::definitions::TimelineInfo>)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn apply_text<'a>(&'a self, _device_id: ManagedDeviceId, _text_id: crate::definitions::FsctTextMetadata, _text: Option<&'a str>)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
+        }
     }
 
     fn make_ids(n: usize) -> Vec<ManagedDeviceId> { (0..n).map(|_| Uuid::new_v4()).collect() }

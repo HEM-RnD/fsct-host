@@ -24,6 +24,7 @@ use std::pin::Pin;
 
 use crate::device_manager::{DeviceControl, ManagedDeviceId};
 use crate::player_state::PlayerState;
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 /// Abstraction for applying PlayerState to devices.
 ///
@@ -33,6 +34,18 @@ use crate::player_state::PlayerState;
 pub trait PlayerStateApplier: Send + Sync {
     /// Apply the given player state to a specific device.
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Apply only status independently.
+    fn apply_status<'a>(&'a self, device_id: ManagedDeviceId, status: FsctStatus)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Apply only timeline/progress independently.
+    fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<TimelineInfo>)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Apply a single text field independently.
+    fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&'a str>)
         -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 }
 
@@ -131,6 +144,117 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
                 guard.insert(device_id, state.clone());
             }
 
+            Ok(())
+        })
+    }
+
+    fn apply_status<'a>(&'a self, device_id: ManagedDeviceId, status: FsctStatus)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
+            // Snapshot previous status (no await while locked)
+            let unchanged = {
+                let guard = self
+                    .last_applied
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+                let player_state = guard
+                    .get(&device_id)
+                    .ok_or_else(|| anyhow::anyhow!("PlayerStateApplier: device not found"))?;
+                player_state.status == status
+            };
+
+            if unchanged {
+                return Ok(())
+            }
+
+            // Apply
+            self.device_control
+                .set_status(device_id, status)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to set status: {}", e))?;
+
+            // Update only status in snapshot
+            let mut guard = self
+                .last_applied
+                .lock()
+                .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+            let entry = guard.entry(device_id).or_insert_with(PlayerState::default);
+            entry.status = status;
+            Ok(())
+        })
+    }
+
+    fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<TimelineInfo>)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
+            // Snapshot previous timeline
+            let unchanged = {
+                let guard = self
+                    .last_applied
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+
+                let player_state = guard
+                    .get(&device_id)
+                    .ok_or_else(|| anyhow::anyhow!("PlayerStateApplier: device not found"))?;
+                player_state.timeline == timeline
+            };
+
+            // If unchanged (and we have a previous state), skip
+            if unchanged {
+                return Ok(());
+            }
+
+            // Apply
+            self.device_control
+                .set_progress(device_id, timeline.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to set progress: {}", e))?;
+
+            // Update only timeline in snapshot
+            let mut guard = self
+                .last_applied
+                .lock()
+                .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+            let entry = guard.entry(device_id).or_insert_with(PlayerState::default);
+            entry.timeline = timeline;
+            Ok(())
+        })
+    }
+
+    fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&'a str>)
+        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
+            // Snapshot previous text
+            let unchanged: bool = {
+                let guard = self
+                    .last_applied
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+                let player_state = guard
+                    .get(&device_id)
+                    .ok_or_else(|| anyhow::anyhow!("PlayerStateApplier: device not found"))?;
+                player_state.texts.get_text(text_id).as_ref().map(|s|s.as_str()) == text
+            };
+
+            if unchanged {
+                return Ok(());
+            }
+
+            // Apply
+            self.device_control
+                .set_current_text(device_id, text_id, text)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to set text: {}", e))?;
+
+            // Update only the specific text in snapshot
+            let mut guard = self
+                .last_applied
+                .lock()
+                .map_err(|_| anyhow::anyhow!("PlayerStateApplier lock poisoned"))?;
+            let entry = guard.entry(device_id).or_insert_with(PlayerState::default);
+            let target = entry.texts.get_mut_text(text_id);
+            *target = text.map(|s| s.to_string());
             Ok(())
         })
     }
