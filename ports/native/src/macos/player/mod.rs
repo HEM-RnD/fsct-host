@@ -112,13 +112,15 @@ pub async fn start_macos_now_playing_watcher(driver: Arc<dyn FsctDriver>) -> any
         .await
         .map_err(|e| anyhow!(e))?;
 
+    let driver_closure = driver.clone();
+    let pid_closure = player_id;
+    let current_tokio_runtime = tokio::runtime::Handle::current();
+
     // Choose implementation based on macOS version
     if let Some((major, minor)) = get_macos_version() {
         if major > 15 || (major == 15 && minor >= 4) {
             let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
-            let driver_closure = driver.clone();
-            let pid_closure = player_id;
-            let current_tokio_runtime = tokio::runtime::Handle::current();
+
             now_playing.subscribe(move |guard| {
                 let d = driver_closure.clone();
                 let opt = guard.as_ref().cloned();
@@ -138,12 +140,11 @@ pub async fn start_macos_now_playing_watcher(driver: Arc<dyn FsctDriver>) -> any
 
     // Fallback to native implementation
     let now_playing = NowPlaying::new();
-    let driver_closure = driver.clone();
-    let pid_closure = player_id;
+
     now_playing.subscribe(move |guard| {
         let d = driver_closure.clone();
         let opt = guard.as_ref().cloned();
-        tokio::spawn(async move {
+        current_tokio_runtime.spawn(async move {
             push_state(d, pid_closure, opt).await;
         });
     });
