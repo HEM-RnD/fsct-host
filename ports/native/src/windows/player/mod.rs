@@ -17,7 +17,6 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use async_trait::async_trait;
 use log::{debug, error, warn};
 use windows::{
     core::Error as WindowsError,
@@ -28,10 +27,10 @@ use windows::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use fsct_core::definitions::{FsctTextMetadata, TimelineInfo};
+use fsct_core::definitions::{TimelineInfo};
 use fsct_core::player_state::{PlayerState, TrackMetadata};
 use fsct_core::definitions::FsctStatus;
-use fsct_core::{spawn_service, FsctDriver, LocalDriver, ManagedPlayerId, ServiceHandle};
+use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 

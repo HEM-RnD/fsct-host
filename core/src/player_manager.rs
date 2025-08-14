@@ -30,9 +30,9 @@ use tokio::sync::broadcast;
 /// Type alias for player ID
 pub type ManagedPlayerId = NonZeroU32;
 
+#[allow(dead_code)]
 /// Represents a registered player with its state and device assignments
 pub struct RegisteredPlayer {
-    pub id: ManagedPlayerId,
     pub self_id: String, /// Player's self identifier
     pub state: Arc<Mutex<PlayerState>>,
     pub assigned_device: Option<ManagedDeviceId>,
@@ -71,7 +71,6 @@ impl PlayerManager {
 
         // Create player entry
         let registered_player = RegisteredPlayer {
-            id: player_id,
             self_id: self_id.clone(),
             state: player_state,
             assigned_device: None,

@@ -21,8 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
 use tokio::select;
-use tokio::sync::{broadcast, oneshot};
-use tokio::task::JoinHandle;
+use tokio::sync::broadcast;
 use crate::definitions::FsctStatus;
 use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
 use crate::device_manager::DeviceControl;

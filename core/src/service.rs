@@ -78,7 +78,7 @@ impl ServiceHandle {
 
 
     /// Request cooperative shutdown and await task completion.
-    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
         let _ = self.shutdown_tx.send(());
         self.join.await
     }
@@ -133,7 +133,7 @@ impl MultiServiceHandle {
 
     /// Request shutdown for all services, then await their completion.
     /// Returns Ok(()) if all joins succeed; otherwise returns the first JoinError encountered.
-    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
         let futures = self.handles.into_iter().map(|h| h.shutdown()).collect::<Vec<_>>();
         let res = join_all(futures).await;
         res.into_iter().find(|r| r.is_err()).unwrap_or(Ok(()))

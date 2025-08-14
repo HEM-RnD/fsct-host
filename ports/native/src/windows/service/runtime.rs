@@ -32,7 +32,7 @@ use windows_service::{
 };
 use windows_service::service::ServiceType;
 use crate::windows::service::constants::SERVICE_NAME;
-use fsct_core::{FsctServiceState, LocalDriver};
+use fsct_core::LocalDriver;
 use crate::run_os_watcher;
 
 // Define service events
@@ -127,7 +127,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Run the service in the Tokio runtime
     rt.block_on(async {
         // Create a service state to manage the service tasks
-        let mut service_state = None;
+        let mut service_state;
 
         // Get the current active console session ID
         // This is the session ID of the user who is currently logged on to the physical console
@@ -267,7 +267,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 },
                                 // For session logoff events, we need to stop our service
                                 windows_service::service::SessionChangeReason::SessionLogoff => {
-                                    if let Some(mut service_state) = service_state.take() {
+                                    if let Some(service_state) = service_state.take() {
                                         info!("This session ({}) is logging off, stopping service tasks", session_id);
                                         service_state.shutdown().await
                                             .inspect_err(|e| error!("Failed to stop service tasks: {}", e)).ok();
@@ -279,7 +279,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 // For console disconnect events, we should stop our service
                                 windows_service::service::SessionChangeReason::ConsoleDisconnect |
                                 windows_service::service::SessionChangeReason::RemoteDisconnect => {
-                                    if let Some(mut service_state) = service_state.take() {
+                                    if let Some(service_state) = service_state.take() {
                                         info!("This session ({}) is disconnecting, stopping service tasks", session_id);
                                         service_state.shutdown().await
                                                      .inspect_err(|e| error!("Failed to stop service tasks: {}", e))
@@ -319,7 +319,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Stop the service tasks
         debug!("Stopping service tasks");
-        if let Some(mut service_state) = service_state {
+        if let Some(service_state) = service_state {
             if let Err(e) = service_state.shutdown().await
             {
                 error!("Failed to stop service tasks: {}", e);

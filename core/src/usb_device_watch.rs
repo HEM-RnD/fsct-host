@@ -21,12 +21,10 @@ use nusb::{list_devices, DeviceId, DeviceInfo};
 use log::{debug, info, warn};
 use nusb::hotplug::HotplugEvent;
 use futures::StreamExt;
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 use crate::device_manager::{DeviceManagement, ManagedDeviceId};
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;
-use crate::service::{ServiceHandle, spawn_service, StopHandle};
+use crate::service::{ServiceHandle, spawn_service};
 
 /// Tries to initialize a device and add it to the device manager
 async fn try_initialize_device_and_add_to_manager<T: DeviceManagement>(
