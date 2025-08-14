@@ -105,7 +105,7 @@ fn get_macos_version() -> Option<(u32, u32)> {
     }
 }
 
-pub async fn start_macos_now_playing_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<MacOSWatcherHandle> {
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<MacOSWatcherHandle> {
     // Register a single native macOS player (for the OS global now playing)
     let player_id = driver
         .register_player("native-macos-nowplaying".to_string())

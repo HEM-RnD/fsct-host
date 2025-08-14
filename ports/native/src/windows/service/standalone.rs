@@ -20,10 +20,10 @@ use tokio::runtime::Runtime;
 use std::sync::Arc;
 use fsct_core::LocalDriver;
 
-use crate::windows::player::WindowsSystemPlayer;
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
+use crate::run_os_watcher;
 
 async fn shutdown_signal() {
     debug!("Press Ctrl+C or close the console window to exit");
@@ -60,36 +60,43 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
         let driver = Arc::new(LocalDriver::with_new_managers());
 
         debug!("Starting orchestrator + USB watch via LocalDriver::run()");
-        let services = match driver.run().await {
+        let mut services = match driver.run().await {
             Ok(handle) => {
                 debug!("Services started successfully");
-                Some(handle)
+                handle
             }
             Err(e) => {
                 error!("Failed to start services: {}", e);
-                None
+                return;
             }
         };
 
         debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
-        let _watcher = match WindowsSystemPlayer::new_with_driver(driver.clone()).await {
-            Ok(w) => Some(w),
+        let ok = match run_os_watcher(driver.clone()).await {
+            Ok(w) => {
+                services.add(w);
+                true
+            }
             Err(e) => {
                 error!("Failed to start GSMTC watcher: {:?}", e);
-                None
+                false
             }
         };
 
-        // Wait for Ctrl+C or shutdown signal
-        shutdown_signal().await;
+        if ok {
+            // Wait for Ctrl+C or shutdown signal
+            shutdown_signal().await;
+        } else {
+            // Nothing to run, just exit
+        }
 
         // Shutdown services if they were started successfully
-        if let Some(handle) = services {
-            debug!("Shutting down services");
-            if let Err(e) = handle.shutdown().await {
-                error!("Error shutting down services: {}", e);
-            }
+
+        debug!("Shutting down services");
+        if let Err(e) = services.shutdown().await {
+            error!("Error shutting down services: {}", e);
         }
+
     });
 
     debug!("Standalone mode exited");

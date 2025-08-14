@@ -28,3 +28,4 @@ pub mod macos;
 use macos::*;
 
 pub use service::fsct_main;
+pub use player::run_os_watcher;

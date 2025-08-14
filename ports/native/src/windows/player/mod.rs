@@ -31,7 +31,7 @@ use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaT
 use fsct_core::definitions::{FsctTextMetadata, TimelineInfo};
 use fsct_core::player_state::{PlayerState, TrackMetadata};
 use fsct_core::definitions::FsctStatus;
-use fsct_core::{FsctDriver, LocalDriver, ManagedPlayerId};
+use fsct_core::{spawn_service, FsctDriver, LocalDriver, ManagedPlayerId, ServiceHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 
@@ -233,7 +233,7 @@ impl Drop for WindowsSessionHandles {
     }
 }
 
-struct WindowsPlayerImplementation {
+struct WindowsOsWatcher {
     driver: Arc<dyn FsctDriver>,
     player_id: ManagedPlayerId,
     handles: Mutex<Option<WindowsSessionHandles>>,
@@ -248,10 +248,10 @@ async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessi
     Ok(session_manager)
 }
 
-impl WindowsPlayerImplementation {
+impl WindowsOsWatcher {
     async fn new_with_driver(driver: Arc<dyn FsctDriver>) -> Result<Self, PlayerError> {
         let player_id = driver.register_player("native-windows-gsmtc".to_string()).await.map_err(|e| PlayerError::Other(e.into()))?;
-        Ok(WindowsPlayerImplementation {
+        Ok(WindowsOsWatcher {
             driver,
             player_id,
             handles: Mutex::new(None),
@@ -316,15 +316,15 @@ impl WindowsPlayerImplementation {
         let handles = handles.as_ref().unwrap();
         *session == handles.session
     }
-    async fn run_notification_task(self: Arc<Self>) -> Result<(), PlayerError> {
-        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(async move {
+    async fn run_notification_task(self: Arc<Self>) -> Result<ServiceHandle, PlayerError> {
+        let (startup_done_signal, startup_awaiter) = tokio::sync::oneshot::channel::<()>();
+        let service_handle = spawn_service(move |mut stop_token| async move {
             debug!("[WindowsPlayer] Notification task started");
             // it is important to create and leave session_manager in this task forever in order not to lose notifications
             let session_manager = get_session_manager().await;
             if session_manager.is_err() {
                 debug!("[WindowsPlayer] Failed to get session manager");
-                oneshot_tx.send(()).unwrap_or_default();
+                startup_done_signal.send(()).unwrap_or_default();
                 return;
             }
             let (notification_sender, mut notification_receiver) = tokio::sync::mpsc::channel::<WindowsNotification>(100);
@@ -332,13 +332,17 @@ impl WindowsPlayerImplementation {
             let session_manager = session_manager.unwrap();
             if self.init_session_manager(&session_manager, notification_sender.clone()).await.is_err() {
                 debug!("[WindowsPlayer] Failed to init session manager");
-                oneshot_tx.send(()).unwrap_or_default();
+                startup_done_signal.send(()).unwrap_or_default();
                 return;
             }
             self.update_current_session(Some(&session_manager), notification_sender.clone()).await;
-            oneshot_tx.send(()).unwrap_or_default();
+            startup_done_signal.send(()).unwrap_or_default();
 
-            while let Some(notification) = notification_receiver.recv().await {
+            while let Some(notification) = tokio::select! {
+                                                                Some(n) = notification_receiver.recv() => Some(n),
+                                                                _ = stop_token.signaled() => None,
+                                                            }
+            {
                 match notification {
                     WindowsNotification::CurrentSessionChanged(session_manager) => {
                         debug!("[WindowsPlayer] Current session changed");
@@ -353,7 +357,8 @@ impl WindowsPlayerImplementation {
             }
             debug!("[WindowsPlayer] Notification task stopped");
         });
-        oneshot_rx.await.map_err(|_| PlayerError::PermissionDenied)
+        startup_awaiter.await.map_err(|_| PlayerError::PermissionDenied)?;
+        Ok(service_handle)
     }
 
     async fn handle_session_notification(&self, topic: SessionNotificationTopic, session:
@@ -398,10 +403,6 @@ impl WindowsPlayerImplementation {
     }
 }
 
-pub struct WindowsSystemPlayer {
-    implementation: Arc<WindowsPlayerImplementation>,
-}
-
 enum SessionNotificationTopic {
     PlaybackInfoChanged,
     TimelinePropertiesChanged,
@@ -420,12 +421,10 @@ enum WindowsNotification {
 const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
 
-impl WindowsSystemPlayer {
-    pub async fn new_with_driver(driver: Arc<dyn FsctDriver>) -> Result<Self, PlayerError> {
-        let internals = Arc::new(WindowsPlayerImplementation::new_with_driver(driver).await?);
-        internals.clone().run_notification_task().await?;
-        Ok(Self { implementation: internals })
-    }
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> Result<ServiceHandle, PlayerError> {
+    let windows_watcher = Arc::new(WindowsOsWatcher::new_with_driver(driver).await?);
+    windows_watcher.run_notification_task().await
 }
+
 
 

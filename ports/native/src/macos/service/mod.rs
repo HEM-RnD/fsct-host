@@ -19,7 +19,7 @@ use anyhow::anyhow;
 use env_logger::Env;
 use fsct_core::{LocalDriver, FsctDriver};
 use std::sync::Arc;
-use crate::player::start_macos_now_playing_watcher;
+use crate::start_os_watcher;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
@@ -33,7 +33,7 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     let handle = driver.run().await.map_err(|e| anyhow!(e))?;
 
     // Start macOS Now Playing watcher, registering a player and streaming state via the driver
-    let _watcher = start_macos_now_playing_watcher(driver.clone()).await?;
+    let _watcher = run_os_watcher(driver.clone()).await?;
 
     tokio::signal::ctrl_c()
         .await
