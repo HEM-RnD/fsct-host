@@ -26,6 +26,7 @@ use crate::device_manager::ManagedDeviceId;
 use crate::player_events::PlayerEvent;
 use crate::player_state::PlayerState;
 use tokio::sync::broadcast;
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 /// Type alias for player ID
 pub type ManagedPlayerId = NonZeroU32;
@@ -194,6 +195,55 @@ impl PlayerManager {
         // Notify listeners about the new state
         let _ = self.events_tx.send(PlayerEvent::StateUpdated { player_id, state: new_state });
 
+        Ok(())
+    }
+
+
+    pub async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error>
+    {
+        {
+            let players = self.players.lock().unwrap();
+            if let Some(player) = players.get(&player_id) {
+                let mut state = player.state.lock().unwrap();
+                state.status = new_status;
+            } else {
+                return Err(anyhow::anyhow!("Player not found"));
+            }
+        }
+        let _ = self.events_tx.send(PlayerEvent::StatusUpdated { player_id, status: new_status });
+        Ok(())
+    }
+
+    pub async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error>
+    {
+        {
+            let players = self.players.lock().unwrap();
+            if let Some(player) = players.get(&player_id) {
+                let mut state = player.state.lock().unwrap();
+                state.timeline = new_timeline.clone();
+            } else {
+                return Err(anyhow::anyhow!("Player not found"));
+            }
+        }
+        if let Some(timeline) = new_timeline {
+            let _ = self.events_tx.send(PlayerEvent::TimelineUpdated { player_id, timeline });
+        }
+        Ok(())
+    }
+
+    pub async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error>
+    {
+        {
+            let players = self.players.lock().unwrap();
+            if let Some(player) = players.get(&player_id) {
+                let mut state = player.state.lock().unwrap();
+                let slot = state.texts.get_mut_text(metadata_id);
+                *slot = Some(new_text.clone());
+            } else {
+                return Err(anyhow::anyhow!("Player not found"));
+            }
+        }
+        let _ = self.events_tx.send(PlayerEvent::TextMetadataUpdated { player_id, metadata: metadata_id, text: new_text });
         Ok(())
     }
 

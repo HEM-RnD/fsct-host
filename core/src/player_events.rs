@@ -15,6 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::device_manager::ManagedDeviceId;
 use crate::player_state::PlayerState;
 use crate::player_manager::ManagedPlayerId;
@@ -34,8 +35,17 @@ pub enum PlayerEvent {
     /// A player has been unassigned from a specific device.
     Unassigned { player_id: ManagedPlayerId, device_id: ManagedDeviceId },
 
-    /// Player's state has been updated. Consumers decide where to propagate it.
+    /// Player's state has been updated.
     StateUpdated { player_id: ManagedPlayerId, state: PlayerState },
+
+    /// Player's state has been partially updated, status has changed.
+    StatusUpdated { player_id: ManagedPlayerId, status: FsctStatus },
+
+    /// Player's state has been partially updated, timeline has changed.
+    TimelineUpdated { player_id: ManagedPlayerId, timeline: TimelineInfo},
+
+    /// Player's state has been partially updated, text metadata has changed.
+    TextMetadataUpdated { player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: String},
 
     /// Preferred player selection changed. Contains the new preferred player id or None.
     PreferredChanged { preferred: Option<ManagedPlayerId> },

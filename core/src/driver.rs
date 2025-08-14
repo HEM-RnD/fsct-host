@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio::sync::broadcast;
-
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::device_manager::{DeviceManager, ManagedDeviceId};
 use crate::player_events::PlayerEvent;
 use crate::player_manager::{ManagedPlayerId, PlayerManager};
@@ -41,6 +41,12 @@ pub trait FsctDriver: Send + Sync {
     async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error>;
 
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error>;
+
+    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error>;
+
+    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error>;
+
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error>;
 
     fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
     fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
@@ -114,6 +120,18 @@ impl FsctDriver for LocalDriver {
 
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
         self.player_manager.update_player_state(player_id, new_state).await
+    }
+
+    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error> {
+        self.player_manager.update_player_status(player_id, new_status).await
+    }
+
+    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
+        self.player_manager.update_player_timeline(player_id, new_timeline).await
+    }
+
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error> {
+        self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
     }
 
     fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {

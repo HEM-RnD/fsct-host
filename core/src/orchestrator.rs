@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::broadcast;
-use crate::definitions::FsctStatus;
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
 use crate::device_manager::DeviceControl;
 use crate::player_events::PlayerEvent;
@@ -150,6 +150,15 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             PlayerEvent::StateUpdated { player_id, state } => {
                 self.handle_player_state_updated(player_id, state).await;
             }
+            PlayerEvent::StatusUpdated { player_id, status } => {
+                self.handle_player_status_updated(player_id, status).await;
+            }
+            PlayerEvent::TimelineUpdated { player_id, timeline } => {
+                self.handle_player_timeline_updated(player_id, timeline).await;
+            }
+            PlayerEvent::TextMetadataUpdated { player_id, metadata, text } => {
+                self.handle_player_text_metadata_updated(player_id, metadata, text).await;
+            }
             PlayerEvent::PreferredChanged { preferred } => {
                 self.handle_preferred_changed(preferred).await;
             }
@@ -222,6 +231,54 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         if status_changed {
             self.update_selected_players_for_devices();
         }
+        for device in self.connected_devices.values() {
+            let mut device = device.lock().unwrap();
+            if device.player_id == Some(player_id) {
+                device.requires_update = true;
+            }
+        }
+        self.apply_on_devices_requiring_update().await;
+    }
+
+    async fn handle_player_status_updated(&mut self, player_id: ManagedPlayerId, status: FsctStatus) {
+        debug!("StatusUpdated: player {} -> {:?}", player_id, status);
+        if let Some(player) = self.players.get_mut(&player_id) {
+            player.state.status = status;
+        }
+        // Status change can affect selection
+        self.update_selected_players_for_devices();
+        // Mark devices currently showing this player for update
+        for device in self.connected_devices.values() {
+            let mut device = device.lock().unwrap();
+            if device.player_id == Some(player_id) {
+                device.requires_update = true;
+            }
+        }
+        self.apply_on_devices_requiring_update().await;
+    }
+
+    async fn handle_player_timeline_updated(&mut self, player_id: ManagedPlayerId, timeline: TimelineInfo) {
+        debug!("TimelineUpdated: player {}", player_id);
+        if let Some(player) = self.players.get_mut(&player_id) {
+            player.state.timeline = Some(timeline);
+        }
+        // No selection recompute for timeline-only changes
+        for device in self.connected_devices.values() {
+            let mut device = device.lock().unwrap();
+            if device.player_id == Some(player_id) {
+                device.requires_update = true;
+            }
+        }
+        self.apply_on_devices_requiring_update().await;
+    }
+
+    async fn handle_player_text_metadata_updated(&mut self, player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: String) {
+        debug!("TextMetadataUpdated: player {} {:?}", player_id, metadata);
+        if let Some(player) = self.players.get_mut(&player_id) {
+            let slot = player.state.texts.get_mut_text(metadata);
+            *slot = Some(text);
+        }
+        // No selection recompute for text-only changes
         for device in self.connected_devices.values() {
             let mut device = device.lock().unwrap();
             if device.player_id == Some(player_id) {
