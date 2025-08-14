@@ -27,9 +27,8 @@ use windows::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use fsct_core::definitions::{TimelineInfo};
+use fsct_core::definitions::{TimelineInfo, FsctStatus};
 use fsct_core::player_state::{PlayerState, TrackMetadata};
-use fsct_core::definitions::FsctStatus;
 use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
@@ -384,20 +383,31 @@ impl WindowsOsWatcher {
     }
 
     async fn handle_media_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        if let Ok(state) = get_playback_state(&session).await {
-            let _ = self.driver.update_player_state(self.player_id, state).await;
+        // Partial update: update only text metadata fields that we can fetch
+        if let Ok(texts) = get_texts_from_session(&session).await {
+            for meta_id in texts.iter_id() {
+                let value = texts.get_text(*meta_id).clone();
+                let _ = self.driver.update_player_metadata(self.player_id, *meta_id, value).await;
+            }
         }
     }
 
     async fn handle_timeline_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        if let Ok(state) = get_playback_state(&session).await {
-            let _ = self.driver.update_player_state(self.player_id, state).await;
+        // Partial update: recompute timeline (position, duration, rate)
+        let playback_info = session.GetPlaybackInfo().into_player_error().ok();
+        let timeline_props = session.GetTimelineProperties().into_player_error().ok();
+        if let Some(tprops) = timeline_props {
+            if let Ok(Some(timeline)) = get_timeline_info(playback_info.as_ref(), &tprops) {
+                let _ = self.driver.update_player_timeline(self.player_id, Some(timeline)).await;
+            }
         }
     }
 
     async fn handle_playback_info_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        if let Ok(state) = get_playback_state(&session).await {
-            let _ = self.driver.update_player_state(self.player_id, state).await;
+        // Partial update: update only playback status
+        if let Ok(info) = session.GetPlaybackInfo().into_player_error() {
+            let status = get_status(&info);
+            let _ = self.driver.update_player_status(self.player_id, status).await;
         }
     }
 }
