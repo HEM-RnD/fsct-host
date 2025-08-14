@@ -15,10 +15,11 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use crate::initialize_native_platform_player;
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::run_service;
+use fsct_core::{LocalDriver};
+use std::sync::Arc;
+use crate::run_os_watcher;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
@@ -27,14 +28,21 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
 
-    let platform_global_player = initialize_native_platform_player().await.map_err(|e| anyhow!(e))?;
-    let devices_watch_handle = run_service(platform_global_player.clone()).await?;
+    // Initialize local driver and run background services (orchestrator + USB watch)
+    let driver = Arc::new(LocalDriver::with_new_managers());
+    let mut handle = driver.run().await.map_err(|e| anyhow!(e))?;
+
+    // Start macOS Now Playing watcher, registering a player and streaming state via the driver
+    let watcher = run_os_watcher(driver.clone()).await?;
+
+    handle.add(watcher);
 
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to listen for Ctrl+C signal");
     println!("Stopping service.");
-    let res = devices_watch_handle.shutdown().await;
+
+    let res = handle.shutdown().await;
     if let Err(e) = res {
         println!("Error while stopping service: {}", e);
         return Err(e.into());

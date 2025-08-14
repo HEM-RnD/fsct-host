@@ -15,33 +15,25 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use async_trait::async_trait;
-use fsct_core::Player;
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct_core::player::{
-    PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata,
-    create_player_events_channel,
-};
+use fsct_core::definitions::{FsctStatus, TimelineInfo};
+use fsct_core::player_state::{PlayerState, TrackMetadata};
+use fsct_core::{FsctDriver, ManagedPlayerId};
+use fsct_core::service::{ServiceHandle, spawn_service};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use anyhow::anyhow;
+use tokio::sync::mpsc;
 
-pub struct MacOSPlaybackManagerJXA {
-    now_playing: NowPlayingJXA,
-    player_sender: PlayerEventsSender,
-}
-
+#[allow(dead_code)]
 struct NowPlayingWrapper {
     now_playing: NowPlaying,
 }
 
 unsafe impl Send for NowPlayingWrapper {}
 
-pub struct MacOSPlaybackManagerNative {
-    now_playing: Mutex<NowPlayingWrapper>,
-    player_sender: PlayerEventsSender,
-}
 
 fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
@@ -80,101 +72,21 @@ fn get_status(now_playing_info: &NowPlayingInfo) -> FsctStatus {
     }
 }
 
-fn send_changes(info: &Option<NowPlayingInfo>, tx: &PlayerEventsSender) {
-    if let Some(info) = info.as_ref() {
-        tx.send(PlayerEvent::TextChanged((
-            FsctTextMetadata::CurrentTitle,
-            info.title.clone(),
-        )))
-        .unwrap_or_default();
-        tx.send(PlayerEvent::TextChanged((
-            FsctTextMetadata::CurrentAuthor,
-            info.artist.clone(),
-        )))
-        .unwrap_or_default();
-        tx.send(PlayerEvent::TextChanged((
-            FsctTextMetadata::CurrentAlbum,
-            info.album.clone(),
-        )))
-        .unwrap_or_default();
-        tx.send(PlayerEvent::StatusChanged(get_status(info)))
-            .unwrap_or_default();
-        tx.send(PlayerEvent::TimelineChanged(get_timeline_info(info)))
-            .unwrap_or_default();
+fn build_state(info: &NowPlayingInfo) -> PlayerState {
+    PlayerState {
+        status: get_status(info),
+        texts: get_current_track(info),
+        timeline: get_timeline_info(info),
     }
 }
 
-impl MacOSPlaybackManagerJXA {
-    pub fn new() -> Result<Self, PlayerError> {
-        let (player_sender, _rx) = create_player_events_channel();
-        let tx = player_sender.clone();
-        let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
-        now_playing.subscribe(move |info| {
-            send_changes(&info, &tx);
-        });
-        Ok(Self {
-            now_playing,
-            player_sender,
-        })
-    }
-}
-
-impl MacOSPlaybackManagerNative {
-    pub fn new() -> Result<Self, PlayerError> {
-        let (player_sender, _rx) = create_player_events_channel();
-        let tx = player_sender.clone();
-        let now_playing = NowPlaying::new();
-        now_playing.subscribe(move |info| {
-            send_changes(&info, &tx);
-        });
-        Ok(Self {
-            now_playing: Mutex::new(NowPlayingWrapper { now_playing }),
-            player_sender,
-        })
-    }
-}
-
-fn get_current_state(info: &Option<NowPlayingInfo>) -> Result<PlayerState, PlayerError> {
+async fn push_state(driver: Arc<dyn FsctDriver>, player_id: ManagedPlayerId, previous_state: &mut PlayerState, info: Option<NowPlayingInfo>) {
     if let Some(info) = info {
-        Ok(PlayerState {
-            status: get_status(info),
-            texts: get_current_track(info),
-            timeline: get_timeline_info(info),
-        })
-    } else {
-        Err(PlayerError::PermissionDenied)
-    }
-}
-
-#[async_trait]
-impl PlayerInterface for MacOSPlaybackManagerJXA {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let info = self.now_playing.get_info();
-        get_current_state(&info)
-    }
-
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
-        let rx = self.player_sender.subscribe();
-        let info = self.now_playing.get_info();
-        send_changes(&info, &self.player_sender);
-        Ok(rx)
-    }
-}
-
-#[async_trait]
-impl PlayerInterface for MacOSPlaybackManagerNative {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        let now_playing = self.now_playing.lock().unwrap();
-        let info = now_playing.now_playing.get_info();
-        get_current_state(&info)
-    }
-
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
-        let rx = self.player_sender.subscribe();
-        let now_playing = self.now_playing.lock().unwrap();
-        let info = now_playing.now_playing.get_info();
-        send_changes(&info, &self.player_sender);
-        Ok(rx)
+        let state = build_state(&info);
+        if *previous_state != state {
+            *previous_state = state.clone();
+            let _ = driver.update_player_state(player_id, state).await;
+        }
     }
 }
 
@@ -193,15 +105,70 @@ fn get_macos_version() -> Option<(u32, u32)> {
     }
 }
 
-pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
-    // Check macOS version
-    if let Some((major, minor)) = get_macos_version() {
-        // For macOS 15.4 and newer, use JXA
-        if major > 15 || (major == 15 && minor >= 4) {
-            return Ok(Player::new(MacOSPlaybackManagerJXA::new()?));
-        }
-    }
+#[allow(dead_code)]
+enum NowPlayingImpl {
+    JXA(NowPlayingJXA),
+    Native(NowPlayingWrapper),
+}
 
-    // For older versions or if version detection fails, use Native
-    Ok(Player::new(MacOSPlaybackManagerNative::new()?))
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
+    // Register a single native macOS player (for the OS global now playing)
+    let player_id = driver
+        .register_player("native-macos-nowplaying".to_string())
+        .await
+        .map_err(|e| anyhow!(e))?;
+
+    // Spawn a single service task that consumes the queue and updates state
+    let handle = spawn_service(move |mut stop| async move {
+        // Channel to move updates from callback context to our service task
+        let (tx, mut rx) = mpsc::unbounded_channel::<Option<NowPlayingInfo>>();
+
+        // Choose implementation based on macOS version and set up subscriptions
+        let _now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version() && (major > 15 || (major == 15 && minor >= 4)) {
+                let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
+                let tx_clone = tx.clone();
+                now_playing.subscribe(move |guard| {
+                    let _ = tx_clone.send(guard.as_ref().cloned());
+                });
+                // push initial state via the same queue
+                let initial = now_playing.get_info().as_ref().cloned();
+                let _ = tx.send(initial);
+
+                NowPlayingImpl::JXA(now_playing)
+        } else {
+            // Fallback to native implementation
+            let now_playing = NowPlaying::new();
+            let tx_clone = tx.clone();
+            now_playing.subscribe(move |guard| {
+                let _ = tx_clone.send(guard.as_ref().cloned());
+            });
+            // push initial state via the same queue
+            let initial = now_playing.get_info().as_ref().cloned();
+            let _ = tx.send(initial);
+
+            NowPlayingImpl::Native(NowPlayingWrapper { now_playing })
+        };
+
+        let mut previous_state = PlayerState::default();
+        loop {
+            tokio::select! {
+                _ = stop.signaled() => {
+                    break;
+                }
+                maybe = rx.recv() => {
+                    match maybe {
+                        Some(opt) => {
+                            push_state(driver.clone(), player_id, &mut previous_state, opt).await;
+                        }
+                        None => {
+                            // Sender dropped; exit loop
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(handle)
 }

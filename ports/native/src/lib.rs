@@ -27,6 +27,5 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 use macos::*;
 
-
-pub use player::initialize_native_platform_player;
 pub use service::fsct_main;
+pub use player::run_os_watcher;
