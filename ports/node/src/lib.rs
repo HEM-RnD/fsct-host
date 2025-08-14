@@ -22,73 +22,72 @@ mod js_types;
 #[macro_use]
 extern crate napi_derive;
 
-use async_trait::async_trait;
 use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
-use fsct_core::player::{
-    create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver,
-    PlayerEventsSender,
-};
 use fsct_core::player_state::PlayerState;
-use fsct_core::{player::Player, player::PlayerInterface, FsctServiceState};
+use fsct_core::{FsctDriver, LocalDriver, ManagedPlayerId, service::MultiServiceHandle};
 use std::sync::{Arc, Mutex};
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 
 pub struct NodePlayerImpl {
     current_state: Mutex<PlayerState>,
-    player_sender: PlayerEventsSender,
+    driver: Mutex<Option<Arc<LocalDriver>>>,
+    player_id: Mutex<Option<ManagedPlayerId>>,
 }
 
 impl NodePlayerImpl {
     fn new() -> Self {
-        let (tx, _rx) = create_player_events_channel();
         Self {
             current_state: Mutex::new(PlayerState::default()),
-            player_sender: tx,
+            driver: Mutex::new(None),
+            player_id: Mutex::new(None),
         }
     }
 
-    fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
+    async fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
         let status: FsctStatus = status.into();
         self.current_state.lock().unwrap().status = status;
-
-        self.emit(PlayerEvent::StatusChanged(status))
+        self.push_state().await
     }
 
-    fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
-        let timeline: Option<FsctTimelineInfo> = timeline.map(|v| v.try_into().ok()).flatten();
-        self.current_state.lock().unwrap().timeline = timeline.clone();
-
-        self.emit(PlayerEvent::TimelineChanged(timeline))
+    async fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
+        let timeline: Option<FsctTimelineInfo> = timeline.and_then(|v| v.try_into().ok());
+        self.current_state.lock().unwrap().timeline = timeline;
+        self.push_state().await
     }
 
-    fn set_text(&self, text_type: CurrentTextMetadata, text: Option<String>) -> napi::Result<()> {
+    async fn set_text(&self, text_type: CurrentTextMetadata, text: Option<String>) -> napi::Result<()> {
         let text_type: FsctTextMetadata = text_type.into();
         *self
             .current_state
             .lock()
             .unwrap()
             .texts
-            .get_mut_text(text_type) = text.clone();
-
-        self.emit(PlayerEvent::TextChanged((text_type, text.clone())))
+            .get_mut_text(text_type) = text;
+        self.push_state().await
     }
 
-    fn emit(&self, event: PlayerEvent) -> napi::Result<()> {
-        self.player_sender
-            .send(event)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    async fn push_state(&self) -> napi::Result<()> {
+        let state = self.current_state.lock().unwrap().clone();
+        let driver_opt = self.driver.lock().unwrap().clone();
+        let player_id_opt = *self.player_id.lock().unwrap();
+        if let (Some(driver), Some(player_id)) = (driver_opt, player_id_opt) {
+            driver
+                .update_player_state(player_id, state)
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?
+        }
         Ok(())
     }
-}
 
-#[async_trait]
-impl PlayerInterface for NodePlayerImpl {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        Ok(self.current_state.lock().unwrap().clone())
-    }
-
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
-        Ok(self.player_sender.subscribe())
+    async fn attach_driver_and_register(&self, driver: Arc<LocalDriver>, self_id: String) -> napi::Result<()> {
+        let player_id = driver
+            .register_player(self_id)
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        *self.driver.lock().unwrap() = Some(driver);
+        *self.player_id.lock().unwrap() = Some(player_id);
+        // push initial default state
+        self.push_state().await
     }
 }
 
@@ -107,41 +106,30 @@ impl NodePlayer {
     }
 
     #[napi]
-    pub fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
-        self.player_impl.set_status(status)
+    pub async fn set_status(&self, status: PlayerStatus) -> napi::Result<()> {
+        self.player_impl.set_status(status).await
     }
 
     #[napi]
-    pub fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
-        self.player_impl.set_timeline(timeline)
+    pub async fn set_timeline(&self, timeline: Option<TimelineInfo>) -> napi::Result<()> {
+        self.player_impl.set_timeline(timeline).await
     }
 
     #[napi]
-    pub fn set_text(
+    pub async fn set_text(
         &self,
         text_type: CurrentTextMetadata,
         text: Option<String>,
     ) -> napi::Result<()> {
-        self.player_impl.set_text(text_type, text)
+        self.player_impl.set_text(text_type, text).await
     }
-}
-
-async fn run_fsct(player: &NodePlayer) -> napi::Result<FsctServiceState> {
-    // Create a new FsctServiceState
-    let mut service_state = FsctServiceState::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    // Start the service with the player
-    let player = Player::from_arc(player.player_impl.clone());
-    service_state.start_service_with_player(player).await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    Ok(service_state)
 }
 
 
 #[napi]
 pub struct FsctService {
-    service_handle: Mutex<Option<FsctServiceState>>,
+    driver: Mutex<Option<Arc<LocalDriver>>>,
+    service_handle: Mutex<Option<MultiServiceHandle>>,
 }
 
 #[napi]
@@ -199,51 +187,71 @@ impl FsctService {
     #[napi(constructor)]
     pub fn new() -> Self {
         FsctService {
-            service_handle: Mutex::new(None)
+            driver: Mutex::new(None),
+            service_handle: Mutex::new(None),
         }
     }
 
     #[napi]
     pub async fn run_fsct(&self, player: &NodePlayer) -> napi::Result<()> {
         if self.service_handle.lock().unwrap().is_some() {
-            // if we know at this point that service is already run we don't even try to start it
             return Err(napi::Error::from_reason("FSCT service already run"));
         }
-        let mut new_service_handle = run_fsct(player).await?;
+
+        // Create driver and run background services
+        let driver = Arc::new(LocalDriver::with_new_managers());
+        let handle = driver
+            .run()
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        // Register the node player with the driver and attach it
+        player
+            .player_impl
+            .attach_driver_and_register(driver.clone(), "node-js".to_string())
+            .await?;
+
+        // Store driver and handle if still empty (avoid race)
         {
-            let mut service_impl = self.service_handle.lock().unwrap();
-            if service_impl.is_none() {
-                service_impl.replace(new_service_handle);
+            let mut guard = self.service_handle.lock().unwrap();
+            if guard.is_none() {
+                *self.driver.lock().unwrap() = Some(driver);
+                *guard = Some(handle);
                 return Ok(());
-            } 
+            }
         }
 
-        // if for some reason service has started, during we are starting our new service (i.e. typical race
-        // condition), we stop the new service.
-        new_service_handle.stop_service().await;
-        return Err(napi::Error::from_reason("FSCT service already run"));
+        // If another runner won the race, shutdown the newly created handle and return error
+        handle
+            .shutdown()
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Err(napi::Error::from_reason("FSCT service already run"))
     }
 
     #[napi]
     pub async fn stop_fsct(&self) -> napi::Result<()> {
-        let mut _service_handle = self
-            .service_handle.lock().unwrap()
+        // Take handle and driver
+        let handle = self
+            .service_handle
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| napi::Error::from_reason("FSCT service not run"))?;
-        _service_handle.stop_service().await;
-        Ok(())
+        *self.driver.lock().unwrap() = None;
+
+        handle
+            .shutdown()
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 }
 
 #[napi]
 impl Drop for FsctService {
     fn drop(&mut self) {
-        let _service_handle = self
-            .service_handle.lock().unwrap()
-            .take();
-
-        if let Some(_service_handle) = _service_handle {
-            _service_handle.abort();
-        }
+        // Just drop the handle and driver; we cannot async shutdown here
+        let _ = self.service_handle.lock().unwrap().take();
+        let _ = self.driver.lock().unwrap().take();
     }
 }
