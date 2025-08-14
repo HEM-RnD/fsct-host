@@ -231,14 +231,14 @@ impl PlayerManager {
         Ok(())
     }
 
-    pub async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error>
+    pub async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>
     {
         {
             let players = self.players.lock().unwrap();
             if let Some(player) = players.get(&player_id) {
                 let mut state = player.state.lock().unwrap();
                 let slot = state.texts.get_mut_text(metadata_id);
-                *slot = Some(new_text.clone());
+                *slot = new_text.clone();
             } else {
                 return Err(anyhow::anyhow!("Player not found"));
             }

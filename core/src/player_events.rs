@@ -45,7 +45,7 @@ pub enum PlayerEvent {
     TimelineUpdated { player_id: ManagedPlayerId, timeline: TimelineInfo},
 
     /// Player's state has been partially updated, text metadata has changed.
-    TextMetadataUpdated { player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: String},
+    TextMetadataUpdated { player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: Option<String>},
 
     /// Preferred player selection changed. Contains the new preferred player id or None.
     PreferredChanged { preferred: Option<ManagedPlayerId> },

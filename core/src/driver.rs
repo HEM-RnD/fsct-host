@@ -46,7 +46,7 @@ pub trait FsctDriver: Send + Sync {
 
     async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error>;
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error>;
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
 
     fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
     fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
@@ -130,7 +130,7 @@ impl FsctDriver for LocalDriver {
         self.player_manager.update_player_timeline(player_id, new_timeline).await
     }
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: String) -> Result<(), Error> {
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
         self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
     }
 

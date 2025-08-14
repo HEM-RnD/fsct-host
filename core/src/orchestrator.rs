@@ -259,33 +259,44 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
 
     async fn handle_player_timeline_updated(&mut self, player_id: ManagedPlayerId, timeline: TimelineInfo) {
         debug!("TimelineUpdated: player {}", player_id);
+        // Update local state
         if let Some(player) = self.players.get_mut(&player_id) {
-            player.state.timeline = Some(timeline);
+            player.state.timeline = Some(timeline.clone());
         }
-        // No selection recompute for timeline-only changes
-        for device in self.connected_devices.values() {
-            let mut device = device.lock().unwrap();
-            if device.player_id == Some(player_id) {
-                device.requires_update = true;
+        // Directly apply only the timeline to devices currently showing this player
+        for (device_id, device) in self.connected_devices.iter() {
+            let is_selected = {
+                let device = device.lock().unwrap();
+                device.player_id == Some(player_id)
+            };
+            if is_selected {
+                // best-effort; ignore errors here like other handlers
+                self.applier.apply_timeline(device_id.clone(), Some(timeline.clone())).await.ok();
             }
         }
-        self.apply_on_devices_requiring_update().await;
+        // Do not mark devices for full update; no selection recompute needed for timeline-only changes
     }
 
-    async fn handle_player_text_metadata_updated(&mut self, player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: String) {
+    async fn handle_player_text_metadata_updated(&mut self, player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: Option<String>) {
         debug!("TextMetadataUpdated: player {} {:?}", player_id, metadata);
-        if let Some(player) = self.players.get_mut(&player_id) {
-            let slot = player.state.texts.get_mut_text(metadata);
-            *slot = Some(text);
-        }
-        // No selection recompute for text-only changes
-        for device in self.connected_devices.values() {
-            let mut device = device.lock().unwrap();
-            if device.player_id == Some(player_id) {
-                device.requires_update = true;
+        // Convert Option<String> to Option<&str> for apply_text
+        let text_ref = text.as_deref();
+        // Directly apply only the specific text to devices currently showing this player
+        for (device_id, device) in self.connected_devices.iter() {
+            let is_selected = {
+                let device = device.lock().unwrap();
+                device.player_id == Some(player_id)
+            };
+            if is_selected {
+                self.applier.apply_text(device_id.clone(), metadata, text_ref).await.ok();
             }
         }
-        self.apply_on_devices_requiring_update().await;
+        // Update local state after applies
+        if let Some(player) = self.players.get_mut(&player_id) {
+            let slot = player.state.texts.get_mut_text(metadata);
+            *slot = text;
+        }
+        // Do not trigger full apply
     }
 
     async fn handle_preferred_changed(&mut self, preferred: Option<ManagedPlayerId>) {
@@ -531,13 +542,30 @@ mod tests {
         state: PlayerState,
     }
 
+    #[derive(Debug, Clone, PartialEq)]
+    struct TimelineCall {
+        device: ManagedDeviceId,
+        timeline: Option<TimelineInfo>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct TextCall {
+        device: ManagedDeviceId,
+        text_id: FsctTextMetadata,
+        text: Option<String>,
+    }
+
     struct MockApplier {
-        calls: Mutex<Vec<ApplyCall>>,
+        calls: Mutex<Vec<ApplyCall>>, // full applies
+        timeline_calls: Mutex<Vec<TimelineCall>>, // partial timeline applies
+        text_calls: Mutex<Vec<TextCall>>, // partial text applies
     }
 
     impl MockApplier {
-        fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()) }) }
+        fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()), timeline_calls: Mutex::new(Vec::new()), text_calls: Mutex::new(Vec::new()) }) }
         fn take(&self) -> Vec<ApplyCall> { std::mem::take(&mut self.calls.lock().unwrap()) }
+        fn take_timeline(&self) -> Vec<TimelineCall> { std::mem::take(&mut self.timeline_calls.lock().unwrap()) }
+        fn take_text(&self) -> Vec<TextCall> { std::mem::take(&mut self.text_calls.lock().unwrap()) }
     }
 
     impl PlayerStateApplier for MockApplier {
@@ -548,7 +576,6 @@ mod tests {
                 let mut guard = self.calls.lock().unwrap();
                 let duplicate = guard.iter().any(|c| c.device == device_id && c.state == st);
                 if !duplicate {
-                    // debug print in tests to understand sequences
                     #[cfg(test)]
                     {
                         println!("APPLY dev={:?} status={:?}", device_id, st.status);
@@ -564,14 +591,21 @@ mod tests {
             Box::pin(async move { Ok(()) })
         }
 
-        fn apply_timeline<'a>(&'a self, _device_id: ManagedDeviceId, _timeline: Option<crate::definitions::TimelineInfo>)
+        fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<crate::definitions::TimelineInfo>)
             -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
-            Box::pin(async move { Ok(()) })
+            Box::pin(async move {
+                self.timeline_calls.lock().unwrap().push(TimelineCall { device: device_id, timeline: timeline.clone() });
+                Ok(())
+            })
         }
 
-        fn apply_text<'a>(&'a self, _device_id: ManagedDeviceId, _text_id: crate::definitions::FsctTextMetadata, _text: Option<&'a str>)
+        fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: crate::definitions::FsctTextMetadata, text: Option<&'a str>)
             -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
-            Box::pin(async move { Ok(()) })
+            let owned = text.map(|s| s.to_string());
+            Box::pin(async move {
+                self.text_calls.lock().unwrap().push(TextCall { device: device_id, text_id, text: owned });
+                Ok(())
+            })
         }
     }
 
@@ -709,8 +743,7 @@ mod tests {
         let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
         short_wait().await;
 
-        let mut s1 = default_state_with_title("S1");
-        let mut s2 = default_state_with_title("S2");
+        let s1 = default_state_with_title("S1");
         let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
         short_wait().await;
         let _ = dtx.send(DeviceEvent::Added(d));
@@ -1166,5 +1199,113 @@ mod tests {
 
         let sorted = sort_by_preference(&items);
         assert_eq!(sorted[0], playing_other);
+    }
+
+    #[tokio::test]
+    async fn timeline_update_triggers_partial_apply_only() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(101);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p101".into() });
+        let mut s1 = default_state_with_title("Initial");
+        s1.status = FsctStatus::Playing;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let _ = applier.take(); // clear initial full apply(s)
+
+        // Send timeline update
+        let tl = TimelineInfo {
+            position: std::time::Duration::from_secs(12),
+            update_time: std::time::SystemTime::now(),
+            duration: std::time::Duration::from_secs(300),
+            rate: 1.0,
+        };
+        let _ = ptx.send(PlayerEvent::TimelineUpdated { player_id: p1, timeline: tl.clone() });
+        short_wait().await;
+
+        // Expect only partial timeline calls, no full apply
+        let full_calls = applier.take();
+        let tl_calls = applier.take_timeline();
+        assert!(full_calls.is_empty(), "Timeline update should not trigger full apply_to_device");
+        assert_eq!(tl_calls.len(), 1, "Expected exactly one timeline partial apply");
+        assert_eq!(tl_calls[0].device, d);
+        assert_eq!(tl_calls[0].timeline, Some(tl));
+
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn text_update_triggers_partial_apply_only() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(102);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p102".into() });
+        let mut s1 = default_state_with_title("Initial");
+        s1.status = FsctStatus::Playing;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let _ = applier.take(); // clear initial full apply(s)
+
+        // Send text metadata update
+        let new_title = "New Title".to_string();
+        let _ = ptx.send(PlayerEvent::TextMetadataUpdated { player_id: p1, metadata: FsctTextMetadata::CurrentTitle, text: Some(new_title.clone()) });
+        short_wait().await;
+
+        let full_calls = applier.take();
+        let txt_calls = applier.take_text();
+        assert!(full_calls.is_empty(), "Text update should not trigger full apply_to_device");
+        assert_eq!(txt_calls.len(), 1, "Expected exactly one text partial apply");
+        assert_eq!(txt_calls[0].device, d);
+        assert_eq!(txt_calls[0].text_id, FsctTextMetadata::CurrentTitle);
+        assert_eq!(txt_calls[0].text, Some(new_title));
+
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn status_update_reassigns_and_full_apply() {
+        let applier = MockApplier::new();
+        let (orch, ptx, dtx) = build_orchestrator(applier.clone());
+        let handle = run_orchestrator(orch).await;
+
+        let p1 = pid(201);
+        let p2 = pid(202);
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p201".into() });
+        let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p202".into() });
+
+        let mut s1 = default_state_with_title("P1");
+        s1.status = FsctStatus::Playing;
+        let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+
+        let d = make_ids(1)[0];
+        let _ = dtx.send(DeviceEvent::Added(d));
+        short_wait().await;
+        let _ = applier.take(); // p1 applied due to selection
+
+        // Assign p2 to this device, but no state yet; ensure no apply happens
+        let _ = ptx.send(PlayerEvent::Assigned { player_id: p2, device_id: d });
+        short_wait().await;
+        assert!(applier.take().is_empty());
+
+        // Now status update on p2 should cause selection to switch and trigger full apply
+        let _ = ptx.send(PlayerEvent::StatusUpdated { player_id: p2, status: FsctStatus::Playing });
+        short_wait().await;
+        let calls = applier.take();
+        assert_eq!(calls.len(), 1, "Expected one full apply after status change causing reassignment");
+        assert_eq!(calls[0].device, d);
+        assert_eq!(calls[0].state.status, FsctStatus::Playing);
+        // And no partials recorded for this scenario
+        assert!(applier.take_timeline().is_empty());
+        assert!(applier.take_text().is_empty());
+
+        let _ = handle.shutdown().await;
     }
 }
