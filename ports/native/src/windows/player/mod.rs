@@ -256,9 +256,6 @@ impl WindowsOsWatcher {
         })
     }
 
-    fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
-        Ok(self.handles.lock().unwrap().as_ref().ok_or(PlayerError::PlayerNotFound)?.session.clone())
-    }
 
     async fn init_session_manager(&self, session_manager: &GlobalSystemMediaTransportControlsSessionManager,
                                   notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(),
