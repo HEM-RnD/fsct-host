@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio::sync::broadcast;
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo, ProtocolVersion, FSCT_PROTOCOL_VERSION};
 use crate::device_manager::{DeviceManager, ManagedDeviceId};
 use crate::player_events::PlayerEvent;
 use crate::player_manager::{ManagedPlayerId, PlayerManager};
@@ -33,6 +33,9 @@ use crate::usb_device_watch::run_usb_device_watch;
 /// in-process implementation or a future IPC-based implementation.
 #[async_trait]
 pub trait FsctDriver: Send + Sync {
+    /// Return current FSCT protocol version supported by this driver implementation.
+    fn get_protocol_version(&self) -> ProtocolVersion;
+
     // --- Player management ---
     async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error>;
     async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error>;
@@ -101,6 +104,10 @@ impl LocalDriver {
 
 #[async_trait]
 impl FsctDriver for LocalDriver {
+    fn get_protocol_version(&self) -> ProtocolVersion {
+        FSCT_PROTOCOL_VERSION
+    }
+
     async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error> {
         // register_player only needs &self
         self.player_manager.register_player(self_id).await
@@ -152,4 +159,19 @@ impl FsctDriver for LocalDriver {
 
 
 
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protocol_version_is_constant() {
+        let driver = LocalDriver::with_new_managers();
+        let v = driver.get_protocol_version();
+        assert_eq!(v, FSCT_PROTOCOL_VERSION);
+        assert_eq!(v.major, FSCT_PROTOCOL_VERSION.major);
+        assert_eq!(v.minor, FSCT_PROTOCOL_VERSION.minor);
+    }
 }

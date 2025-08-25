@@ -27,6 +27,7 @@ pub mod device_manager;
 pub mod usb_device_watch;
 pub mod player_state;
 mod device_uuid_calculator;
+mod ipc;
 
 pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
@@ -42,3 +43,7 @@ pub use usb_device_watch::run_usb_device_watch;
 pub use service::{ServiceHandle, StopHandle, spawn_service, MultiServiceHandle};
 
 pub use nusb::DeviceId;
+
+
+// Re-export protocol version types
+pub use definitions::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
