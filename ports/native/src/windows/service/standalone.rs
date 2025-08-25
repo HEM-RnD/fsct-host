@@ -17,12 +17,13 @@
 
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
-use fsct_core::run_service;
+use std::sync::Arc;
+use fsct_core::{LocalDriver, MultiServiceHandle};
 
-use crate::initialize_native_platform_player;
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
+use crate::run_os_watcher;
 
 async fn shutdown_signal() {
     debug!("Press Ctrl+C or close the console window to exit");
@@ -40,6 +41,31 @@ async fn shutdown_signal() {
     }
 }
 
+async fn standalone_task() -> anyhow::Result<()> {
+    debug!("Creating LocalDriver and starting services");
+    let driver = Arc::new(LocalDriver::with_new_managers());
+
+    debug!("Starting orchestrator + USB watch via LocalDriver::run()");
+    let mut services = driver.run().await
+                             .inspect(|_| debug!("Orchestrator + USB watch started successfully"))
+                             .map_err(|e| anyhow::anyhow!("Failed to start orchestrator + USB watch: {}", e))?;
+
+
+    debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
+
+    let result = run_os_watcher(driver.clone()).await
+                                               .map(|w| services.add(w))
+                                               .inspect_err(|e| error!("Failed to start OS watcher: {:?}", e));
+
+    if result.is_ok() {
+        shutdown_signal().await;
+    }
+
+    debug!("Shutting down services");
+    services.shutdown().await.map_err(|e| anyhow::anyhow!("Failed to shutdown services: {}", e))?;
+    Ok(())
+}
+
 // Function to run the service in standalone mode (for debugging)
 pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
     // Initialize logger for standalone mode
@@ -55,42 +81,9 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        debug!("Initializing native platform player");
-        let platform_global_player = match initialize_native_platform_player().await {
-            Ok(player) => player,
-            Err(e) => {
-                error!("Failed to initialize player: {}", e);
-                return;
-            }
-        };
-
-        // Start the service
-        debug!("Starting service");
-        let service_result = run_service(platform_global_player).await;
-
-        // Handle service start result
-        let devices_watch_handle = match service_result {
-            Ok(handle) => {
-                debug!("Service started successfully");
-                Some(handle)
-            },
-            Err(e) => {
-                error!("Service error: {}", e);
-                None
-            }
-        };
-
-        // Wait for Ctrl+C or shutdown signal
-        shutdown_signal().await;
-
-        // Shutdown service if it was started successfully
-        if let Some(handle) = devices_watch_handle {
-            debug!("Shutting down service");
-            if let Err(e) = handle.shutdown().await {
-                error!("Error shutting down service: {}", e);
-            }
-        }
-
+        standalone_task().await
+                         .map_err(|e| error!("Failed with error: {}", e))
+                         .ok();
     });
 
     debug!("Standalone mode exited");

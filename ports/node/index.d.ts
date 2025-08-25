@@ -46,9 +46,9 @@ export declare function initSystemdLogger(syslogIdentifier: string): void
 export declare function setLogLevel(level: LogLevelFilter): void
 export declare class NodePlayer {
   constructor()
-  setStatus(status: PlayerStatus): void
-  setTimeline(timeline?: TimelineInfo | undefined | null): void
-  setText(textType: CurrentTextMetadata, text?: string | undefined | null): void
+  setStatus(status: PlayerStatus): Promise<void>
+  setTimeline(timeline?: TimelineInfo | undefined | null): Promise<void>
+  setText(textType: CurrentTextMetadata, text?: string | undefined | null): Promise<void>
 }
 export declare class FsctService {
   constructor()

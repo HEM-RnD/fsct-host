@@ -16,6 +16,7 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::ffi::OsString;
+use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
 use log::{info, error, debug};
@@ -31,8 +32,8 @@ use windows_service::{
 };
 use windows_service::service::ServiceType;
 use crate::windows::service::constants::SERVICE_NAME;
-use fsct_core::FsctServiceState;
-use crate::initialize_native_platform_player;
+use fsct_core::LocalDriver;
+use crate::run_os_watcher;
 
 // Define service events
 #[derive(Clone)]
@@ -126,13 +127,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Run the service in the Tokio runtime
     rt.block_on(async {
         // Create a service state to manage the service tasks
-        let mut service_state = match FsctServiceState::new() {
-            Ok(state) => state,
-            Err(e) => {
-                error!("Failed to create service state: {}", e);
-                return;
-            }
-        };
+        let mut service_state;
 
         // Get the current active console session ID
         // This is the session ID of the user who is currently logged on to the physical console
@@ -143,16 +138,28 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         // when the service starts. This is the session that the service is assigned to and should run for.
         // We only start service tasks for this session and stop them for all other sessions.
 
+        // Run driver
+        debug!("Initializing driver");
+        let driver = Arc::new(LocalDriver::with_new_managers());
+        let mut driver_handle = match driver.clone().run().await
+        {
+            Ok(driver_handle) => driver_handle,
+            Err(e) => {
+                error!("Failed to run driver: {}", e);
+                return;
+            }
+        };
+
         // Initialize the player
         debug!("Initializing native platform player");
         let mut retries = 0;
-        let platform_player = loop {
-            match initialize_native_platform_player().await {
+        let os_watcher_handle = loop {
+            match run_os_watcher(driver.clone()).await {
                 Ok(player) => break player,
                 Err(e) => {
                     retries += 1;
                     if retries >= 10 {
-                        error!("Failed to initialize player after 10 retries: {}", e);
+                        error!("Failed to initialize player after 10 retries: {:?}", e);
                         return;
                     }
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -161,11 +168,8 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             }
         };
 
-        // Start the service tasks
-        if let Err(e) = service_state.start_service_with_player(platform_player).await {
-            error!("Failed to start service tasks: {}", e);
-            return;
-        }
+        driver_handle.add(os_watcher_handle);
+        service_state = Some(driver_handle);
 
         // Tell the system that the service is running
         debug!("Setting service status to Running");
@@ -231,20 +235,31 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 windows_service::service::SessionChangeReason::ConsoleConnect |
                                 windows_service::service::SessionChangeReason::RemoteConnect |
                                 windows_service::service::SessionChangeReason::SessionLogon => {
-                                    if !service_state.device_watch_handle.is_some() {
+                                    if service_state.is_none() {
                                         info!("This session ({}) is becoming active, starting service tasks", session_id);
                                         // Initialize the player
                                         debug!("Initializing native platform player");
-                                        match initialize_native_platform_player().await {
-                                            Ok(player) => {
-                                                if let Err(e) = service_state.start_service_with_player(player).await {
-                                                    error!("Failed to start service tasks: {}", e);
-                                                }
-                                            },
+                                        let mut driver_handle = match driver.clone().run().await
+                                        {
+                                            Ok(driver_handle) => driver_handle,
                                             Err(e) => {
-                                                error!("Failed to initialize player: {}", e);
+                                                error!("Failed to run driver: {}", e);
+                                                continue;
                                             }
-                                        }
+                                        };
+
+                                        // Initialize the player
+                                        debug!("Initializing native platform player");
+                                        let os_watcher_handle = match run_os_watcher(driver.clone()).await {
+                                            Ok(watcher_handle) => watcher_handle,
+                                            Err(e) => {
+                                                    error!("Failed to initialize player: {:?}", e);
+                                                    continue;
+                                                }
+                                        };
+
+                                        driver_handle.add(os_watcher_handle);
+                                        service_state = Some(driver_handle);
                                     } else {
                                         info!("This session ({}) is becoming active, but service has been already
                                         started, ignoring...", session_id);
@@ -252,9 +267,10 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 },
                                 // For session logoff events, we need to stop our service
                                 windows_service::service::SessionChangeReason::SessionLogoff => {
-                                    if service_state.device_watch_handle.is_some() {
+                                    if let Some(service_state) = service_state.take() {
                                         info!("This session ({}) is logging off, stopping service tasks", session_id);
-                                        service_state.stop_service().await;
+                                        service_state.shutdown().await
+                                            .inspect_err(|e| error!("Failed to stop service tasks: {}", e)).ok();
                                     } else {
                                         debug!("This session ({}) is logging off, but service is not started, can't \
                                         stop it, ignoring...", session_id)
@@ -263,10 +279,11 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                                 // For console disconnect events, we should stop our service
                                 windows_service::service::SessionChangeReason::ConsoleDisconnect |
                                 windows_service::service::SessionChangeReason::RemoteDisconnect => {
-                                    if service_state.device_watch_handle.is_some() {
+                                    if let Some(service_state) = service_state.take() {
                                         info!("This session ({}) is disconnecting, stopping service tasks", session_id);
-                                        service_state.stop_service().await;
-                                    } else {
+                                        service_state.shutdown().await
+                                                     .inspect_err(|e| error!("Failed to stop service tasks: {}", e))
+                                            .ok();
                                         debug!("This session ({}) is disconnecting, but service is not started, can't \
                                         stop it, ignoring...",
                                             session_id)
@@ -302,7 +319,12 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Stop the service tasks
         debug!("Stopping service tasks");
-        service_state.stop_service().await;
+        if let Some(service_state) = service_state {
+            if let Err(e) = service_state.shutdown().await
+            {
+                error!("Failed to stop service tasks: {}", e);
+            }
+        }
 
         info!("Exiting service");
     });

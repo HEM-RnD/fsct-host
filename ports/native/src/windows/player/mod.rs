@@ -17,7 +17,6 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use async_trait::async_trait;
 use log::{debug, error, warn};
 use windows::{
     core::Error as WindowsError,
@@ -28,11 +27,18 @@ use windows::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use fsct_core::definitions::{FsctTextMetadata, TimelineInfo};
-use fsct_core::player::{create_player_events_channel, PlayerError, PlayerEvent, PlayerEventsReceiver, PlayerEventsSender, PlayerInterface, PlayerState, TrackMetadata};
-use fsct_core::definitions::FsctStatus;
-use fsct_core::{player, Player};
+use fsct_core::definitions::{TimelineInfo, FsctStatus};
+use fsct_core::player_state::{PlayerState, TrackMetadata};
+use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
+use anyhow::Error as AnyError;
+use windows_core::HRESULT;
 
+#[derive(Debug)]
+pub enum PlayerError {
+    PermissionDenied,
+    PlayerNotFound,
+    Other(AnyError),
+}
 
 fn get_timeline_info(playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,
                      timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties, ) ->
@@ -105,11 +111,11 @@ fn get_rate(playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlay
 
 async fn get_playback_state(session: &GlobalSystemMediaTransportControlsSession) -> Result<PlayerState, PlayerError> {
     let playback_info = session.GetPlaybackInfo().into_player_error()
-        .inspect_err(|e| error!("[WindowsPlayer] Failed to get playback info: {:?}", e)).ok();
+                               .inspect_err(|e| error!("[WindowsPlayer] Failed to get playback info: {:?}", e)).ok();
     let status = playback_info.as_ref().map(|info| get_status(info)).unwrap_or(FsctStatus::Unknown);
 
     let timeline_properties = session.GetTimelineProperties().into_player_error()
-        .inspect_err(|e| error!("[WindowsPlayer] Failed to get timeline properties: {:?}", e)).ok();
+                                     .inspect_err(|e| error!("[WindowsPlayer] Failed to get timeline properties: {:?}", e)).ok();
     let timeline = timeline_properties.as_ref().map(|timeline_properties|
         get_timeline_info(playback_info.as_ref(), timeline_properties).inspect_err(|e| debug!("[WindowsPlayer] Failed to get timeline: {:?}", e)).ok()).flatten().flatten();
 
@@ -213,7 +219,8 @@ impl WindowsSessionHandles {
         };
         debug!("[WindowsPlayer] Session handles created");
         Ok(handles)
-    }}
+    }
+}
 
 impl Drop for WindowsSessionHandles {
     fn drop(&mut self) {
@@ -224,10 +231,10 @@ impl Drop for WindowsSessionHandles {
     }
 }
 
-struct WindowsPlayerImplementation {
-    player_state: Mutex<PlayerState>,
-    player_event_tx: PlayerEventsSender,
-    handles: Mutex<Option<WindowsSessionHandles>>
+struct WindowsOsWatcher {
+    driver: Arc<dyn FsctDriver>,
+    player_id: ManagedPlayerId,
+    handles: Mutex<Option<WindowsSessionHandles>>,
 }
 
 
@@ -239,20 +246,16 @@ async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessi
     Ok(session_manager)
 }
 
-impl WindowsPlayerImplementation {
-
-    fn new() -> Self {
-        let (player_event_tx, _) = create_player_events_channel();
-        WindowsPlayerImplementation {
-            player_state: Mutex::new(PlayerState::default()),
-            player_event_tx,
+impl WindowsOsWatcher {
+    async fn new_with_driver(driver: Arc<dyn FsctDriver>) -> Result<Self, PlayerError> {
+        let player_id = driver.register_player("native-windows-gsmtc".to_string()).await.map_err(|e| PlayerError::Other(e.into()))?;
+        Ok(WindowsOsWatcher {
+            driver,
+            player_id,
             handles: Mutex::new(None),
-        }
+        })
     }
 
-    fn get_session(&self) -> Result<GlobalSystemMediaTransportControlsSession, PlayerError> {
-        Ok(self.handles.lock().unwrap().as_ref().ok_or(PlayerError::PlayerNotFound)?.session.clone())
-    }
 
     async fn init_session_manager(&self, session_manager: &GlobalSystemMediaTransportControlsSessionManager,
                                   notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) -> Result<(),
@@ -276,15 +279,18 @@ impl WindowsPlayerImplementation {
         let session_manager = session_manager.ok_or(PlayerError::PermissionDenied)?;
         let session = session_manager
             .GetCurrentSession()
-            .inspect_err(|e| error!("[WindowsPlayer] Can't get current session, error: {:?}", e))
+            .inspect_err(|e|
+                if e.code() != HRESULT(0) {
+                    error!("[WindowsPlayer] Can't get current session, error: {:?}",e)
+                }
+            )
             .into_player_error()?;
         debug!("[WindowsPlayer] Current session: {:?}", session);
         let new_player_state = get_playback_state(&session).await?;
         debug!("[WindowsPlayer] New player state: {:?}", new_player_state);
         self.handles.lock().unwrap().take();
-        *self.player_state.lock().unwrap() = new_player_state;
         *self.handles.lock().unwrap() = Some(WindowsSessionHandles::new(session, notification_sender)?);
-
+        self.driver.update_player_state(self.player_id, new_player_state).await.map_err(|e| PlayerError::Other(e.into()))?;
         Ok(())
     }
 
@@ -293,11 +299,8 @@ impl WindowsPlayerImplementation {
                                     notification_sender: tokio::sync::mpsc::Sender<WindowsNotification>) {
         if self.try_update_current_session(session_manager, notification_sender).await.is_err() {
             debug!("[WindowsPlayer] Cannot init current session, resetting state");
-            *self.player_state.lock().unwrap() = PlayerState::default();
+            let _ = self.driver.update_player_state(self.player_id, PlayerState::default()).await;
         }
-
-        let player_state = self.player_state.lock().unwrap().clone();
-        player::send_all_changed(&player_state, &self.player_event_tx);
     }
 
     fn is_current_session(&self, session: &GlobalSystemMediaTransportControlsSession) -> bool {
@@ -308,15 +311,15 @@ impl WindowsPlayerImplementation {
         let handles = handles.as_ref().unwrap();
         *session == handles.session
     }
-    async fn run_notification_task(self: Arc<Self>) -> Result<(), PlayerError> {
-        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(async move {
+    async fn run_notification_task(self: Arc<Self>) -> Result<ServiceHandle, PlayerError> {
+        let (startup_done_signal, startup_awaiter) = tokio::sync::oneshot::channel::<()>();
+        let service_handle = spawn_service(move |mut stop_token| async move {
             debug!("[WindowsPlayer] Notification task started");
             // it is important to create and leave session_manager in this task forever in order not to lose notifications
             let session_manager = get_session_manager().await;
             if session_manager.is_err() {
                 debug!("[WindowsPlayer] Failed to get session manager");
-                oneshot_tx.send(()).unwrap_or_default();
+                startup_done_signal.send(()).unwrap_or_default();
                 return;
             }
             let (notification_sender, mut notification_receiver) = tokio::sync::mpsc::channel::<WindowsNotification>(100);
@@ -324,20 +327,24 @@ impl WindowsPlayerImplementation {
             let session_manager = session_manager.unwrap();
             if self.init_session_manager(&session_manager, notification_sender.clone()).await.is_err() {
                 debug!("[WindowsPlayer] Failed to init session manager");
-                oneshot_tx.send(()).unwrap_or_default();
+                startup_done_signal.send(()).unwrap_or_default();
                 return;
             }
             self.update_current_session(Some(&session_manager), notification_sender.clone()).await;
-            oneshot_tx.send(()).unwrap_or_default();
+            startup_done_signal.send(()).unwrap_or_default();
 
-            while let Some(notification) = notification_receiver.recv().await {
+            while let Some(notification) = tokio::select! {
+                                                                Some(n) = notification_receiver.recv() => Some(n),
+                                                                _ = stop_token.signaled() => None,
+                                                            }
+            {
                 match notification {
                     WindowsNotification::CurrentSessionChanged(session_manager) => {
                         debug!("[WindowsPlayer] Current session changed");
                         self.update_current_session(session_manager.as_ref(), notification_sender.clone())
                             .await;
                     }
-                    WindowsNotification::SessionNotification{topic, session} => {
+                    WindowsNotification::SessionNotification { topic, session } => {
                         debug!("[WindowsPlayer] Session notification");
                         self.handle_session_notification(topic, session).await;
                     }
@@ -345,7 +352,8 @@ impl WindowsPlayerImplementation {
             }
             debug!("[WindowsPlayer] Notification task stopped");
         });
-        oneshot_rx.await.map_err(|_| PlayerError::PermissionDenied)
+        startup_awaiter.await.map_err(|_| PlayerError::PermissionDenied)?;
+        Ok(service_handle)
     }
 
     async fn handle_session_notification(&self, topic: SessionNotificationTopic, session:
@@ -357,11 +365,11 @@ impl WindowsPlayerImplementation {
             match topic {
                 SessionNotificationTopic::PlaybackInfoChanged => {
                     debug!("[WindowsPlayer] Playback info changed");
-                    self.handle_playback_info_changed(session);
+                    self.handle_playback_info_changed(session).await;
                 }
                 SessionNotificationTopic::TimelinePropertiesChanged => {
                     debug!("[WindowsPlayer] Timeline properties changed");
-                    self.handle_timeline_properties_changed(session);
+                    self.handle_timeline_properties_changed(session).await;
                 }
                 SessionNotificationTopic::MediaPropertiesChanged => {
                     debug!("[WindowsPlayer] Media properties changed");
@@ -372,73 +380,33 @@ impl WindowsPlayerImplementation {
     }
 
     async fn handle_media_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        if let Some(texts) = get_texts_from_session(&session).await.ok() {
-            let player_event_tx = &self.player_event_tx;
-            let mut player_state = self.player_state.lock().unwrap();
-            if player_state.texts.title != texts.title {
-                player_state.texts.title = texts.title.clone();
-                player_event_tx.send(PlayerEvent::TextChanged((
-                    FsctTextMetadata::CurrentTitle,
-                    texts.title,
-                ))).unwrap_or_default();
-            }
-            if player_state.texts.artist != texts.artist {
-                player_state.texts.artist = texts.artist.clone();
-                player_event_tx.send(PlayerEvent::TextChanged((
-                    FsctTextMetadata::CurrentAuthor,
-                    texts.artist,
-                ))).unwrap_or_default();
-            }
-            if player_state.texts.album != texts.album {
-                player_state.texts.album = texts.album.clone();
-                player_event_tx.send(PlayerEvent::TextChanged((
-                    FsctTextMetadata::CurrentAlbum,
-                    texts.album,
-                ))).unwrap_or_default();
+        // Partial update: update only text metadata fields that we can fetch
+        if let Ok(texts) = get_texts_from_session(&session).await {
+            for meta_id in texts.iter_id() {
+                let value = texts.get_text(*meta_id).clone();
+                let _ = self.driver.update_player_metadata(self.player_id, *meta_id, value).await;
             }
         }
     }
 
-    fn handle_timeline_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        let playback_info = session.GetPlaybackInfo().ok();
-        let timeline_properties = session.GetTimelineProperties().ok();
-        let mut player_state = self.player_state.lock().unwrap();
-        if playback_info.is_none() || timeline_properties.is_none() {
-            player_state.timeline = None;
-            self.player_event_tx.send(PlayerEvent::TimelineChanged(None)).unwrap_or_default();
-            return;
-        }
-        let playback_info = playback_info.unwrap();
-        let timeline_properties = timeline_properties.unwrap();
-        let timeline = get_timeline_info(Some(&playback_info), &timeline_properties).ok().flatten();
-
-        if timeline == player_state.timeline {
-            return;
-        }
-        player_state.timeline = timeline.clone();
-        self.player_event_tx.send(PlayerEvent::TimelineChanged(timeline)).unwrap_or_default();
-    }
-
-    fn handle_playback_info_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        let playback_info = session.GetPlaybackInfo().ok();
-        if let Some(playback_info) = playback_info {
-            let status = get_status(&playback_info);
-            let rate = get_rate(Some(&playback_info));
-            let mut player_state = self.player_state.lock().unwrap();
-            if player_state.status != status {
-                player_state.status = status;
-                self.player_event_tx.send(PlayerEvent::StatusChanged(status)).unwrap_or_default();
-            }
-            if let Some(timeline) = &mut player_state.timeline {
-                timeline.rate = rate;
-                self.player_event_tx.send(PlayerEvent::TimelineChanged(Some(timeline.clone()))).unwrap_or_default();
+    async fn handle_timeline_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
+        // Partial update: recompute timeline (position, duration, rate)
+        let playback_info = session.GetPlaybackInfo().into_player_error().ok();
+        let timeline_props = session.GetTimelineProperties().into_player_error().ok();
+        if let Some(tprops) = timeline_props {
+            if let Ok(Some(timeline)) = get_timeline_info(playback_info.as_ref(), &tprops) {
+                let _ = self.driver.update_player_timeline(self.player_id, Some(timeline)).await;
             }
         }
     }
-}
 
-pub struct WindowsSystemPlayer {
-    implementation: Arc<WindowsPlayerImplementation>,
+    async fn handle_playback_info_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
+        // Partial update: update only playback status
+        if let Ok(info) = session.GetPlaybackInfo().into_player_error() {
+            let status = get_status(&info);
+            let _ = self.driver.update_player_status(self.player_id, status).await;
+        }
+    }
 }
 
 enum SessionNotificationTopic {
@@ -449,61 +417,20 @@ enum SessionNotificationTopic {
 
 enum WindowsNotification {
     CurrentSessionChanged(Option<GlobalSystemMediaTransportControlsSessionManager>),
-    SessionNotification{
+    SessionNotification {
         topic: SessionNotificationTopic,
         session: Option<GlobalSystemMediaTransportControlsSession>,
-    }
+    },
 }
 
 
 const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
 
-
-impl WindowsSystemPlayer {
-    pub async fn new() -> Result<Self, PlayerError> {
-        let internals = Arc::new(WindowsPlayerImplementation::new());
-        internals.clone().run_notification_task().await?;
-        Ok(Self { implementation: internals })
-    }
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> Result<ServiceHandle, PlayerError> {
+    let windows_watcher = Arc::new(WindowsOsWatcher::new_with_driver(driver).await?);
+    windows_watcher.run_notification_task().await
 }
 
-#[async_trait]
-impl PlayerInterface for WindowsSystemPlayer {
-    async fn get_current_state(&self) -> Result<PlayerState, PlayerError> {
-        Ok(self.implementation.player_state.lock().unwrap().clone())
-    }
-    async fn play(&self) -> Result<(), PlayerError> {
-        self.implementation.get_session()?.TryPlayAsync().into_player_error()?.await.into_player_error()?;
-        Ok(())
-    }
 
-    async fn pause(&self) -> Result<(), PlayerError> {
-        self.implementation.get_session()?.TryPauseAsync().into_player_error()?.await.into_player_error()?;
-        Ok(())
-    }
 
-    async fn stop(&self) -> Result<(), PlayerError> {
-        self.implementation.get_session()?.TryStopAsync().into_player_error()?.await.into_player_error()?;
-        Ok(())
-    }
-
-    async fn next_track(&self) -> Result<(), PlayerError> {
-        self.implementation.get_session()?.TrySkipNextAsync().into_player_error()?.await.into_player_error()?;
-        Ok(())
-    }
-
-    async fn previous_track(&self) -> Result<(), PlayerError> {
-        self.implementation.get_session()?.TrySkipPreviousAsync().into_player_error()?.await.into_player_error()?;
-        Ok(())
-    }
-
-    async fn listen_to_player_notifications(&self) -> Result<PlayerEventsReceiver, PlayerError> {
-        Ok(self.implementation.player_event_tx.subscribe())
-    }
-}
-
-pub async fn initialize_native_platform_player() -> anyhow::Result<Player> {
-    let windows_player = WindowsSystemPlayer::new().await?;
-    Ok(Player::new(windows_player))
-}
