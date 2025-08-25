@@ -18,7 +18,7 @@
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use fsct_core::LocalDriver;
+use fsct_core::{LocalDriver, MultiServiceHandle};
 
 use crate::windows::service::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
@@ -41,6 +41,31 @@ async fn shutdown_signal() {
     }
 }
 
+async fn standalone_task() -> anyhow::Result<()> {
+    debug!("Creating LocalDriver and starting services");
+    let driver = Arc::new(LocalDriver::with_new_managers());
+
+    debug!("Starting orchestrator + USB watch via LocalDriver::run()");
+    let mut services = driver.run().await
+                             .inspect(|_| debug!("Orchestrator + USB watch started successfully"))
+                             .map_err(|e| anyhow::anyhow!("Failed to start orchestrator + USB watch: {}", e))?;
+
+
+    debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
+
+    let result = run_os_watcher(driver.clone()).await
+                                               .map(|w| services.add(w))
+                                               .inspect_err(|e| error!("Failed to start OS watcher: {:?}", e));
+
+    if result.is_ok() {
+        shutdown_signal().await;
+    }
+
+    debug!("Shutting down services");
+    services.shutdown().await.map_err(|e| anyhow::anyhow!("Failed to shutdown services: {}", e))?;
+    Ok(())
+}
+
 // Function to run the service in standalone mode (for debugging)
 pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
     // Initialize logger for standalone mode
@@ -56,47 +81,9 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        debug!("Creating LocalDriver and starting services");
-        let driver = Arc::new(LocalDriver::with_new_managers());
-
-        debug!("Starting orchestrator + USB watch via LocalDriver::run()");
-        let mut services = match driver.run().await {
-            Ok(handle) => {
-                debug!("Services started successfully");
-                handle
-            }
-            Err(e) => {
-                error!("Failed to start services: {}", e);
-                return;
-            }
-        };
-
-        debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
-        let ok = match run_os_watcher(driver.clone()).await {
-            Ok(w) => {
-                services.add(w);
-                true
-            }
-            Err(e) => {
-                error!("Failed to start GSMTC watcher: {:?}", e);
-                false
-            }
-        };
-
-        if ok {
-            // Wait for Ctrl+C or shutdown signal
-            shutdown_signal().await;
-        } else {
-            // Nothing to run, just exit
-        }
-
-        // Shutdown services if they were started successfully
-
-        debug!("Shutting down services");
-        if let Err(e) = services.shutdown().await {
-            error!("Error shutting down services: {}", e);
-        }
-
+        standalone_task().await
+                         .map_err(|e| error!("Failed with error: {}", e))
+                         .ok();
     });
 
     debug!("Standalone mode exited");
