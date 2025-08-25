@@ -32,6 +32,7 @@ use tokio::task::JoinSet;
 use futures::StreamExt;
 
 use crate::FsctDriver;
+use crate::FSCT_PROTOCOL_VERSION;
 
 use msgpack_rpc::{serve, Service, Value};
 use std::future::Future;
@@ -86,7 +87,7 @@ impl IpcServer {
             let _ = std::fs::remove_file(endpoint);
         }
 
-        let mut incoming = Endpoint::new(endpoint.clone()).incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+        let incoming = Endpoint::new(endpoint.clone()).incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
 
         let mut tasks = JoinSet::new();
         let driver = self.driver.clone();
@@ -146,7 +147,7 @@ where
                         if param_len != 0 {
                             return Err("params not expected".into());
                         }
-                        let v = d.get_protocol_version();
+                        let v = FSCT_PROTOCOL_VERSION;
                         let result = Value::Map(vec![
                             (Value::from("major"), Value::from(v.major as u64)),
                             (Value::from("minor"), Value::from(v.minor as u64)),

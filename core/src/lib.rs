@@ -27,7 +27,7 @@ pub mod device_manager;
 pub mod usb_device_watch;
 pub mod player_state;
 mod device_uuid_calculator;
-mod ipc;
+pub mod ipc;
 
 pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
