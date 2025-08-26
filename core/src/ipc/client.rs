@@ -131,12 +131,28 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    async fn assign_player_to_device(&self, _player_id: ManagedPlayerId, _device_id: ManagedDeviceId) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request(
+                "assign_player_to_device",
+                &[Value::from(player_id.get() as u64), Value::Binary(device_id.as_bytes().to_vec())],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
-    async fn unassign_player_from_device(&self, _player_id: ManagedPlayerId, _device_id: ManagedDeviceId) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request(
+                "unassign_player_from_device",
+                &[Value::from(player_id.get() as u64), Value::Binary(device_id.as_bytes().to_vec())],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
     async fn update_player_state(&self, _player_id: ManagedPlayerId, _new_state: PlayerState) -> Result<(), Error> {

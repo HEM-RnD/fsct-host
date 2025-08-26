@@ -32,11 +32,13 @@ use tokio::task::JoinSet;
 use futures::StreamExt;
 
 use crate::{FsctDriver, ProtocolVersion};
+use uuid::Uuid;
 use crate::FSCT_PROTOCOL_VERSION;
 
 use msgpack_rpc::{serve, Service, Value};
 use std::future::Future;
 use std::pin::Pin;
+use anyhow::{anyhow, bail, Context};
 
 /// Default endpoint resolver based on platform and optional FSCT_IPC_ENDPOINT override.
 fn default_endpoint() -> String {
@@ -153,6 +155,36 @@ impl Into<Value> for Nil {
     }
 }
 
+fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error> {
+    let pid_u64 = param.as_u64()
+        .with_context(|| "invalid param: player_id must be integer")?;
+    let pid = std::num::NonZeroU32::new(pid_u64 as u32)
+        .with_context(|| "invalid player_id: must be non-zero")?;
+    Ok(pid)
+}
+
+fn parse_device_id(param: &Value) -> Result<Uuid, anyhow::Error> {
+    let did_bytes = param.as_slice()
+        .with_context(|| "invalid param: device_id must be binary")?;
+    if did_bytes.len() != 16 {
+        bail!("invalid device_id: uuid binary must be 16 bytes");
+    }
+    let did = Uuid::from_slice(did_bytes)
+        .with_context(|| "invalid device_id: must be valid 16-byte uuid")?;
+    Ok(did)
+}
+
+fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &str) -> Result<(), anyhow::Error> {
+    if params.len() != expected_len {
+        return Err(anyhow!("expected {} param{}{}{}",
+                           expected_len,
+                           if expected_len == 1 { "" } else { "s" },
+                           if expected_params_names.is_empty() { "" } else { ": " },
+                           expected_params_names));
+    }
+    Ok(())
+}
+
 impl FsctRpcService {
     fn handle_function<Params, Return, RequestAsyncOnDriver, ParseParamsFn, RequestFn>(
         &self,
@@ -163,20 +195,20 @@ impl FsctRpcService {
     where
         Params: Send + 'static,
         Return: Into<Value>,
-        RequestAsyncOnDriver: Future<Output=Result<Return, String>> + Send + 'static,
-        ParseParamsFn: FnOnce(&FsctRpcService, &[Value]) -> Result<Params, String>,
+        RequestAsyncOnDriver: Future<Output=Result<Return, anyhow::Error>> + Send + 'static,
+        ParseParamsFn: FnOnce(&FsctRpcService, &[Value]) -> Result<Params, anyhow::Error>,
         RequestFn: FnOnce(Arc<dyn FsctDriver>, Params) -> RequestAsyncOnDriver + Send + 'static,
     {
         let parsed_params = parse_params(self, params);
         if let Err(e) = parsed_params {
-            return fut_err(e);
+            return fut_err(e.to_string());
         }
         let parsed_params = parsed_params.unwrap();
         let d = self.driver.clone();
         Box::pin(async move {
             let ret = request_async_on_driver(d, parsed_params)
                 .await
-                .map_err(|e| Value::from(e))?;
+                .map_err(|e| Value::from(e.to_string()))?;
             Ok(ret.into())
         })
     }
@@ -185,11 +217,7 @@ impl FsctRpcService {
             params,
             |_, params|
                 {
-                    if !params.is_empty() {
-                        Err("expected 0 params".into())
-                    } else {
-                        Ok(())
-                    }
+                    expect_params(params, 0, "")
                 },
             async |_driver, _params|
                 {
@@ -202,20 +230,18 @@ impl FsctRpcService {
             params,
             |_, params|
                 {
-                    if params.len() != 1 {
-                        return Err("expected 1 param: self_id".into());
-                    }
+                    expect_params(params, 1, "self_id")?;
                     params[0]
                         .as_str()
                         .map(String::from)
-                        .ok_or_else(|| "invalid param: self_id must be string".into())
+                        .with_context(|| "invalid param: self_id must be string")
                 },
             async |driver, self_id| {
-                let pid = driver
+                driver
                     .register_player(self_id)
                     .await
-                    .map_err(|e| format!("register_player error: {}", e))?;
-                Ok(pid.get())
+                    .map(|v| v.get())
+                    .with_context(|| "register_player error")
             })
     }
 
@@ -224,24 +250,50 @@ impl FsctRpcService {
             params,
             |_, params|
                 {
-                    if params.len() != 1 {
-                        return Err("expected 1 param: player_id".into());
-                    }
-                    let pid_num_u32 = params[0].as_u64().map(|v|v as u32)
-                        .ok_or_else(|| "invalid param: player_id must be integer")?;
-
-                    let pid = std::num::NonZeroU32::new(pid_num_u32)
-                        .ok_or_else(|| "invalid player_id: must be non-zero")?;
-
-                    Ok(pid)
+                    expect_params(params, 1, "player_id")?;
+                    parse_player_id(&params[0])
                 },
             async |driver, pid| {
                 driver
                     .unregister_player(pid)
                     .await
-                    .map_err(|e| format!("unregister_player error: {}", e))?;
+                    .with_context(|| "unregister_player error")?;
                 Ok(Nil)
             })
+    }
+
+    fn parse_assign_player_to_device_params(&self, params: &[Value]) -> Result<(std::num::NonZeroU32, Uuid), anyhow::Error> {
+        expect_params(params, 2, "player_id, device_id")?;
+        let pid = parse_player_id(&params[0])?;
+        let did = parse_device_id(&params[1])?;
+        Ok((pid, did))
+    }
+
+    fn req_assign_player_to_device(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_assign_player_to_device_params,
+            async |driver, (pid, did)| {
+                driver
+                    .assign_player_to_device(pid, did)
+                    .await?;
+                Ok(Nil)
+            },
+        )
+    }
+
+    fn req_unassign_player_from_device(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_assign_player_to_device_params,
+            async |driver, (pid, did)| {
+                driver
+                    .unassign_player_from_device(pid, did)
+                    .await
+                    .with_context(|| "unassign_player_from_device error")?;
+                Ok(Nil)
+            },
+        )
     }
 }
 
@@ -254,6 +306,8 @@ impl Service for FsctRpcService {
             "get_protocol_version" => self.req_get_protocol_version(params),
             "register_player" => self.req_register_player(params),
             "unregister_player" => self.req_unregister_player(params),
+            "assign_player_to_device" => self.req_assign_player_to_device(params),
+            "unassign_player_from_device" => self.req_unassign_player_from_device(params),
             _ => fut_err(format!("unknown method: {}", m)),
         }
     }
