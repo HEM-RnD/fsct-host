@@ -26,12 +26,13 @@ use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
 use parity_tokio_ipc::Endpoint;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use tokio::task::JoinSet;
+use tokio::task::{JoinSet, JoinHandle};
 use futures::StreamExt;
 
 use crate::{FsctDriver, ProtocolVersion};
+use crate::service::{spawn_service, ServiceHandle};
 use crate::player_state::{PlayerState, TrackMetadata};
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use std::time::{Duration, UNIX_EPOCH};
@@ -65,17 +66,19 @@ fn default_endpoint() -> String {
 pub struct IpcServer {
     endpoint: String,
     driver: Arc<dyn FsctDriver>,
+    // Active connection records to support shutdown
+    connections: Arc<Mutex<Vec<ConnRecord>>>,
 }
 
 impl IpcServer {
     /// Create a new IpcServer bound to the given driver. Endpoint is taken from FSCT_IPC_ENDPOINT or platform default.
     pub fn new(driver: Arc<dyn FsctDriver>) -> Self {
-        Self { endpoint: default_endpoint(), driver }
+        Self { endpoint: default_endpoint(), driver, connections: Arc::new(Mutex::new(Vec::new())) }
     }
 
     /// Create with an explicit endpoint path (useful for tests).
     pub fn with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> Self {
-        Self { endpoint, driver }
+        Self { endpoint, driver, connections: Arc::new(Mutex::new(Vec::new())) }
     }
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
@@ -95,7 +98,6 @@ impl IpcServer {
 
         let incoming = Endpoint::new(endpoint.clone()).incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
 
-        let mut tasks = JoinSet::new();
         let driver = self.driver.clone();
 
         tokio::pin!(incoming);
@@ -103,11 +105,19 @@ impl IpcServer {
             match incoming.as_mut().next().await {
                 Some(Ok(stream)) => {
                     let driver = driver.clone();
-                    tasks.spawn(async move {
-                        if let Err(e) = handle_connection(stream, driver).await {
+                    // Track per-connection players and task handle for shutdown
+                    let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
+                    let players_clone = conn_players.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = handle_connection_with_players(stream, driver, players_clone).await {
                             warn!("IPC connection handler ended with error: {e:?}");
                         }
                     });
+                    // Record connection for future shutdown
+                    {
+                        let mut recs = self.connections.lock().unwrap();
+                        recs.push(ConnRecord { players: conn_players, handle });
+                    }
                 }
                 Some(Err(e)) => {
                     error!("IPC accept failed: {}", e);
@@ -119,17 +129,74 @@ impl IpcServer {
                 }
             }
 
-            // Reap finished tasks to avoid memory growth
-            while let Some(res) = tasks.try_join_next() {
-                if let Err(e) = res { warn!("IPC connection task panicked: {e:?}"); }
-            }
         }
 
         Ok(())
     }
+
+    async fn shutdown(&self) {
+        info!("Shutting down IPC server on: {}", self.endpoint);
+        // Snapshot connections to avoid holding the lock while awaiting
+        let records: Vec<ConnRecord> = {
+            let mut guard = self.connections.lock().unwrap();
+            let recs = std::mem::take(&mut *guard);
+            recs
+        };
+
+        // Unregister all players for each connection, then abort the task to close the connection
+        for mut rec in records {
+            let ids: Vec<NonZeroU32> = {
+                let guard = rec.players.lock().unwrap();
+                guard.iter().cloned().collect()
+            };
+            for pid in ids {
+                if let Err(e) = self.driver.unregister_player(pid).await {
+                    warn!("shutdown: unregister_player failed for {}: {}", pid, e);
+                }
+            }
+            rec.handle.abort();
+        }
+
+        #[cfg(unix)]
+        {
+            // Best effort: remove socket file on shutdown
+            let _ = std::fs::remove_file(&self.endpoint);
+        }
+    }
 }
 
 use std::collections::HashSet;
+
+struct ConnRecord {
+    players: Arc<Mutex<HashSet<NonZeroU32>>>,
+    handle: JoinHandle<()>,
+}
+use tokio::select;
+
+/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
+pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+    spawn_service(move |mut stop| async move {
+        // Reuse IpcServer::serve instead of duplicating accept-loop logic
+        let server = IpcServer::with_endpoint(driver, endpoint);
+
+        select!(
+            res = server.serve() => {
+                if let Err(e) = res {
+                    error!("IPC server terminated with error: {}", e);
+                }
+            }
+            _ = stop.signaled() => {}
+        );
+
+        server.shutdown().await;
+
+        info!("IPC server stopped");
+    })
+}
+
+pub fn run_ipc_server(driver: Arc<dyn FsctDriver>) -> ServiceHandle {
+    run_ipc_server_with_endpoint(driver, default_endpoint())
+}
 
 #[derive(Clone)]
 struct FsctRpcService {
@@ -582,13 +649,12 @@ impl Service for FsctRpcService {
 }
 
 
-async fn handle_connection<S>(stream: S, driver: Arc<dyn FsctDriver>) -> anyhow::Result<()>
+async fn handle_connection_with_players<S>(stream: S, driver: Arc<dyn FsctDriver>, conn_players: Arc<Mutex<HashSet<NonZeroU32>>>) -> anyhow::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     debug!("New IPC client connected");
 
-    let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
     let service = FsctRpcService { driver: driver.clone(), conn_players: conn_players.clone() };
     let mut compat_stream = stream.compat();
     let serve_res = serve(&mut compat_stream, service)
