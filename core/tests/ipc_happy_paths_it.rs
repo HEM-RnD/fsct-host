@@ -1,0 +1,371 @@
+// Consolidated happy-path IPC integration tests
+// Covers: register/unregister, assign/unassign, updates, preferred player and assigned device
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use async_trait::async_trait;
+use fsct_core::ipc::client::IpcDriver;
+use fsct_core::ipc::server::IpcServer;
+use fsct_core::FsctDriver;
+use fsct_core::{ManagedDeviceId, ManagedPlayerId};
+use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct_core::player_state::{PlayerState, TrackMetadata};
+
+fn test_endpoint() -> String {
+    #[cfg(windows)]
+    {
+        let suffix = format!("{}", uuid::Uuid::new_v4());
+        return format!("\\\\.\\pipe\\fsct_host_test_{}", suffix);
+    }
+    #[cfg(unix)]
+    {
+        let suffix = format!("{}", uuid::Uuid::new_v4());
+        let mut path = std::env::temp_dir();
+        path.push(format!("fsct_host_test_{}.sock", suffix));
+        return path.to_string_lossy().to_string();
+    }
+}
+
+// Shared test helpers for mocks: unified configurable mock
+mod helpers {
+    use super::*;
+
+    // Unified helper to start server and connect client with retry
+    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, tokio::task::JoinHandle<()>, String) {
+        let endpoint = super::test_endpoint();
+        let server = IpcServer::with_endpoint(driver, endpoint.clone());
+        let server_task = tokio::spawn(async move { let _ = server.serve().await; });
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(5);
+        let client = loop {
+            match IpcDriver::connect_to_endpoint(endpoint.clone()).await {
+                Ok(c) => break c,
+                Err(_) => {
+                    if start.elapsed() > timeout {
+                        server_task.abort();
+                        panic!("Failed to connect to IPC server in time");
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        };
+        (client, server_task, endpoint)
+    }
+
+    pub struct FsctDriverMock {
+        // enable flags per method
+        pub enable_register: bool,
+        pub enable_unregister: bool,
+        pub enable_assign: bool,
+        pub enable_unassign: bool,
+        pub enable_update_state: bool,
+        pub enable_update_status: bool,
+        pub enable_update_timeline: bool,
+        pub enable_update_metadata: bool,
+        pub enable_set_preferred: bool,
+        pub enable_get_preferred: bool,
+        pub enable_get_assigned_device: bool,
+
+        // register/unregister captures
+        pub register_calls: Mutex<Vec<String>>,
+        pub unregister_calls: Mutex<Vec<u32>>,
+        pub fixed_id: ManagedPlayerId,
+
+        // assign/unassign captures
+        pub assign_calls: Mutex<Vec<(u32, uuid::Uuid)>>,
+        pub unassign_calls: Mutex<Vec<(u32, uuid::Uuid)>>,
+        pub assigned_device: Mutex<Option<uuid::Uuid>>, // response storage for getter
+        pub last_assigned_query: Mutex<Vec<u32>>,
+
+        // updates captures
+        pub state_calls: Mutex<Vec<(u32, PlayerState)>>,
+        pub status_calls: Mutex<Vec<(u32, FsctStatus)>>,
+        pub timeline_calls: Mutex<Vec<(u32, Option<TimelineInfo>)>>,
+        pub metadata_calls: Mutex<Vec<(u32, FsctTextMetadata, Option<String>)>>,
+
+        // preferred captures/state
+        pub set_calls: Mutex<Vec<Option<u32>>>,
+        pub current_preferred: Mutex<Option<ManagedPlayerId>>,
+    }
+
+    impl FsctDriverMock {
+        pub fn new() -> Self {
+            Self {
+                enable_register: false,
+                enable_unregister: false,
+                enable_assign: false,
+                enable_unassign: false,
+                enable_update_state: false,
+                enable_update_status: false,
+                enable_update_timeline: false,
+                enable_update_metadata: false,
+                enable_set_preferred: false,
+                enable_get_preferred: false,
+                enable_get_assigned_device: false,
+                register_calls: Mutex::new(Vec::new()),
+                unregister_calls: Mutex::new(Vec::new()),
+                fixed_id: std::num::NonZeroU32::new(1).unwrap(),
+                assign_calls: Mutex::new(Vec::new()),
+                unassign_calls: Mutex::new(Vec::new()),
+                assigned_device: Mutex::new(None),
+                last_assigned_query: Mutex::new(Vec::new()),
+                state_calls: Mutex::new(Vec::new()),
+                status_calls: Mutex::new(Vec::new()),
+                timeline_calls: Mutex::new(Vec::new()),
+                metadata_calls: Mutex::new(Vec::new()),
+                set_calls: Mutex::new(Vec::new()),
+                current_preferred: Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl FsctDriver for FsctDriverMock {
+        async fn register_player(&self, self_id: String) -> anyhow::Result<ManagedPlayerId, anyhow::Error> {
+            if !self.enable_register { return Err(anyhow::anyhow!("not used")); }
+            self.register_calls.lock().unwrap().push(self_id);
+            Ok(self.fixed_id)
+        }
+        async fn unregister_player(&self, player_id: ManagedPlayerId) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_unregister { return Err(anyhow::anyhow!("not used")); }
+            self.unregister_calls.lock().unwrap().push(player_id.get());
+            Ok(())
+        }
+        async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_assign { return Err(anyhow::anyhow!("not used")); }
+            self.assign_calls.lock().unwrap().push((player_id.get(), device_id));
+            Ok(())
+        }
+        async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_unassign { return Err(anyhow::anyhow!("not used")); }
+            self.unassign_calls.lock().unwrap().push((player_id.get(), device_id));
+            Ok(())
+        }
+        async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_update_state { return Err(anyhow::anyhow!("not used")); }
+            self.state_calls.lock().unwrap().push((player_id.get(), new_state));
+            Ok(())
+        }
+        async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_update_status { return Err(anyhow::anyhow!("not used")); }
+            self.status_calls.lock().unwrap().push((player_id.get(), new_status));
+            Ok(())
+        }
+        async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_update_timeline { return Err(anyhow::anyhow!("not used")); }
+            self.timeline_calls.lock().unwrap().push((player_id.get(), new_timeline));
+            Ok(())
+        }
+        async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_update_metadata { return Err(anyhow::anyhow!("not used")); }
+            self.metadata_calls.lock().unwrap().push((player_id.get(), metadata_id, new_text));
+            Ok(())
+        }
+        async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> {
+            if !self.enable_set_preferred { return Err(anyhow::anyhow!("not used")); }
+            self.set_calls.lock().unwrap().push(preferred.map(|p| p.get()));
+            *self.current_preferred.lock().unwrap() = preferred;
+            Ok(())
+        }
+        async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
+            if !self.enable_get_preferred { return None; }
+            *self.current_preferred.lock().unwrap()
+        }
+        async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> {
+            if !self.enable_get_assigned_device { return Err(anyhow::anyhow!("not used")); }
+            self.last_assigned_query.lock().unwrap().push(player_id.get());
+            Ok(*self.assigned_device.lock().unwrap())
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_register_and_unregister_player() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let endpoint = test_endpoint();
+
+    let fixed_id = std::num::NonZeroU32::new(123).unwrap();
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_register = true;
+    um.enable_unregister = true;
+    um.fixed_id = fixed_id;
+    let mock = Arc::new(um);
+    let driver_trait_obj: Arc<dyn FsctDriver> = mock.clone();
+
+    let (client, server_task, endpoint) = helpers::start_server_and_connect(driver_trait_obj).await;
+
+    let self_id = "test_player_self_id".to_string();
+    let player_id = client.register_player(self_id.clone()).await?;
+    assert_eq!(player_id, fixed_id);
+    {
+        let calls = mock.register_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], self_id);
+    }
+
+    client.unregister_player(player_id).await?;
+    {
+        let calls = mock.unregister_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], fixed_id.get());
+    }
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let endpoint = test_endpoint();
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_assign = true;
+    um.enable_unassign = true;
+    um.enable_get_assigned_device = true;
+    let mock = Arc::new(um);
+    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+
+    let player_id = std::num::NonZeroU32::new(42).unwrap();
+    let device_id = uuid::Uuid::new_v4();
+
+    client.assign_player_to_device(player_id, device_id).await?;
+    {
+        let calls = mock.assign_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert_eq!(calls[0].1, device_id);
+    }
+
+    client.unassign_player_from_device(player_id, device_id).await?;
+    {
+        let calls = mock.unassign_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert_eq!(calls[0].1, device_id);
+    }
+
+    // assigned device getter should live with assign/unassign
+    let device2 = uuid::Uuid::new_v4();
+    *mock.assigned_device.lock().unwrap() = Some(device2);
+    let q = std::num::NonZeroU32::new(55).unwrap();
+    let dev = client.get_player_assigned_device(q).await?;
+    assert_eq!(dev, Some(device2));
+    let queries = mock.last_assigned_query.lock().unwrap().clone();
+    assert_eq!(queries.last().copied(), Some(q.get()));
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_update_methods() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let endpoint = test_endpoint();
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_update_status = true;
+    um.enable_update_timeline = true;
+    um.enable_update_metadata = true;
+    um.enable_update_state = true;
+    let mock = Arc::new(um);
+
+    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+
+    let player_id = std::num::NonZeroU32::new(7).unwrap();
+
+    // status
+    client.update_player_status(player_id, FsctStatus::Playing).await?;
+    {
+        let calls = mock.status_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert_eq!(calls[0].1, FsctStatus::Playing);
+    }
+
+    // timeline
+    let timeline = TimelineInfo { position: Duration::from_millis(12345), update_time: SystemTime::now(), duration: Duration::from_millis(54321), rate: 1.0 };
+    client.update_player_timeline(player_id, Some(timeline.clone())).await?;
+    {
+        let calls = mock.timeline_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert!(calls[0].1.is_some());
+        let got = calls[0].1.as_ref().unwrap();
+        assert_eq!(got.position, timeline.position);
+        assert_eq!(got.duration, timeline.duration);
+        assert!((got.rate - timeline.rate).abs() < 1e-9);
+    }
+
+    // metadata
+    client.update_player_metadata(player_id, FsctTextMetadata::CurrentTitle, Some("Track X".to_string())).await?;
+    {
+        let calls = mock.metadata_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert_eq!(calls[0].1, FsctTextMetadata::CurrentTitle);
+        assert_eq!(calls[0].2.as_deref(), Some("Track X"));
+    }
+
+    // full state
+    let mut state = PlayerState::default();
+    state.status = FsctStatus::Paused;
+    state.timeline = None;
+    state.texts = TrackMetadata { title: Some("T".into()), artist: None, album: Some("Alb".into()), genre: None };
+    client.update_player_state(player_id, state.clone()).await?;
+    {
+        let calls = mock.state_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, player_id.get());
+        assert_eq!(calls[0].1.status, state.status);
+        assert_eq!(calls[0].1.timeline, state.timeline);
+        assert_eq!(calls[0].1.texts.title, state.texts.title);
+        assert_eq!(calls[0].1.texts.album, state.texts.album);
+    }
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_preferred_and_assigned_device_methods() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let endpoint = test_endpoint();
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_set_preferred = true;
+    um.enable_get_preferred = true;
+    let mock = Arc::new(um);
+    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+
+    let p1 = std::num::NonZeroU32::new(101).unwrap();
+
+    // set/get preferred
+    client.set_preferred_player(Some(p1)).await?;
+    {
+        let calls = mock.set_calls.lock().unwrap().clone();
+        assert_eq!(calls, vec![Some(p1.get())]);
+    }
+    let got = client.get_preferred_player().await;
+    assert_eq!(got, Some(p1));
+
+    client.set_preferred_player(None).await?;
+    {
+        let calls = mock.set_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1], None);
+    }
+    let got2 = client.get_preferred_player().await;
+    assert_eq!(got2, None);
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+

@@ -67,18 +67,10 @@ async fn connect_raw_client(endpoint: String) -> Client {
     Client::new(compat)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
-    let _ = env_logger::builder().is_test(true).try_init();
-
+async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (Client, tokio::task::JoinHandle<()>, String) {
     let endpoint = test_endpoint();
-
-    // Start server with NoopDriver (should not be called on parse errors)
-    let driver: Arc<dyn FsctDriver> = Arc::new(NoopDriver);
     let server = IpcServer::with_endpoint(driver, endpoint.clone());
     let server_task = tokio::spawn(async move { let _ = server.serve().await; });
-
-    // Retry connect loop until server ready
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(5);
     let client = loop {
@@ -93,6 +85,16 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
             }
         }
     };
+    (client, server_task, endpoint)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    // Start server with NoopDriver (should not be called on parse errors)
+    let driver: Arc<dyn FsctDriver> = Arc::new(NoopDriver);
+    let (client, server_task, endpoint) = start_server_and_connect_raw(driver).await;
 
     // ---- update_player_state ----
     // wrong param counts
