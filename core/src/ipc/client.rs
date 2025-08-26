@@ -31,6 +31,55 @@ use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 use msgpack_rpc::{Client, Value};
 
+fn encode_status(s: FsctStatus) -> Value { Value::from(s as u64) }
+
+fn encode_timeline_opt(t: &Option<TimelineInfo>) -> Value {
+    match t {
+        None => Value::Nil,
+        Some(tl) => {
+            let mut map = Vec::new();
+            map.push((Value::from("position_ms"), Value::from(tl.position.as_millis() as u64)));
+            let update_ms = tl.update_time.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+            map.push((Value::from("update_unix_ms"), Value::from(update_ms)));
+            map.push((Value::from("duration_ms"), Value::from(tl.duration.as_millis() as u64)));
+            map.push((Value::from("rate"), Value::from(tl.rate)));
+            Value::Map(map)
+        }
+    }
+}
+
+fn encode_text_metadata_id(m: FsctTextMetadata) -> Value { Value::from(m as u64) }
+
+fn encode_optional<V: Into<Value>>(v: Option<V>) -> Value {
+    match v {
+        None => Value::Nil,
+        Some(v) => v.into()
+    }
+}
+
+fn encode_optional_string(v: &Option<String>) -> Value {
+    encode_optional(v.as_ref().map(|s| s.as_str()))
+}
+
+fn encode_optional_field(name: &str, v: &Option<String>) -> (Value, Value) {
+    (Value::from(name), encode_optional_string(v))
+}
+
+fn encode_player_state(ps: &PlayerState) -> Value {
+    let mut map = Vec::new();
+    map.push((Value::from("status"), encode_status(ps.status)));
+    map.push((Value::from("timeline"), encode_timeline_opt(&ps.timeline)));
+    let mut texts = Vec::new();
+    texts.push(encode_optional_field("title", &ps.texts.title));
+    texts.push(encode_optional_field("artist", &ps.texts.artist));
+    texts.push(encode_optional_field("album", &ps.texts.album));
+    texts.push(encode_optional_field("genre", &ps.texts.genre));
+    map.push((Value::from("texts"), Value::Map(texts)));
+    Value::Map(map)
+}
+
+fn encode_player_id(pid: ManagedPlayerId) -> Value { Value::from(pid.get() as u64) }
+
 fn default_endpoint() -> String {
     if let Ok(override_ep) = std::env::var("FSCT_IPC_ENDPOINT") {
         if !override_ep.trim().is_empty() {
@@ -125,7 +174,7 @@ impl FsctDriver for IpcDriver {
     async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error> {
         let _response: Value = self
             .client
-            .request("unregister_player", &[Value::from(player_id.get() as u64)])
+            .request("unregister_player", &[encode_player_id(player_id)])
             .await
             .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
         Ok(())
@@ -136,7 +185,7 @@ impl FsctDriver for IpcDriver {
             .client
             .request(
                 "assign_player_to_device",
-                &[Value::from(player_id.get() as u64), Value::Binary(device_id.as_bytes().to_vec())],
+                &[encode_player_id(player_id), Value::Binary(device_id.as_bytes().to_vec())],
             )
             .await
             .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
@@ -148,27 +197,64 @@ impl FsctDriver for IpcDriver {
             .client
             .request(
                 "unassign_player_from_device",
-                &[Value::from(player_id.get() as u64), Value::Binary(device_id.as_bytes().to_vec())],
+                &[encode_player_id(player_id), Value::Binary(device_id.as_bytes().to_vec())],
             )
             .await
             .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
         Ok(())
     }
 
-    async fn update_player_state(&self, _player_id: ManagedPlayerId, _new_state: PlayerState) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
+        let state_val = encode_player_state(&new_state);
+        let _response: Value = self
+            .client
+            .request(
+                "update_player_state",
+                &[encode_player_id(player_id), state_val],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
-    async fn update_player_status(&self, _player_id: ManagedPlayerId, _new_status: FsctStatus) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request(
+                "update_player_status",
+                &[encode_player_id(player_id), encode_status(new_status)],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
-    async fn update_player_timeline(&self, _player_id: ManagedPlayerId, _new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request(
+                "update_player_timeline",
+                &[encode_player_id(player_id), encode_timeline_opt(&new_timeline)],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
-    async fn update_player_metadata(&self, _player_id: ManagedPlayerId, _metadata_id: FsctTextMetadata, _new_text: Option<String>) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request(
+                "update_player_metadata",
+                &[
+                    encode_player_id(player_id),
+                    encode_text_metadata_id(metadata_id),
+                    encode_optional_string(&new_text),
+                ],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
     fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> Result<(), Error> {

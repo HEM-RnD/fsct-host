@@ -32,7 +32,11 @@ use tokio::task::JoinSet;
 use futures::StreamExt;
 
 use crate::{FsctDriver, ProtocolVersion};
+use crate::player_state::{PlayerState, TrackMetadata};
+use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use std::time::{Duration, UNIX_EPOCH};
 use uuid::Uuid;
+use std::num::NonZeroU32;
 use crate::FSCT_PROTOCOL_VERSION;
 
 use msgpack_rpc::{serve, Service, Value};
@@ -186,6 +190,104 @@ fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &
 }
 
 impl FsctRpcService {
+    fn parse_status(&self, v: &Value) -> Result<FsctStatus, anyhow::Error> {
+        let code = v.as_u64().with_context(|| "invalid FsctStatus: expected integer")? as u8;
+        let s = match code {
+            0x00 => FsctStatus::Stopped,
+            0x01 => FsctStatus::Playing,
+            0x02 => FsctStatus::Paused,
+            0x03 => FsctStatus::Seeking,
+            0x04 => FsctStatus::Buffering,
+            0x05 => FsctStatus::Error,
+            0x0F => FsctStatus::Unknown,
+            _ => bail!("invalid status code: {}", code),
+        };
+        Ok(s)
+    }
+    fn parse_timeline_opt(&self, v: &Value) -> Result<Option<TimelineInfo>, anyhow::Error> {
+        if v.is_nil() { return Ok(None); }
+        let m = v.as_map().with_context(|| "invalid TimelineInfo: expected map or nil")?;
+        let mut position_ms: Option<u128> = None;
+        let mut update_unix_ms: Option<i128> = None;
+        let mut duration_ms: Option<u128> = None;
+        let mut rate: Option<f64> = None;
+        for (k, val) in m.iter() {
+            if let Value::String(s) = k { if let Some(key) = s.as_str() {
+                match key {
+                    "position_ms" => { position_ms = val.as_u64().map(|v| v as u128); },
+                    "update_unix_ms" => { update_unix_ms = val.as_i64().map(|v| v as i128); },
+                    "duration_ms" => { duration_ms = val.as_u64().map(|v| v as u128); },
+                    "rate" => { rate = val.as_f64(); },
+                    _ => bail!("invalid timeline key: {}", key),
+                }
+            }}
+        }
+        let pos = position_ms.with_context(|| "timeline missing position_ms")?;
+        let upd = update_unix_ms.with_context(|| "timeline missing update_unix_ms")?;
+        let dur = duration_ms.with_context(|| "timeline missing duration_ms")?;
+        let r = rate.with_context(|| "timeline missing rate")?;
+        let position = Duration::from_millis(pos as u64);
+        let duration = Duration::from_millis(dur as u64);
+        let update_time = if upd >= 0 { UNIX_EPOCH + Duration::from_millis(upd as u64) } else { UNIX_EPOCH - Duration::from_millis((-upd) as u64) };
+        Ok(Some(TimelineInfo { position, update_time, duration, rate: r }))
+    }
+    fn parse_text_metadata_id(&self, v: &Value) -> Result<FsctTextMetadata, anyhow::Error> {
+        let code = v.as_u64().with_context(|| "invalid FsctTextMetadata: expected integer")? as u8;
+        let m = match code {
+            0x01 => FsctTextMetadata::CurrentTitle,
+            0x02 => FsctTextMetadata::CurrentAuthor,
+            0x03 => FsctTextMetadata::CurrentAlbum,
+            0x04 => FsctTextMetadata::CurrentGenre,
+            0x31 => FsctTextMetadata::QueueTitle,
+            0x32 => FsctTextMetadata::QueueAuthor,
+            0x33 => FsctTextMetadata::QueueAlbum,
+            0x34 => FsctTextMetadata::QueueGenre,
+            _ => bail!("invalid text metadata id: {}", code),
+        };
+        Ok(m)
+    }
+    fn parse_player_state_map(&self, v: &Value) -> Result<PlayerState, anyhow::Error> {
+        let m = v.as_map().with_context(|| "invalid PlayerState: expected map")?;
+        let mut status: Option<FsctStatus> = None;
+        let mut timeline: Option<Option<TimelineInfo>> = None;
+        let mut title: Option<Option<String>> = None;
+        let mut artist: Option<Option<String>> = None;
+        let mut album: Option<Option<String>> = None;
+        let mut genre: Option<Option<String>> = None;
+        let mut texts_found = false;
+        for (k, val) in m.iter() {
+            if let Value::String(s) = k { if let Some(key) = s.as_str() { match key {
+                "status" => { status = Some(self.parse_status(val)?); },
+                "timeline" => { timeline = Some(self.parse_timeline_opt(val)?); },
+                "texts" => {
+                    texts_found = true;
+                    let tm = val.as_map().with_context(|| "texts must be map")?;
+                    for (tk, tv) in tm.iter() {
+                        if let Value::String(ts) = tk { if let Some(tkey) = ts.as_str() { match tkey {
+                            "title" => { title = Some(tv.as_str().map(|s| s.to_string())); },
+                            "artist" => { artist = Some(tv.as_str().map(|s| s.to_string())); },
+                            "album" => { album = Some(tv.as_str().map(|s| s.to_string())); },
+                            "genre" => { genre = Some(tv.as_str().map(|s| s.to_string())); },
+                            _ => bail!("invalid text key: {}", tkey),
+                        }}}
+                    }
+                },
+                _ => bail!("invalid player state key: {}", key),
+            }}}
+        }
+        let mut ps = PlayerState::default();
+        ps.status = status.unwrap_or_default();
+        ps.timeline = timeline.unwrap_or(None);
+        let mut tm = TrackMetadata::default();
+        if texts_found {
+            if let Some(t) = title { tm.title = t; }
+            if let Some(a) = artist { tm.artist = a; }
+            if let Some(a2) = album { tm.album = a2; }
+            if let Some(g) = genre { tm.genre = g; }
+        }
+        ps.texts = tm;
+        Ok(ps)
+    }
     fn handle_function<Params, Return, RequestAsyncOnDriver, ParseParamsFn, RequestFn>(
         &self,
         params: &[Value],
@@ -295,6 +397,79 @@ impl FsctRpcService {
             },
         )
     }
+
+    fn parse_update_player_state_params(&self, params: &[Value]) -> Result<(NonZeroU32, PlayerState), anyhow::Error> {
+        expect_params(params, 2, "player_id, state")?;
+        let pid = parse_player_id(&params[0])?;
+        let state = self.parse_player_state_map(&params[1])?;
+        Ok((pid, state))
+    }
+
+    fn req_update_player_state(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_update_player_state_params,
+            async |driver, (pid, state)| {
+                driver.update_player_state(pid, state).await?;
+                Ok(Nil)
+            },
+        )
+    }
+
+    fn parse_update_player_status_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctStatus), anyhow::Error> {
+        expect_params(params, 2, "player_id, status")?;
+        let pid = parse_player_id(&params[0])?;
+        let status = self.parse_status(&params[1])?;
+        Ok((pid, status))
+    }
+
+    fn req_update_player_status(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_update_player_status_params,
+            async |driver, (pid, status)| {
+                driver.update_player_status(pid, status).await?;
+                Ok(Nil)
+            },
+        )
+    }
+
+    fn parse_update_player_timeline_params(&self, params: &[Value]) -> Result<(NonZeroU32, Option<TimelineInfo>), anyhow::Error> {
+        expect_params(params, 2, "player_id, timeline")?;
+        let pid = parse_player_id(&params[0])?;
+        let timeline = self.parse_timeline_opt(&params[1])?;
+        Ok((pid, timeline))
+    }
+
+    fn req_update_player_timeline(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_update_player_timeline_params,
+            async |driver, (pid, timeline)| {
+                driver.update_player_timeline(pid, timeline).await?;
+                Ok(Nil)
+            },
+        )
+    }
+
+    fn parse_update_player_metadata_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctTextMetadata, Option<String>), anyhow::Error> {
+        expect_params(params, 3, "player_id, metadata_id, text")?;
+        let pid = parse_player_id(&params[0])?;
+        let meta = self.parse_text_metadata_id(&params[1])?;
+        let text = if params[2].is_nil() { None } else { Some(params[2].as_str().with_context(|| "text must be string or nil")?.to_string()) };
+        Ok((pid, meta, text))
+    }
+
+    fn req_update_player_metadata(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            Self::parse_update_player_metadata_params,
+            async |driver, (pid, meta, text)| {
+                driver.update_player_metadata(pid, meta, text).await?;
+                Ok(Nil)
+            },
+        )
+    }
 }
 
 impl Service for FsctRpcService {
@@ -308,6 +483,10 @@ impl Service for FsctRpcService {
             "unregister_player" => self.req_unregister_player(params),
             "assign_player_to_device" => self.req_assign_player_to_device(params),
             "unassign_player_from_device" => self.req_unassign_player_from_device(params),
+            "update_player_state" => self.req_update_player_state(params),
+            "update_player_status" => self.req_update_player_status(params),
+            "update_player_timeline" => self.req_update_player_timeline(params),
+            "update_player_metadata" => self.req_update_player_metadata(params),
             _ => fut_err(format!("unknown method: {}", m)),
         }
     }
