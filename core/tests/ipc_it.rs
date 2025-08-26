@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
+use msgpack_rpc::Value;
 use fsct_core::ipc::client::IpcDriver;
 use fsct_core::ipc::server::IpcServer;
 use fsct_core::FsctDriver;
@@ -29,17 +30,25 @@ fn test_endpoint() -> String {
 
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
+    use anyhow::Context;
     use super::*;
 
-    // Unified helper to start server and connect client with retry
-    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, tokio::task::JoinHandle<()>, String) {
+    // Common helper used by both connect helpers: spawns server and retries connection via provided connector
+    async fn start_server_and_connect_common<T, C, Fut>(
+        driver: Arc<dyn FsctDriver>,
+        connector: C,
+    ) -> (T, tokio::task::JoinHandle<()>)
+    where
+        C: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<T, anyhow::Error>>,
+    {
         let endpoint = super::test_endpoint();
         let server = IpcServer::with_endpoint(driver, endpoint.clone());
         let server_task = tokio::spawn(async move { let _ = server.serve().await; });
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(5);
         let client = loop {
-            match IpcDriver::connect_to_endpoint(endpoint.clone()).await {
+            match connector(endpoint.clone()).await {
                 Ok(c) => break c,
                 Err(_) => {
                     if start.elapsed() > timeout {
@@ -50,7 +59,23 @@ mod helpers {
                 }
             }
         };
-        (client, server_task, endpoint)
+        (client, server_task)
+    }
+
+    // Unified helper to start server and connect client with retry
+    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, tokio::task::JoinHandle<()>) {
+        start_server_and_connect_common(driver, |endpoint: String| async move {
+            IpcDriver::connect_to_endpoint(endpoint).await
+        }).await
+    }
+
+    // Unified helper to start server and connect a raw msgpack-rpc Client (for parsing error tests)
+    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, tokio::task::JoinHandle<()>) {
+        use parity_tokio_ipc::Endpoint;
+        use tokio_util::compat::TokioAsyncReadCompatExt;
+        start_server_and_connect_common(driver, |endpoint: String| async move {
+            Endpoint::connect(endpoint).await.map(|stream| msgpack_rpc::Client::new(stream.compat())).with_context(|| "Failed to connect to IPC server at {}")
+        }).await
     }
 
     pub struct FsctDriverMock {
@@ -180,10 +205,10 @@ mod helpers {
     }
 }
 
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ipc_register_and_unregister_player() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let endpoint = test_endpoint();
 
     let fixed_id = std::num::NonZeroU32::new(123).unwrap();
     let mut um = helpers::FsctDriverMock::new();
@@ -191,9 +216,8 @@ async fn ipc_register_and_unregister_player() -> anyhow::Result<()> {
     um.enable_unregister = true;
     um.fixed_id = fixed_id;
     let mock = Arc::new(um);
-    let driver_trait_obj: Arc<dyn FsctDriver> = mock.clone();
 
-    let (client, server_task, endpoint) = helpers::start_server_and_connect(driver_trait_obj).await;
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
     let self_id = "test_player_self_id".to_string();
     let player_id = client.register_player(self_id.clone()).await?;
@@ -220,14 +244,13 @@ async fn ipc_register_and_unregister_player() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let endpoint = test_endpoint();
 
     let mut um = helpers::FsctDriverMock::new();
     um.enable_assign = true;
     um.enable_unassign = true;
     um.enable_get_assigned_device = true;
     let mock = Arc::new(um);
-    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
     let player_id = std::num::NonZeroU32::new(42).unwrap();
     let device_id = uuid::Uuid::new_v4();
@@ -248,7 +271,6 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
         assert_eq!(calls[0].1, device_id);
     }
 
-    // assigned device getter should live with assign/unassign
     let device2 = uuid::Uuid::new_v4();
     *mock.assigned_device.lock().unwrap() = Some(device2);
     let q = std::num::NonZeroU32::new(55).unwrap();
@@ -265,7 +287,6 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ipc_update_methods() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let endpoint = test_endpoint();
 
     let mut um = helpers::FsctDriverMock::new();
     um.enable_update_status = true;
@@ -274,7 +295,7 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
     um.enable_update_state = true;
     let mock = Arc::new(um);
 
-    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
     let player_id = std::num::NonZeroU32::new(7).unwrap();
 
@@ -334,15 +355,14 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ipc_preferred_and_assigned_device_methods() -> anyhow::Result<()> {
+async fn ipc_preferred_device_methods() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let endpoint = test_endpoint();
 
     let mut um = helpers::FsctDriverMock::new();
     um.enable_set_preferred = true;
     um.enable_get_preferred = true;
     let mock = Arc::new(um);
-    let (client, server_task, endpoint) = helpers::start_server_and_connect(mock.clone()).await;
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
     let p1 = std::num::NonZeroU32::new(101).unwrap();
 
@@ -369,3 +389,202 @@ async fn ipc_preferred_and_assigned_device_methods() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_get_protocol_version() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let driver = Arc::new(helpers::FsctDriverMock::new());
+    let (client, server_task) = helpers::start_server_and_connect(driver).await;
+
+    let ver = client.get_protocol_version().await?;
+    assert_eq!(ver, fsct_core::FSCT_PROTOCOL_VERSION);
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let driver = Arc::new(helpers::FsctDriverMock::new());
+    let (client, server_task) = helpers::start_server_and_connect_raw(driver).await;
+
+    // ---- update_player_state ----
+    // wrong param counts
+    assert!(client.request("update_player_state", &[]).await.is_err());
+    assert!(client.request("update_player_state", &[Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_state", &[Value::from(1u64), Value::Map(vec![]), Value::Nil]).await.is_err());
+
+    // invalid player_id types
+    assert!(client.request("update_player_state", &[Value::from("1"), Value::Map(vec![])]).await.is_err());
+    assert!(client.request("update_player_state", &[Value::from(0u64), Value::Map(vec![])]).await.is_err());
+
+    // wrong key name in state map
+    let bad_state = Value::Map(vec![
+        (Value::from("statsu"), Value::from(1u64)),
+        (Value::from("texts"), Value::Map(vec![])),
+        (Value::from("timeline"), Value::Nil),
+    ]);
+    assert!(client.request("update_player_state", &[Value::from(1u64), bad_state]).await.is_err());
+
+    // unknown texts sub-key
+    let bad_state2 = Value::Map(vec![
+        (Value::from("status"), Value::from(1u64)),
+        (Value::from("texts"), Value::Map(vec![(Value::from("titl"), Value::from("X"))])),
+        (Value::from("timeline"), Value::Nil),
+    ]);
+    assert!(client.request("update_player_state", &[Value::from(2u64), bad_state2]).await.is_err());
+
+    // texts wrong value type
+    let bad_state3 = Value::Map(vec![
+        (Value::from("status"), Value::from(1u64)),
+        (Value::from("texts"), Value::Map(vec![(Value::from("title"), Value::from(123u64))])),
+        (Value::from("timeline"), Value::Nil),
+    ]);
+    assert!(client.request("update_player_state", &[Value::from(3u64), bad_state3]).await.is_err());
+
+    // timeline present but not a map
+    let bad_state4 = Value::Map(vec![(Value::from("timeline"), Value::from(1u64))]);
+    assert!(client.request("update_player_state", &[Value::from(4u64), bad_state4]).await.is_err());
+
+    // status wrong type
+    let bad_state5 = Value::Map(vec![(Value::from("status"), Value::from("x"))]);
+    assert!(client.request("update_player_state", &[Value::from(5u64), bad_state5]).await.is_err());
+
+    // status invalid code
+    let bad_state6 = Value::Map(vec![(Value::from("status"), Value::from(255u64))]);
+    assert!(client.request("update_player_state", &[Value::from(6u64), bad_state6]).await.is_err());
+
+    // timeline inside state missing fields
+    let bad_state7 = Value::Map(vec![(Value::from("timeline"), Value::Map(vec![(Value::from("position_ms"), Value::from(1u64))]))]);
+    assert!(client.request("update_player_state", &[Value::from(7u64), bad_state7]).await.is_err());
+
+    // texts not a map
+    let bad_state8 = Value::Map(vec![(Value::from("texts"), Value::from(5u64))]);
+    assert!(client.request("update_player_state", &[Value::from(8u64), bad_state8]).await.is_err());
+
+    // non-map state
+    assert!(client.request("update_player_state", &[Value::from(9u64), Value::from(1u64)]).await.is_err());
+
+    // ---- update_player_status ----
+    // wrong param counts
+    assert!(client.request("update_player_status", &[]).await.is_err());
+    assert!(client.request("update_player_status", &[Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_status", &[Value::from(1u64), Value::from(1u64), Value::Nil]).await.is_err());
+
+    // invalid player_id
+    assert!(client.request("update_player_status", &[Value::from("1"), Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_status", &[Value::from(0u64), Value::from(1u64)]).await.is_err());
+
+    // wrong type for status
+    assert!(client.request("update_player_status", &[Value::from(10u64), Value::from("1")]).await.is_err());
+    // out of range status code
+    assert!(client.request("update_player_status", &[Value::from(10u64), Value::from(255u64)]).await.is_err());
+
+    // ---- update_player_timeline ----
+    // wrong param counts
+    assert!(client.request("update_player_timeline", &[]).await.is_err());
+    assert!(client.request("update_player_timeline", &[Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_timeline", &[Value::from(1u64), Value::Map(vec![]), Value::Nil]).await.is_err());
+
+    // invalid player_id
+    assert!(client.request("update_player_timeline", &[Value::from("1"), Value::Nil]).await.is_err());
+    assert!(client.request("update_player_timeline", &[Value::from(0u64), Value::Nil]).await.is_err());
+
+    // timeline wrong type (int)
+    assert!(client.request("update_player_timeline", &[Value::from(11u64), Value::from(5u64)]).await.is_err());
+
+    // timeline unknown key
+    let bad_timeline2 = Value::Map(vec![(Value::from("pos"), Value::from(1u64))]);
+    assert!(client.request("update_player_timeline", &[Value::from(11u64), bad_timeline2]).await.is_err());
+
+    // timeline missing each required field
+    let t_missing_pos = Value::Map(vec![
+        (Value::from("update_unix_ms"), Value::from(0i64)),
+        (Value::from("duration_ms"), Value::from(2000u64)),
+        (Value::from("rate"), Value::from(1.0f64)),
+    ]);
+    assert!(client.request("update_player_timeline", &[Value::from(12u64), t_missing_pos]).await.is_err());
+
+    let t_missing_update = Value::Map(vec![
+        (Value::from("position_ms"), Value::from(1000u64)),
+        (Value::from("duration_ms"), Value::from(2000u64)),
+        (Value::from("rate"), Value::from(1.0f64)),
+    ]);
+    assert!(client.request("update_player_timeline", &[Value::from(13u64), t_missing_update]).await.is_err());
+
+    let t_missing_duration = Value::Map(vec![
+        (Value::from("position_ms"), Value::from(1000u64)),
+        (Value::from("update_unix_ms"), Value::from(0i64)),
+        (Value::from("rate"), Value::from(1.0f64)),
+    ]);
+    assert!(client.request("update_player_timeline", &[Value::from(14u64), t_missing_duration]).await.is_err());
+
+    let t_missing_rate = Value::Map(vec![
+        (Value::from("position_ms"), Value::from(1000u64)),
+        (Value::from("update_unix_ms"), Value::from(0i64)),
+        (Value::from("duration_ms"), Value::from(2000u64)),
+    ]);
+    assert!(client.request("update_player_timeline", &[Value::from(15u64), t_missing_rate]).await.is_err());
+
+    // wrong types in fields
+    let t_bad_types = Value::Map(vec![
+        (Value::from("position_ms"), Value::from("1000")),
+        (Value::from("update_unix_ms"), Value::from("0")),
+        (Value::from("duration_ms"), Value::from("2000")),
+        (Value::from("rate"), Value::from("1.0")),
+    ]);
+    assert!(client.request("update_player_timeline", &[Value::from(16u64), t_bad_types]).await.is_err());
+
+    // ---- update_player_metadata ----
+    // wrong param counts
+    assert!(client.request("update_player_metadata", &[]).await.is_err());
+    assert!(client.request("update_player_metadata", &[Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(1u64)]).await.is_err());
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(1u64), Value::Nil, Value::Nil]).await.is_err());
+
+    // invalid player_id
+    assert!(client.request("update_player_metadata", &[Value::from(0u64), Value::from(0x01u64), Value::Nil]).await.is_err());
+    assert!(client.request("update_player_metadata", &[Value::from("1"), Value::from(0x01u64), Value::Nil]).await.is_err());
+
+    // invalid metadata id code
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0u64), Value::Nil]).await.is_err());
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0xFFu64), Value::Nil]).await.is_err());
+
+    // metadata id wrong type
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from("title"), Value::Nil]).await.is_err());
+
+    // text wrong type
+    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0x01u64), Value::from(123u64)]).await.is_err());
+
+    // ---- set_preferred_player ----
+    // wrong param counts
+    assert!(client.request("set_preferred_player", &[]).await.is_err());
+    assert!(client.request("set_preferred_player", &[Value::from(1u64), Value::Nil]).await.is_err());
+    // wrong type
+    assert!(client.request("set_preferred_player", &[Value::from("1")]).await.is_err());
+    // zero id invalid
+    assert!(client.request("set_preferred_player", &[Value::from(0u64)]).await.is_err());
+
+    // ---- get_preferred_player ----
+    // wrong param counts
+    assert!(client.request("get_preferred_player", &[Value::from(1u64)]).await.is_err());
+
+    // ---- get_player_assigned_device ----
+    // wrong param counts
+    assert!(client.request("get_player_assigned_device", &[]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::from(1u64), Value::from(2u64)]).await.is_err());
+    // invalid player_id types
+    assert!(client.request("get_player_assigned_device", &[Value::from("1")]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::Nil]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::from(0u64)]).await.is_err());
+
+    // shared: invalid player_id type (nil)
+    assert!(client.request("update_player_status", &[Value::Nil, Value::from(1u64)]).await.is_err());
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
