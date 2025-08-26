@@ -26,13 +26,12 @@ use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
 use parity_tokio_ipc::Endpoint;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use tokio::task::{JoinSet, JoinHandle};
 use futures::StreamExt;
 
 use crate::{FsctDriver, ProtocolVersion};
-use crate::service::{spawn_service, ServiceHandle};
+use crate::service::{spawn_service, ServiceHandle, MultiServiceHandle};
 use crate::player_state::{PlayerState, TrackMetadata};
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use std::time::{Duration, UNIX_EPOCH};
@@ -66,19 +65,19 @@ fn default_endpoint() -> String {
 pub struct IpcServer {
     endpoint: String,
     driver: Arc<dyn FsctDriver>,
-    // Active connection records to support shutdown
-    connections: Arc<Mutex<Vec<ConnRecord>>>,
+    // Container of per-connection services for cooperative shutdown
+    connections: Arc<Mutex<crate::service::MultiServiceHandle>>,
 }
 
 impl IpcServer {
     /// Create a new IpcServer bound to the given driver. Endpoint is taken from FSCT_IPC_ENDPOINT or platform default.
     pub fn new(driver: Arc<dyn FsctDriver>) -> Self {
-        Self { endpoint: default_endpoint(), driver, connections: Arc::new(Mutex::new(Vec::new())) }
+        Self { endpoint: default_endpoint(), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
     }
 
     /// Create with an explicit endpoint path (useful for tests).
     pub fn with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> Self {
-        Self { endpoint, driver, connections: Arc::new(Mutex::new(Vec::new())) }
+        Self { endpoint, driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
     }
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
@@ -98,26 +97,12 @@ impl IpcServer {
 
         let incoming = Endpoint::new(endpoint.clone()).incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
 
-        let driver = self.driver.clone();
-
         tokio::pin!(incoming);
         loop {
             match incoming.as_mut().next().await {
                 Some(Ok(stream)) => {
-                    let driver = driver.clone();
-                    // Track per-connection players and task handle for shutdown
-                    let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
-                    let players_clone = conn_players.clone();
-                    let handle = tokio::spawn(async move {
-                        if let Err(e) = handle_connection_with_players(stream, driver, players_clone).await {
-                            warn!("IPC connection handler ended with error: {e:?}");
-                        }
-                    });
-                    // Record connection for future shutdown
-                    {
-                        let mut recs = self.connections.lock().unwrap();
-                        recs.push(ConnRecord { players: conn_players, handle });
-                    }
+                    let handle = self.start_connection_service(stream);
+                    self.connections.lock().unwrap().add(handle);
                 }
                 Some(Err(e)) => {
                     error!("IPC accept failed: {}", e);
@@ -128,49 +113,51 @@ impl IpcServer {
                     break;
                 }
             }
-
         }
 
         Ok(())
     }
 
     async fn shutdown(&self) {
-        info!("Shutting down IPC server on: {}", self.endpoint);
-        // Snapshot connections to avoid holding the lock while awaiting
-        let records: Vec<ConnRecord> = {
-            let mut guard = self.connections.lock().unwrap();
-            let recs = std::mem::take(&mut *guard);
-            recs
-        };
+        let connections = std::mem::take(self.connections.lock().unwrap().deref_mut());
+        if let Err(e) = connections.shutdown().await {
+            warn!("Some IPC connection service failed to join on shutdown: {}", e);
+        }
+    }
 
-        // Unregister all players for each connection, then abort the task to close the connection
-        for mut rec in records {
-            let ids: Vec<NonZeroU32> = {
-                let guard = rec.players.lock().unwrap();
-                guard.iter().cloned().collect()
-            };
-            for pid in ids {
-                if let Err(e) = self.driver.unregister_player(pid).await {
-                    warn!("shutdown: unregister_player failed for {}: {}", pid, e);
+    fn start_connection_service(&self,
+                                stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> ServiceHandle {
+        let driver = self.driver.clone();
+        spawn_service(move |mut stop| async move {
+            let connection_id = Uuid::new_v4();
+            info!("New IPC client connected, id = {}", connection_id);
+            let service = FsctRpcService::new(driver.clone(), connection_id);
+            let players = service.conn_players_arc();
+            let mut compat_stream = stream.compat();
+            select! {
+                res = serve(&mut compat_stream, service) => {
+                    if let Err(e) = res { warn!("IPC connection (id = {}) handler ended with error: {}",
+                        connection_id, e); }
+                }
+                _ = stop.signaled() => {
+                    info!("IPC connection stop requested, id = {}", connection_id);
+                    drop(compat_stream); // dropping compat_stream will close the connection
                 }
             }
-            rec.handle.abort();
-        }
-
-        #[cfg(unix)]
-        {
-            // Best effort: remove socket file on shutdown
-            let _ = std::fs::remove_file(&self.endpoint);
-        }
+            // After either completion or stop: unregister all players tied to this connection
+            let ids = std::mem::take(players.lock().unwrap().deref_mut());
+            for pid in ids {
+                if let Err(e) = driver.unregister_player(pid).await {
+                    warn!("auto-unregister_player failed for {}: {}", pid, e);
+                }
+            }
+            info!("IPC connection closed, id = {}", connection_id);
+        })
     }
 }
 
 use std::collections::HashSet;
-
-struct ConnRecord {
-    players: Arc<Mutex<HashSet<NonZeroU32>>>,
-    handle: JoinHandle<()>,
-}
+use std::ops::DerefMut;
 use tokio::select;
 
 /// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
@@ -203,6 +190,7 @@ struct FsctRpcService {
     driver: Arc<dyn FsctDriver>,
     // Set of player IDs registered via this connection
     conn_players: Arc<Mutex<HashSet<NonZeroU32>>>,
+    connection_id: uuid::Uuid,
 }
 
 // Request future type alias used by per-method handlers
@@ -232,7 +220,7 @@ impl Into<Value> for Nil {
 
 fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error> {
     let pid_u64 = param.as_u64()
-        .with_context(|| "invalid param: player_id must be integer")?;
+                       .with_context(|| "invalid param: player_id must be integer")?;
     let pid = std::num::NonZeroU32::new(pid_u64 as u32)
         .with_context(|| "invalid player_id: must be non-zero")?;
     Ok(pid)
@@ -240,7 +228,7 @@ fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error>
 
 fn parse_device_id(param: &Value) -> Result<Uuid, anyhow::Error> {
     let did_bytes = param.as_slice()
-        .with_context(|| "invalid param: device_id must be binary")?;
+                         .with_context(|| "invalid param: device_id must be binary")?;
     if did_bytes.len() != 16 {
         bail!("invalid device_id: uuid binary must be 16 bytes");
     }
@@ -261,6 +249,16 @@ fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &
 }
 
 impl FsctRpcService {
+    fn new(driver: Arc<dyn FsctDriver>, connection_id: Uuid) -> Self {
+        Self {
+            driver,
+            conn_players: Arc::new(Mutex::new(HashSet::new())),
+            connection_id
+        }
+    }
+    fn conn_players_arc(&self) -> Arc<Mutex<HashSet<NonZeroU32>>> {
+        self.conn_players.clone()
+    }
     fn ensure_player_for_connection(&self, pid: NonZeroU32) -> Result<(), anyhow::Error> {
         let guard = self.conn_players.lock().unwrap();
         if guard.contains(&pid) { Ok(()) } else { bail!("player_id {} not registered for this connection", pid) }
@@ -287,15 +285,17 @@ impl FsctRpcService {
         let mut duration_ms: Option<u128> = None;
         let mut rate: Option<f64> = None;
         for (k, val) in m.iter() {
-            if let Value::String(s) = k { if let Some(key) = s.as_str() {
-                match key {
-                    "position_ms" => { position_ms = val.as_u64().map(|v| v as u128); },
-                    "update_unix_ms" => { update_unix_ms = val.as_i64().map(|v| v as i128); },
-                    "duration_ms" => { duration_ms = val.as_u64().map(|v| v as u128); },
-                    "rate" => { rate = val.as_f64(); },
-                    _ => bail!("invalid timeline key: {}", key),
+            if let Value::String(s) = k {
+                if let Some(key) = s.as_str() {
+                    match key {
+                        "position_ms" => { position_ms = val.as_u64().map(|v| v as u128); }
+                        "update_unix_ms" => { update_unix_ms = val.as_i64().map(|v| v as i128); }
+                        "duration_ms" => { duration_ms = val.as_u64().map(|v| v as u128); }
+                        "rate" => { rate = val.as_f64(); }
+                        _ => bail!("invalid timeline key: {}", key),
+                    }
                 }
-            }}
+            }
         }
         let pos = position_ms.with_context(|| "timeline missing position_ms")?;
         let upd = update_unix_ms.with_context(|| "timeline missing update_unix_ms")?;
@@ -331,24 +331,32 @@ impl FsctRpcService {
         let mut genre: Option<Option<String>> = None;
         let mut texts_found = false;
         for (k, val) in m.iter() {
-            if let Value::String(s) = k { if let Some(key) = s.as_str() { match key {
-                "status" => { status = Some(self.parse_status(val)?); },
-                "timeline" => { timeline = Some(self.parse_timeline_opt(val)?); },
-                "texts" => {
-                    texts_found = true;
-                    let tm = val.as_map().with_context(|| "texts must be map")?;
-                    for (tk, tv) in tm.iter() {
-                        if let Value::String(ts) = tk { if let Some(tkey) = ts.as_str() { match tkey {
-                            "title" => { if tv.is_nil() { title = Some(None); } else { title = Some(Some(tv.as_str().with_context(|| "text 'title' must be string or nil")?.to_string())); } },
-                            "artist" => { if tv.is_nil() { artist = Some(None); } else { artist = Some(Some(tv.as_str().with_context(|| "text 'artist' must be string or nil")?.to_string())); } },
-                            "album" => { if tv.is_nil() { album = Some(None); } else { album = Some(Some(tv.as_str().with_context(|| "text 'album' must be string or nil")?.to_string())); } },
-                            "genre" => { if tv.is_nil() { genre = Some(None); } else { genre = Some(Some(tv.as_str().with_context(|| "text 'genre' must be string or nil")?.to_string())); } },
-                            _ => bail!("invalid text key: {}", tkey),
-                        }}}
+            if let Value::String(s) = k {
+                if let Some(key) = s.as_str() {
+                    match key {
+                        "status" => { status = Some(self.parse_status(val)?); }
+                        "timeline" => { timeline = Some(self.parse_timeline_opt(val)?); }
+                        "texts" => {
+                            texts_found = true;
+                            let tm = val.as_map().with_context(|| "texts must be map")?;
+                            for (tk, tv) in tm.iter() {
+                                if let Value::String(ts) = tk {
+                                    if let Some(tkey) = ts.as_str() {
+                                        match tkey {
+                                            "title" => { if tv.is_nil() { title = Some(None); } else { title = Some(Some(tv.as_str().with_context(|| "text 'title' must be string or nil")?.to_string())); } }
+                                            "artist" => { if tv.is_nil() { artist = Some(None); } else { artist = Some(Some(tv.as_str().with_context(|| "text 'artist' must be string or nil")?.to_string())); } }
+                                            "album" => { if tv.is_nil() { album = Some(None); } else { album = Some(Some(tv.as_str().with_context(|| "text 'album' must be string or nil")?.to_string())); } }
+                                            "genre" => { if tv.is_nil() { genre = Some(None); } else { genre = Some(Some(tv.as_str().with_context(|| "text 'genre' must be string or nil")?.to_string())); } }
+                                            _ => bail!("invalid text key: {}", tkey),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => bail!("invalid player state key: {}", key),
                     }
-                },
-                _ => bail!("invalid player state key: {}", key),
-            }}}
+                }
+            }
         }
         let mut ps = PlayerState::default();
         ps.status = status.unwrap_or_default();
@@ -415,6 +423,7 @@ impl FsctRpcService {
         let self_id = parse.unwrap();
         let driver = self.driver.clone();
         let conn_players = self.conn_players.clone();
+        let connection_id = self.connection_id.clone();
         Box::pin(async move {
             let pid = match driver
                 .register_player(self_id)
@@ -424,6 +433,7 @@ impl FsctRpcService {
                 Ok(pid) => pid,
                 Err(e) => return Err(Value::from(e.to_string())),
             };
+            info!("Registered player {} for connection {}", pid.get(), connection_id);
             {
                 let mut guard = conn_players.lock().unwrap();
                 guard.insert(pid);
@@ -443,6 +453,7 @@ impl FsctRpcService {
         let pid = parse.unwrap();
         let driver = self.driver.clone();
         let conn_players = self.conn_players.clone();
+        let connection_id = self.connection_id.clone();
         Box::pin(async move {
             if let Err(e) = driver.unregister_player(pid).await.with_context(|| "unregister_player error") {
                 return Err(Value::from(e.to_string()));
@@ -451,6 +462,7 @@ impl FsctRpcService {
                 let mut guard = conn_players.lock().unwrap();
                 guard.remove(&pid);
             }
+            info!("Unregistered player {} for connection {}", pid.get(), connection_id);
             Ok(Nil.into())
         })
     }
@@ -597,7 +609,10 @@ impl FsctRpcService {
             },
             async |driver, _| {
                 let pref = driver.get_preferred_player().await;
-                let val = match pref { Some(pid) => Value::from(pid.get() as u64), None => Value::Nil };
+                let val = match pref {
+                    Some(pid) => Value::from(pid.get() as u64),
+                    None => Value::Nil
+                };
                 Ok(val)
             },
         )
@@ -614,7 +629,10 @@ impl FsctRpcService {
             },
             async |driver, pid| {
                 let opt = driver.get_player_assigned_device(pid).await?;
-                let val = match opt { Some(uuid) => Value::Binary(uuid.as_bytes().to_vec()), None => Value::Nil };
+                let val = match opt {
+                    Some(uuid) => Value::Binary(uuid.as_bytes().to_vec()),
+                    None => Value::Nil
+                };
                 Ok(val)
             },
         )
@@ -648,29 +666,3 @@ impl Service for FsctRpcService {
     }
 }
 
-
-async fn handle_connection_with_players<S>(stream: S, driver: Arc<dyn FsctDriver>, conn_players: Arc<Mutex<HashSet<NonZeroU32>>>) -> anyhow::Result<()>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    debug!("New IPC client connected");
-
-    let service = FsctRpcService { driver: driver.clone(), conn_players: conn_players.clone() };
-    let mut compat_stream = stream.compat();
-    let serve_res = serve(&mut compat_stream, service)
-        .await
-        .map_err(|e| anyhow::anyhow!("msgpack-rpc serve error: {}", e));
-
-    // Connection closed: unregister all players associated with this connection
-    let ids: Vec<NonZeroU32> = {
-        let guard = conn_players.lock().unwrap();
-        guard.iter().cloned().collect()
-    };
-    for pid in ids {
-        if let Err(e) = driver.unregister_player(pid).await {
-            warn!("auto-unregister_player failed for {}: {}", pid, e);
-        }
-    }
-
-    serve_res
-}

@@ -81,9 +81,9 @@ impl PlayerManager {
         self.players.lock().unwrap().insert(player_id, registered_player);
 
         // Notify listeners
-        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id });
+        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id: self_id.clone() });
 
-        info!("Player {} registered", player_id);
+        info!("Player {} registered: {}", player_id, self_id);
         Ok(player_id)
     }
     fn assign_new_player_id(&self) -> ManagedPlayerId {
