@@ -22,11 +22,10 @@ use anyhow::Error;
 use async_trait::async_trait;
 use parity_tokio_ipc::Endpoint;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use tokio::sync::broadcast;
 
 use crate::definitions::ProtocolVersion;
 use crate::{FsctDriver};
-use crate::{PlayerEvent, PlayerState, ManagedPlayerId};
+use crate::{PlayerState, ManagedPlayerId};
 use crate::device_manager::ManagedDeviceId;
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
@@ -52,8 +51,6 @@ pub struct IpcDriver {
     // Underlying msgpack-rpc client bound to a persistent IPC stream
     client: msgpack_rpc::Client,
     negotiated_version: ProtocolVersion,
-    // Minimal event channel to satisfy subscribe_player_events; not used yet.
-    events_tx: broadcast::Sender<PlayerEvent>,
 }
 
 impl IpcDriver {
@@ -64,8 +61,6 @@ impl IpcDriver {
 
     /// Connect to a specific endpoint and verify protocol compatibility.
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
-        let (tx, _rx) = broadcast::channel(16);
-
         // Establish persistent connection
         let stream = Endpoint::connect(endpoint.clone()).await
             .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
@@ -101,7 +96,7 @@ impl IpcDriver {
             ));
         }
 
-        Ok(Self { client, negotiated_version, events_tx: tx })
+        Ok(Self { client, negotiated_version})
     }
 
     /// Returns the negotiated protocol version obtained during creation.
@@ -152,9 +147,5 @@ impl FsctDriver for IpcDriver {
 
     fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
-    }
-
-    fn subscribe_player_events(&self) -> broadcast::Receiver<PlayerEvent> {
-        self.events_tx.subscribe()
     }
 }

@@ -17,9 +17,6 @@ async fn main() -> Result<()> {
     // Start orchestrator and USB device watch services
     let handle = driver.run().await?;
 
-    // Subscribe to events (optional in this example)
-    let mut _player_rx = driver.subscribe_player_events();
-
     // Register a player and update its state
     let player_id = driver.register_player("driver-example".to_string()).await?;
 
