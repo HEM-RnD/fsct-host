@@ -128,64 +128,82 @@ struct FsctRpcService {
     driver: Arc<dyn FsctDriver>,
 }
 
+type RpcResult = Result<Value, Value>;
+
+// Per-method handlers split into separate functions for clarity and testability
+async fn rpc_get_protocol_version() -> RpcResult {
+    let v = FSCT_PROTOCOL_VERSION;
+    let result = Value::Map(vec![
+        (Value::from("major"), Value::from(v.major as u64)),
+        (Value::from("minor"), Value::from(v.minor as u64)),
+    ]);
+    Ok(result)
+}
+
+async fn rpc_register_player(d: Arc<dyn FsctDriver>, self_id: String) -> RpcResult {
+    let pid = d
+        .register_player(self_id)
+        .await
+        .map_err(|e| Value::from(format!("register_player error: {}", e)))?;
+    Ok(Value::from(pid.get() as u64))
+}
+
+async fn rpc_unregister_player(d: Arc<dyn FsctDriver>, pid: std::num::NonZeroU32) -> RpcResult {
+    d
+        .unregister_player(pid)
+        .await
+        .map_err(|e| Value::from(format!("unregister_player error: {}", e)))?;
+    Ok(Value::Nil)
+}
+
+// Wrapper functions that validate/parse params and return boxed futures
+// This keeps handle_request minimal and test-friendly while allowing param parsing to be unit-tested per method.
+type RequestFut = Pin<Box<dyn Future<Output = Result<Value, Value>> + Send>>;
+
+fn mk_get_protocol_version(params: &[Value]) -> RequestFut {
+    if !params.is_empty() {
+        return Box::pin(async { Err(Value::from("params not expected")) });
+    }
+    Box::pin(rpc_get_protocol_version())
+}
+
+fn mk_register_player(params: &[Value], d: Arc<dyn FsctDriver>) -> RequestFut {
+    if params.len() != 1 {
+        return Box::pin(async { Err(Value::from("expected 1 param: self_id")) });
+    }
+    let self_id = match params[0].as_str() {
+        Some(s) => s.to_string(),
+        None => return Box::pin(async { Err(Value::from("invalid param: self_id must be string")) }),
+    };
+    Box::pin(rpc_register_player(d, self_id))
+}
+
+fn mk_unregister_player(params: &[Value], d: Arc<dyn FsctDriver>) -> RequestFut {
+    if params.len() != 1 {
+        return Box::pin(async { Err(Value::from("expected 1 param: player_id")) });
+    }
+    let pid_num_u32: u32 = match params[0].as_u64() {
+        Some(v) => v as u32,
+        None => return Box::pin(async { Err(Value::from("invalid param: player_id must be integer")) }),
+    };
+    let pid = match std::num::NonZeroU32::new(pid_num_u32) {
+        Some(p) => p,
+        None => return Box::pin(async { Err(Value::from("invalid player_id: must be non-zero")) }),
+    };
+    Box::pin(rpc_unregister_player(d, pid))
+}
+
 impl Service for FsctRpcService {
     type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>> + Send>>;
 
     fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture {
         let d = self.driver.clone();
         let m = method.to_string();
-        let param_len = params.len();
         match m.as_str() {
-            "get_protocol_version" => {
-                if param_len != 0 {
-                    return Box::pin(async { Err("params not expected".into()) });
-                }
-                Box::pin(async move {
-                    let v = FSCT_PROTOCOL_VERSION;
-                    let result = Value::Map(vec![
-                        (Value::from("major"), Value::from(v.major as u64)),
-                        (Value::from("minor"), Value::from(v.minor as u64)),
-                    ]);
-                    Ok(result)
-                })
-            }
-            "register_player" => {
-                if param_len != 1 {
-                    return Box::pin(async { Err("expected 1 param: self_id".into()) });
-                }
-                let self_id = match params[0].as_str() {
-                    Some(s) => s.to_string(),
-                    None => return Box::pin(async { Err(Value::from("invalid param: self_id must be string")) }),
-                };
-                Box::pin(async move {
-                    let pid = d
-                        .register_player(self_id)
-                        .await
-                        .map_err(|e| Value::from(format!("register_player error: {}", e)))?;
-                    Ok(Value::from(pid.get() as u64))
-                })
-            }
-            "unregister_player" => {
-                if param_len != 1 {
-                    return Box::pin(async { Err("expected 1 param: player_id".into()) });
-                }
-                let pid_num_u32: u32 = match params[0].as_u64() {
-                    Some(v) => v as u32,
-                    None => return Box::pin(async { Err(Value::from("invalid param: player_id must be integer")) }),
-                };
-                let pid = match std::num::NonZeroU32::new(pid_num_u32) {
-                    Some(p) => p,
-                    None => return Box::pin(async { Err(Value::from("invalid player_id: must be non-zero")) }),
-                };
-                Box::pin(async move {
-                    d
-                        .unregister_player(pid)
-                        .await
-                        .map_err(|e| Value::from(format!("unregister_player error: {}", e)))?;
-                    Ok(Value::Nil)
-                })
-            }
-            _ => Box::pin(async move { Err(format!("unknown method: {}", m).into()) }),
+            "get_protocol_version" => mk_get_protocol_version(params),
+            "register_player" => mk_register_player(params, d),
+            "unregister_player" => mk_unregister_player(params, d),
+            _ => Box::pin(async move { Err(Value::from(format!("unknown method: {}", m))) }),
         }
     }
 
