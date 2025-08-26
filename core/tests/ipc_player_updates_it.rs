@@ -82,13 +82,13 @@ impl FsctDriver for MockDriver {
         Ok(())
     }
 
-    fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> {
+    async fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> {
         Err(anyhow::anyhow!("not used in update test"))
     }
 
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId> { None }
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> { None }
 
-    fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> {
+    async fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> {
         Ok(None)
     }
 }
