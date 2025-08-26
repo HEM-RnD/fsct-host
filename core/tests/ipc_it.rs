@@ -249,9 +249,13 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
     um.enable_assign = true;
     um.enable_unassign = true;
     um.enable_get_assigned_device = true;
+    um.enable_register = true;
+    um.fixed_id = std::num::NonZeroU32::new(42).unwrap();
     let mock = Arc::new(um);
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
+    // register player for this connection (required by server validation)
+    let _ = client.register_player("p42".to_string()).await?;
     let player_id = std::num::NonZeroU32::new(42).unwrap();
     let device_id = uuid::Uuid::new_v4();
 
@@ -273,7 +277,7 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
 
     let device2 = uuid::Uuid::new_v4();
     *mock.assigned_device.lock().unwrap() = Some(device2);
-    let q = std::num::NonZeroU32::new(55).unwrap();
+    let q = player_id;
     let dev = client.get_player_assigned_device(q).await?;
     assert_eq!(dev, Some(device2));
     let queries = mock.last_assigned_query.lock().unwrap().clone();
@@ -293,11 +297,14 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
     um.enable_update_timeline = true;
     um.enable_update_metadata = true;
     um.enable_update_state = true;
+    um.enable_register = true;
+    um.fixed_id = std::num::NonZeroU32::new(7).unwrap();
     let mock = Arc::new(um);
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    let player_id = std::num::NonZeroU32::new(7).unwrap();
+    // register player for this connection (required by server validation)
+    let player_id = client.register_player("p7".to_string()).await?;
 
     // status
     client.update_player_status(player_id, FsctStatus::Playing).await?;
@@ -361,10 +368,12 @@ async fn ipc_preferred_device_methods() -> anyhow::Result<()> {
     let mut um = helpers::FsctDriverMock::new();
     um.enable_set_preferred = true;
     um.enable_get_preferred = true;
+    um.enable_register = true;
+    um.fixed_id = std::num::NonZeroU32::new(101).unwrap();
     let mock = Arc::new(um);
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    let p1 = std::num::NonZeroU32::new(101).unwrap();
+    let p1 = client.register_player("p101".to_string()).await?;
 
     // set/get preferred
     client.set_preferred_player(Some(p1)).await?;
@@ -583,6 +592,95 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
 
     // shared: invalid player_id type (nil)
     assert!(client.request("update_player_status", &[Value::Nil, Value::from(1u64)]).await.is_err());
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    // Create a mock driver that only allows registration (so we can get a valid, registered id).
+    // All other methods remain disabled and must NOT be called due to server-side validation.
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_register = true;
+    um.fixed_id = std::num::NonZeroU32::new(50).unwrap();
+    let mock = std::sync::Arc::new(um);
+
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
+
+    // Register a player to activate connection; we'll use a different, unregistered id for tests
+    let _registered = client.register_player("p50".to_string()).await?;
+    let bad_pid = std::num::NonZeroU32::new(999).unwrap();
+
+    // 1) unregister_player should fail for unregistered id
+    assert!(client.unregister_player(bad_pid).await.is_err());
+
+    // 2) assign_player_to_device should fail
+    let dev = uuid::Uuid::new_v4();
+    assert!(client.assign_player_to_device(bad_pid, dev).await.is_err());
+
+    // 3) unassign_player_from_device should fail
+    assert!(client.unassign_player_from_device(bad_pid, dev).await.is_err());
+
+    // 4) update_player_status should fail
+    assert!(client.update_player_status(bad_pid, FsctStatus::Playing).await.is_err());
+
+    // 5) update_player_timeline should fail
+    let tl = TimelineInfo { position: std::time::Duration::from_millis(1), update_time: std::time::SystemTime::now(), duration: std::time::Duration::from_millis(2), rate: 1.0 };
+    assert!(client.update_player_timeline(bad_pid, Some(tl)).await.is_err());
+
+    // 6) update_player_metadata should fail
+    assert!(client.update_player_metadata(bad_pid, FsctTextMetadata::CurrentTitle, Some("X".into())).await.is_err());
+
+    // 7) update_player_state should fail
+    let mut st = PlayerState::default();
+    st.status = FsctStatus::Paused;
+    assert!(client.update_player_state(bad_pid, st).await.is_err());
+
+    // 8) set_preferred_player(Some(bad_pid)) should fail
+    assert!(client.set_preferred_player(Some(bad_pid)).await.is_err());
+
+    // 9) get_player_assigned_device should fail
+    assert!(client.get_player_assigned_device(bad_pid).await.is_err());
+
+    server_task.abort();
+    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_auto_unregister_on_disconnect() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_register = true;
+    um.enable_unregister = true;
+    um.fixed_id = std::num::NonZeroU32::new(201).unwrap();
+    let mock = std::sync::Arc::new(um);
+
+    // Scope the client so dropping ends the connection
+    let server_task;
+    {
+        let (client_local, st) = helpers::start_server_and_connect(mock.clone()).await;
+        server_task = st;
+
+        // register one player over the connection
+        let p1 = client_local.register_player("p201".to_string()).await?;
+        assert_eq!(p1.get(), 201);
+
+        // drop client_local here at end of scope -> triggers connection close
+    }
+
+    // Allow some time for the server to process the disconnect and auto-unregister
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Validate that unregister was called for the registered id
+    let calls = mock.unregister_calls.lock().unwrap().clone();
+    assert_eq!(calls, vec![201]);
 
     server_task.abort();
     #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }

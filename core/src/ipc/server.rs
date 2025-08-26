@@ -22,7 +22,7 @@
 //! - Handle msgpack-rpc style requests for `get_protocol_version`
 //! - Forward to the provided FsctDriver
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
 use parity_tokio_ipc::Endpoint;
@@ -129,9 +129,13 @@ impl IpcServer {
     }
 }
 
+use std::collections::HashSet;
+
 #[derive(Clone)]
 struct FsctRpcService {
     driver: Arc<dyn FsctDriver>,
+    // Set of player IDs registered via this connection
+    conn_players: Arc<Mutex<HashSet<NonZeroU32>>>,
 }
 
 // Request future type alias used by per-method handlers
@@ -190,6 +194,10 @@ fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &
 }
 
 impl FsctRpcService {
+    fn ensure_player_for_connection(&self, pid: NonZeroU32) -> Result<(), anyhow::Error> {
+        let guard = self.conn_players.lock().unwrap();
+        if guard.contains(&pid) { Ok(()) } else { bail!("player_id {} not registered for this connection", pid) }
+    }
     fn parse_status(&self, v: &Value) -> Result<FsctStatus, anyhow::Error> {
         let code = v.as_u64().with_context(|| "invalid FsctStatus: expected integer")? as u8;
         let s = match code {
@@ -328,45 +336,62 @@ impl FsctRpcService {
     }
 
     fn req_register_player(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |_, params|
-                {
-                    expect_params(params, 1, "self_id")?;
-                    params[0]
-                        .as_str()
-                        .map(String::from)
-                        .with_context(|| "invalid param: self_id must be string")
-                },
-            async |driver, self_id| {
-                driver
-                    .register_player(self_id)
-                    .await
-                    .map(|v| v.get())
-                    .with_context(|| "register_player error")
-            })
+        // Custom to capture conn_players and insert on success
+        let parse = (|| -> Result<String, anyhow::Error> {
+            expect_params(params, 1, "self_id")?;
+            params[0]
+                .as_str()
+                .map(String::from)
+                .with_context(|| "invalid param: self_id must be string")
+        })();
+        if let Err(e) = parse { return fut_err(e.to_string()); }
+        let self_id = parse.unwrap();
+        let driver = self.driver.clone();
+        let conn_players = self.conn_players.clone();
+        Box::pin(async move {
+            let pid = match driver
+                .register_player(self_id)
+                .await
+                .with_context(|| "register_player error")
+            {
+                Ok(pid) => pid,
+                Err(e) => return Err(Value::from(e.to_string())),
+            };
+            {
+                let mut guard = conn_players.lock().unwrap();
+                guard.insert(pid);
+            }
+            Ok(Value::from(pid.get() as u64))
+        })
     }
 
     fn req_unregister_player(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |_, params|
-                {
-                    expect_params(params, 1, "player_id")?;
-                    parse_player_id(&params[0])
-                },
-            async |driver, pid| {
-                driver
-                    .unregister_player(pid)
-                    .await
-                    .with_context(|| "unregister_player error")?;
-                Ok(Nil)
-            })
+        let parse = (|| -> Result<NonZeroU32, anyhow::Error> {
+            expect_params(params, 1, "player_id")?;
+            let pid = parse_player_id(&params[0])?;
+            self.ensure_player_for_connection(pid)?;
+            Ok(pid)
+        })();
+        if let Err(e) = parse { return fut_err(e.to_string()); }
+        let pid = parse.unwrap();
+        let driver = self.driver.clone();
+        let conn_players = self.conn_players.clone();
+        Box::pin(async move {
+            if let Err(e) = driver.unregister_player(pid).await.with_context(|| "unregister_player error") {
+                return Err(Value::from(e.to_string()));
+            }
+            {
+                let mut guard = conn_players.lock().unwrap();
+                guard.remove(&pid);
+            }
+            Ok(Nil.into())
+        })
     }
 
     fn parse_assign_player_to_device_params(&self, params: &[Value]) -> Result<(std::num::NonZeroU32, Uuid), anyhow::Error> {
         expect_params(params, 2, "player_id, device_id")?;
         let pid = parse_player_id(&params[0])?;
+        self.ensure_player_for_connection(pid)?;
         let did = parse_device_id(&params[1])?;
         Ok((pid, did))
     }
@@ -401,6 +426,7 @@ impl FsctRpcService {
     fn parse_update_player_state_params(&self, params: &[Value]) -> Result<(NonZeroU32, PlayerState), anyhow::Error> {
         expect_params(params, 2, "player_id, state")?;
         let pid = parse_player_id(&params[0])?;
+        self.ensure_player_for_connection(pid)?;
         let state = self.parse_player_state_map(&params[1])?;
         Ok((pid, state))
     }
@@ -419,6 +445,7 @@ impl FsctRpcService {
     fn parse_update_player_status_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctStatus), anyhow::Error> {
         expect_params(params, 2, "player_id, status")?;
         let pid = parse_player_id(&params[0])?;
+        self.ensure_player_for_connection(pid)?;
         let status = self.parse_status(&params[1])?;
         Ok((pid, status))
     }
@@ -437,6 +464,7 @@ impl FsctRpcService {
     fn parse_update_player_timeline_params(&self, params: &[Value]) -> Result<(NonZeroU32, Option<TimelineInfo>), anyhow::Error> {
         expect_params(params, 2, "player_id, timeline")?;
         let pid = parse_player_id(&params[0])?;
+        self.ensure_player_for_connection(pid)?;
         let timeline = self.parse_timeline_opt(&params[1])?;
         Ok((pid, timeline))
     }
@@ -455,6 +483,7 @@ impl FsctRpcService {
     fn parse_update_player_metadata_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctTextMetadata, Option<String>), anyhow::Error> {
         expect_params(params, 3, "player_id, metadata_id, text")?;
         let pid = parse_player_id(&params[0])?;
+        self.ensure_player_for_connection(pid)?;
         let meta = self.parse_text_metadata_id(&params[1])?;
         let text = if params[2].is_nil() { None } else { Some(params[2].as_str().with_context(|| "text must be string or nil")?.to_string()) };
         Ok((pid, meta, text))
@@ -482,7 +511,9 @@ impl FsctRpcService {
             params,
             |s, params| {
                 expect_params(params, 1, "preferred_player_id")?;
-                s.parse_optional_player_id(&params[0])
+                let opt = s.parse_optional_player_id(&params[0])?;
+                if let Some(pid) = opt { s.ensure_player_for_connection(pid)?; }
+                Ok(opt)
             },
             async |driver, preferred| {
                 driver.set_preferred_player(preferred).await?;
@@ -508,9 +539,10 @@ impl FsctRpcService {
     fn req_get_player_assigned_device(&self, params: &[Value]) -> RequestFut {
         self.handle_function(
             params,
-            |_, params| {
+            |s, params| {
                 expect_params(params, 1, "player_id")?;
                 let pid = parse_player_id(&params[0])?;
+                s.ensure_player_for_connection(pid)?;
                 Ok(pid)
             },
             async |driver, pid| {
@@ -556,10 +588,23 @@ where
 {
     debug!("New IPC client connected");
 
-
-    let service = FsctRpcService { driver };
+    let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
+    let service = FsctRpcService { driver: driver.clone(), conn_players: conn_players.clone() };
     let mut compat_stream = stream.compat();
-    serve(&mut compat_stream, service)
+    let serve_res = serve(&mut compat_stream, service)
         .await
-        .map_err(|e| anyhow::anyhow!("msgpack-rpc serve error: {}", e))
+        .map_err(|e| anyhow::anyhow!("msgpack-rpc serve error: {}", e));
+
+    // Connection closed: unregister all players associated with this connection
+    let ids: Vec<NonZeroU32> = {
+        let guard = conn_players.lock().unwrap();
+        guard.iter().cloned().collect()
+    };
+    for pid in ids {
+        if let Err(e) = driver.unregister_player(pid).await {
+            warn!("auto-unregister_player failed for {}: {}", pid, e);
+        }
+    }
+
+    serve_res
 }
