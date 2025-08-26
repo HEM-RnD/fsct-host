@@ -123,46 +123,48 @@ impl IpcServer {
     }
 }
 
+#[derive(Clone)]
+struct FsctRpcService {
+    driver: Arc<dyn FsctDriver>,
+}
+
+impl Service for FsctRpcService {
+    type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>> + Send>>;
+
+    fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture {
+        let d = self.driver.clone();
+        let m = method.to_string();
+        let param_len = params.len();
+        Box::pin(async move {
+            match m.as_str() {
+                "get_protocol_version" => {
+                    if param_len != 0 {
+                        return Err("params not expected".into());
+                    }
+                    let v = FSCT_PROTOCOL_VERSION;
+                    let result = Value::Map(vec![
+                        (Value::from("major"), Value::from(v.major as u64)),
+                        (Value::from("minor"), Value::from(v.minor as u64)),
+                    ]);
+                    Ok(result)
+                }
+                _ => Err(format!("unknown method: {}", m).into()),
+            }
+        })
+    }
+
+    fn handle_notification(&mut self, _method: &str, _params: &[Value]) {
+        // No-op for now
+    }
+}
+
+
 async fn handle_connection<S>(stream: S, driver: Arc<dyn FsctDriver>) -> anyhow::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     debug!("New IPC client connected");
 
-    #[derive(Clone)]
-    struct FsctRpcService {
-        driver: Arc<dyn FsctDriver>,
-    }
-
-    impl Service for FsctRpcService {
-        type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>> + Send>>;
-
-        fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture {
-            let d = self.driver.clone();
-            let m = method.to_string();
-            let param_len = params.len();
-            Box::pin(async move {
-                match m.as_str() {
-                    "get_protocol_version" => {
-                        if param_len != 0 {
-                            return Err("params not expected".into());
-                        }
-                        let v = FSCT_PROTOCOL_VERSION;
-                        let result = Value::Map(vec![
-                            (Value::from("major"), Value::from(v.major as u64)),
-                            (Value::from("minor"), Value::from(v.minor as u64)),
-                        ]);
-                        Ok(result)
-                    }
-                    _ => Err(format!("unknown method: {}", m).into()),
-                }
-            })
-        }
-
-        fn handle_notification(&mut self, _method: &str, _params: &[Value]) {
-            // No-op for now
-        }
-    }
 
     let service = FsctRpcService { driver };
     let mut compat_stream = stream.compat();
