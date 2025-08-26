@@ -12,8 +12,8 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     let endpoint = "/tmp/fsct_host_example.sock".to_string();
 
-    // Create client and call get_protocol_version
-    let client = IpcDriver::with_endpoint(endpoint);
+    // Connect client (this performs handshake and verifies protocol version)
+    let client = IpcDriver::connect_to_endpoint(endpoint).await?;
     let ver = client.get_protocol_version().await?;
 
     println!("Client received protocol version: {}.{}", ver.major, ver.minor);

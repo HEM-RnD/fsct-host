@@ -1126,8 +1126,7 @@ dependencies = [
 [[package]]
 name = "msgpack-rpc"
 version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fae2461ef987e5ef1506806d5a7ba80d874a42efdce03f9dcaf3857a1147340"
+source = "git+https://github.com/HEM-RnD/msgpack-rpc.git?rev=75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3#75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3"
 dependencies = [
  "bytes",
  "futures",

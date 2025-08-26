@@ -12,6 +12,7 @@
       <sourceFolder url="file://$MODULE_DIR$/ports/volumio/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/ports/volumio/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/ports/node/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/core/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

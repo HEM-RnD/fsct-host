@@ -13,7 +13,7 @@ repository.workspace = true
 log = "0.4.25"
 nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
 parity-tokio-ipc = "0.9.0"
-msgpack-rpc = "0.4.2"
+msgpack-rpc = { git = "https://github.com/HEM-RnD/msgpack-rpc.git", rev = "75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3" }
 uuid = { version = "1.17.0", features = ["v4", "v5"] }
 bitflags = "2.8.0"
 futures.workspace = true

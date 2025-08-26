@@ -49,35 +49,30 @@ fn default_endpoint() -> String {
 
 /// IPC-backed implementation of FsctDriver.
 pub struct IpcDriver {
-    endpoint: String,
+    // Underlying msgpack-rpc client bound to a persistent IPC stream
+    client: msgpack_rpc::Client,
+    negotiated_version: ProtocolVersion,
     // Minimal event channel to satisfy subscribe_player_events; not used yet.
     events_tx: broadcast::Sender<PlayerEvent>,
 }
 
 impl IpcDriver {
-    /// Create a client using default endpoint or FSCT_IPC_ENDPOINT.
-    pub fn new() -> Self {
-        let (tx, _rx) = broadcast::channel(16);
-        Self { endpoint: default_endpoint(), events_tx: tx }
+    /// Connect to the default endpoint (or FSCT_IPC_ENDPOINT) and verify protocol compatibility.
+    pub async fn create() -> Result<Self, Error> {
+        Self::connect_to_endpoint(default_endpoint()).await
     }
 
-    /// Create a client with an explicit endpoint (useful for tests/examples).
-    pub fn with_endpoint(endpoint: String) -> Self {
+    /// Connect to a specific endpoint and verify protocol compatibility.
+    pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         let (tx, _rx) = broadcast::channel(16);
-        Self { endpoint, events_tx: tx }
-    }
 
-    /// Perform a single msgpack-rpc request for get_protocol_version.
-    pub async fn get_protocol_version(&self) -> Result<ProtocolVersion, Error> {
-        // Establish connection per-call for now (simple, OK for phase 3 minimal).
-        let stream = Endpoint::connect(self.endpoint.clone()).await
+        // Establish persistent connection
+        let stream = Endpoint::connect(endpoint.clone()).await
             .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
-
-        // Adapt tokio stream to futures::io traits required by msgpack-rpc
         let compat_stream = stream.compat();
         let client = Client::new(compat_stream);
 
-        // Send request via msgpack-rpc
+        // Handshake: fetch remote protocol version
         let response: Value = client
             .request("get_protocol_version", &[])
             .await
@@ -93,8 +88,25 @@ impl IpcDriver {
             .iter()
             .find_map(|(k, v)| match k { Value::String(s) if s.as_str() == Some("minor") => v.as_u64(), _ => None })
             .ok_or_else(|| anyhow::anyhow!("missing minor"))?;
+        let negotiated_version = ProtocolVersion { major: major as u16, minor: minor as u16 };
 
-        Ok(ProtocolVersion { major: major as u16, minor: minor as u16 })
+        // Verify compatibility: major must match our supported major
+        if negotiated_version.major != crate::FSCT_PROTOCOL_VERSION.major {
+            return Err(anyhow::anyhow!(
+                "incompatible protocol version: remote {}.{} != local {}.{}",
+                negotiated_version.major,
+                negotiated_version.minor,
+                crate::FSCT_PROTOCOL_VERSION.major,
+                crate::FSCT_PROTOCOL_VERSION.minor
+            ));
+        }
+
+        Ok(Self { client, negotiated_version, events_tx: tx })
+    }
+
+    /// Returns the negotiated protocol version obtained during creation.
+    pub async fn get_protocol_version(&self) -> Result<ProtocolVersion, Error> {
+        Ok(self.negotiated_version)
     }
 }
 

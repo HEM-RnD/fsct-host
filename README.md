@@ -54,6 +54,27 @@ Make sure you have Rust installed. To build the Rust library, run:
 cargo build --release
 ```
 
+## Testing
+
+- Unit tests: are placed alongside source files inside `#[cfg(test)]` modules (e.g., in `core/src/...`). Run with:
+  - `cargo test` (all workspace members)
+  - `cargo test --package fsct_core` (specific crate)
+  - `cargo test -- --nocapture` (show test output)
+
+- Integration tests: should be placed in the `tests/` directory at the root of each crate (not the workspace root). Each `.rs` file in `tests/` is compiled as a separate test crate that depends on the crate under test. Example:
+  - `core/tests/ipc_version_it.rs` (integration test for IPC client/server)
+
+  Typical structure:
+  - `<crate>/src/...`  (library code and unit tests)
+  - `<crate>/tests/*.rs`  (integration tests)
+  - `<crate>/examples/*.rs`  (runnable examples)
+
+Run all integration and unit tests for a crate with:
+
+```bash
+cargo test --package fsct_core
+```
+
 ## Contributing
 
 We welcome contributions! Please follow the guidelines:
