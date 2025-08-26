@@ -107,12 +107,28 @@ impl IpcDriver {
 
 #[async_trait]
 impl FsctDriver for IpcDriver {
-    async fn register_player(&self, _self_id: String) -> Result<ManagedPlayerId, Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error> {
+        let response: Value = self
+            .client
+            .request("register_player", &[Value::from(self_id)])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        let id64 = response
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("invalid response for register_player: expected integer"))?;
+        let id_u32 = id64 as u32;
+        let nz = std::num::NonZeroU32::new(id_u32)
+            .ok_or_else(|| anyhow::anyhow!("server returned invalid zero player id"))?;
+        Ok(nz)
     }
 
-    async fn unregister_player(&self, _player_id: ManagedPlayerId) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error> {
+        let _response: Value = self
+            .client
+            .request("unregister_player", &[Value::from(player_id.get() as u64)])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
     async fn assign_player_to_device(&self, _player_id: ManagedPlayerId, _device_id: ManagedDeviceId) -> Result<(), Error> {

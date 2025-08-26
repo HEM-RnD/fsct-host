@@ -135,22 +135,58 @@ impl Service for FsctRpcService {
         let d = self.driver.clone();
         let m = method.to_string();
         let param_len = params.len();
-        Box::pin(async move {
-            match m.as_str() {
-                "get_protocol_version" => {
-                    if param_len != 0 {
-                        return Err("params not expected".into());
-                    }
+        match m.as_str() {
+            "get_protocol_version" => {
+                if param_len != 0 {
+                    return Box::pin(async { Err("params not expected".into()) });
+                }
+                Box::pin(async move {
                     let v = FSCT_PROTOCOL_VERSION;
                     let result = Value::Map(vec![
                         (Value::from("major"), Value::from(v.major as u64)),
                         (Value::from("minor"), Value::from(v.minor as u64)),
                     ]);
                     Ok(result)
-                }
-                _ => Err(format!("unknown method: {}", m).into()),
+                })
             }
-        })
+            "register_player" => {
+                if param_len != 1 {
+                    return Box::pin(async { Err("expected 1 param: self_id".into()) });
+                }
+                let self_id = match params[0].as_str() {
+                    Some(s) => s.to_string(),
+                    None => return Box::pin(async { Err(Value::from("invalid param: self_id must be string")) }),
+                };
+                Box::pin(async move {
+                    let pid = d
+                        .register_player(self_id)
+                        .await
+                        .map_err(|e| Value::from(format!("register_player error: {}", e)))?;
+                    Ok(Value::from(pid.get() as u64))
+                })
+            }
+            "unregister_player" => {
+                if param_len != 1 {
+                    return Box::pin(async { Err("expected 1 param: player_id".into()) });
+                }
+                let pid_num_u32: u32 = match params[0].as_u64() {
+                    Some(v) => v as u32,
+                    None => return Box::pin(async { Err(Value::from("invalid param: player_id must be integer")) }),
+                };
+                let pid = match std::num::NonZeroU32::new(pid_num_u32) {
+                    Some(p) => p,
+                    None => return Box::pin(async { Err(Value::from("invalid player_id: must be non-zero")) }),
+                };
+                Box::pin(async move {
+                    d
+                        .unregister_player(pid)
+                        .await
+                        .map_err(|e| Value::from(format!("unregister_player error: {}", e)))?;
+                    Ok(Value::Nil)
+                })
+            }
+            _ => Box::pin(async move { Err(format!("unknown method: {}", m).into()) }),
+        }
     }
 
     fn handle_notification(&mut self, _method: &str, _params: &[Value]) {
