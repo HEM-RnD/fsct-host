@@ -257,13 +257,36 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
+        let param = match preferred { Some(pid) => encode_player_id(pid), None => Value::Nil };
+        let _response: Value = self
+            .client
+            .request("set_preferred_player", &[param])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        Ok(())
     }
 
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId> { None }
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
+        match self.client.request("get_preferred_player", &[]).await.ok()? {
+            Value::Nil => None,
+            v => {
+                let id = v.as_u64()? as u32;
+                std::num::NonZeroU32::new(id)
+            }
+        }
+    }
 
-    fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
-        Err(anyhow::anyhow!("not implemented in IpcDriver (phase 3)"))
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
+        let resp: Value = self
+            .client
+            .request("get_player_assigned_device", &[encode_player_id(player_id)])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        if resp.is_nil() { return Ok(None); }
+        let bytes = resp.as_slice().ok_or_else(|| anyhow::anyhow!("invalid response for get_player_assigned_device: expected binary or nil"))?;
+        if bytes.len() != 16 { return Err(anyhow::anyhow!("invalid uuid length")); }
+        let uuid = uuid::Uuid::from_slice(bytes).map_err(|e| anyhow::anyhow!("invalid uuid: {e}"))?;
+        Ok(Some(uuid))
     }
 }

@@ -46,10 +46,10 @@ pub trait FsctDriver: Send + Sync {
 
     async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
 
-    fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
+    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
 
-    fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
 }
 
 /// Local, in-process implementation of FsctDriver.
@@ -129,15 +129,15 @@ impl FsctDriver for LocalDriver {
         self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
     }
 
-    fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
+    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
         self.player_manager.set_preferred_player(preferred)
     }
 
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
         self.player_manager.get_preferred_player()
     }
 
-    fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         self.player_manager.get_player_assigned_devices(player_id)
     }
 }

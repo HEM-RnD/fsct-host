@@ -54,9 +54,11 @@ impl FsctDriver for NoopDriver {
     async fn update_player_metadata(&self, _player_id: ManagedPlayerId, _metadata_id: FsctTextMetadata, _new_text: Option<String>) -> anyhow::Result<(), anyhow::Error> {
         Err(anyhow::anyhow!("not expected to be called"))
     }
-    fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> { Err(anyhow::anyhow!("not expected")) }
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId> { None }
-    fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> { Ok(None) }
+    async fn set_preferred_player(&self, _preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> { Err
+    (anyhow::anyhow!("not expected")) }
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> { None }
+    async fn get_player_assigned_device(&self, _player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>,
+    anyhow::Error> { Ok(None) }
 }
 
 async fn connect_raw_client(endpoint: String) -> Client {
@@ -239,6 +241,29 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
 
     // text wrong type
     assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0x01u64), Value::from(123u64)]).await.is_err());
+
+    // ---- set_preferred_player ----
+    // wrong param counts
+    assert!(client.request("set_preferred_player", &[]).await.is_err());
+    assert!(client.request("set_preferred_player", &[Value::from(1u64), Value::Nil]).await.is_err());
+    // wrong type
+    assert!(client.request("set_preferred_player", &[Value::from("1")]).await.is_err());
+    // zero id invalid
+    assert!(client.request("set_preferred_player", &[Value::from(0u64)]).await.is_err());
+    // nil is allowed (no error) - but we don't assert here because driver returns ok; we just ensure error cases are covered
+
+    // ---- get_preferred_player ----
+    // wrong param counts
+    assert!(client.request("get_preferred_player", &[Value::from(1u64)]).await.is_err());
+
+    // ---- get_player_assigned_device ----
+    // wrong param counts
+    assert!(client.request("get_player_assigned_device", &[]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::from(1u64), Value::from(2u64)]).await.is_err());
+    // invalid player_id types
+    assert!(client.request("get_player_assigned_device", &[Value::from("1")]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::Nil]).await.is_err());
+    assert!(client.request("get_player_assigned_device", &[Value::from(0u64)]).await.is_err());
 
     // ---- shared: invalid player_id type (nil)
     assert!(client.request("update_player_status", &[Value::Nil, Value::from(1u64)]).await.is_err());

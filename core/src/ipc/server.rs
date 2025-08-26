@@ -470,6 +470,56 @@ impl FsctRpcService {
             },
         )
     }
+
+    fn parse_optional_player_id(&self, v: &Value) -> Result<Option<NonZeroU32>, anyhow::Error> {
+        if v.is_nil() { return Ok(None); }
+        let pid = parse_player_id(v)?;
+        Ok(Some(pid))
+    }
+
+    fn req_set_preferred_player(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            |s, params| {
+                expect_params(params, 1, "preferred_player_id")?;
+                s.parse_optional_player_id(&params[0])
+            },
+            async |driver, preferred| {
+                driver.set_preferred_player(preferred).await?;
+                Ok(Nil)
+            },
+        )
+    }
+
+    fn req_get_preferred_player(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            |_, params| {
+                expect_params(params, 0, "")
+            },
+            async |driver, _| {
+                let pref = driver.get_preferred_player().await;
+                let val = match pref { Some(pid) => Value::from(pid.get() as u64), None => Value::Nil };
+                Ok(val)
+            },
+        )
+    }
+
+    fn req_get_player_assigned_device(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            |_, params| {
+                expect_params(params, 1, "player_id")?;
+                let pid = parse_player_id(&params[0])?;
+                Ok(pid)
+            },
+            async |driver, pid| {
+                let opt = driver.get_player_assigned_device(pid).await?;
+                let val = match opt { Some(uuid) => Value::Binary(uuid.as_bytes().to_vec()), None => Value::Nil };
+                Ok(val)
+            },
+        )
+    }
 }
 
 impl Service for FsctRpcService {
@@ -487,6 +537,9 @@ impl Service for FsctRpcService {
             "update_player_status" => self.req_update_player_status(params),
             "update_player_timeline" => self.req_update_player_timeline(params),
             "update_player_metadata" => self.req_update_player_metadata(params),
+            "set_preferred_player" => self.req_set_preferred_player(params),
+            "get_preferred_player" => self.req_get_preferred_player(params),
+            "get_player_assigned_device" => self.req_get_player_assigned_device(params),
             _ => fut_err(format!("unknown method: {}", m)),
         }
     }
