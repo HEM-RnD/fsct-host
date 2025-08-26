@@ -264,10 +264,10 @@ impl FsctRpcService {
                     let tm = val.as_map().with_context(|| "texts must be map")?;
                     for (tk, tv) in tm.iter() {
                         if let Value::String(ts) = tk { if let Some(tkey) = ts.as_str() { match tkey {
-                            "title" => { title = Some(tv.as_str().map(|s| s.to_string())); },
-                            "artist" => { artist = Some(tv.as_str().map(|s| s.to_string())); },
-                            "album" => { album = Some(tv.as_str().map(|s| s.to_string())); },
-                            "genre" => { genre = Some(tv.as_str().map(|s| s.to_string())); },
+                            "title" => { if tv.is_nil() { title = Some(None); } else { title = Some(Some(tv.as_str().with_context(|| "text 'title' must be string or nil")?.to_string())); } },
+                            "artist" => { if tv.is_nil() { artist = Some(None); } else { artist = Some(Some(tv.as_str().with_context(|| "text 'artist' must be string or nil")?.to_string())); } },
+                            "album" => { if tv.is_nil() { album = Some(None); } else { album = Some(Some(tv.as_str().with_context(|| "text 'album' must be string or nil")?.to_string())); } },
+                            "genre" => { if tv.is_nil() { genre = Some(None); } else { genre = Some(Some(tv.as_str().with_context(|| "text 'genre' must be string or nil")?.to_string())); } },
                             _ => bail!("invalid text key: {}", tkey),
                         }}}
                     }
