@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
-use anyhow::Error;
+use anyhow::{Context, Error};
 use log::{info};
 
 use crate::device_manager::ManagedDeviceId;
@@ -81,9 +81,9 @@ impl PlayerManager {
         self.players.lock().unwrap().insert(player_id, registered_player);
 
         // Notify listeners
-        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id });
+        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id: self_id.clone() });
 
-        info!("Player {} registered", player_id);
+        info!("Player {} registered: {}", player_id, self_id);
         Ok(player_id)
     }
     fn assign_new_player_id(&self) -> ManagedPlayerId {
@@ -174,11 +174,10 @@ impl PlayerManager {
     /// Gets the devices assigned to a player
     pub fn get_player_assigned_devices(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         let players = self.players.lock().unwrap();
-        if let Some(player) = players.get(&player_id) {
-            Ok(player.assigned_device)
-        } else {
-            Err(anyhow::anyhow!("Player not found"))
-        }
+        players
+            .get(&player_id)
+            .map(|p| p.assigned_device)
+            .with_context(|| format!("Player {} not found", player_id))
     }
 
     /// Updates a player's state

@@ -19,10 +19,8 @@ use std::sync::Arc;
 
 use anyhow::Error;
 use async_trait::async_trait;
-use tokio::sync::broadcast;
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::device_manager::{DeviceManager, ManagedDeviceId};
-use crate::player_events::PlayerEvent;
 use crate::player_manager::{ManagedPlayerId, PlayerManager};
 use crate::player_state::PlayerState;
 use crate::service::MultiServiceHandle;
@@ -48,13 +46,10 @@ pub trait FsctDriver: Send + Sync {
 
     async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
 
-    fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
+    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
 
-    fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
-
-    // Events (player-facing only)
-    fn subscribe_player_events(&self) -> broadcast::Receiver<PlayerEvent>;
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
 }
 
 /// Local, in-process implementation of FsctDriver.
@@ -134,22 +129,17 @@ impl FsctDriver for LocalDriver {
         self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
     }
 
-    fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
+    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
         self.player_manager.set_preferred_player(preferred)
     }
 
-    fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
+    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
         self.player_manager.get_preferred_player()
     }
 
-    fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         self.player_manager.get_player_assigned_devices(player_id)
     }
-
-    fn subscribe_player_events(&self) -> broadcast::Receiver<PlayerEvent> {
-        self.player_manager.subscribe()
-    }
-
-
-
 }
+
+
