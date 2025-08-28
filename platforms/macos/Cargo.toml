@@ -17,7 +17,7 @@ log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media-remote = { git = "https://github.com/HEM-RnD/media-remote.git", branch = "feature/add_playback_Rate" }
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["full"] }
 
 [[bin]]
 name = "fsct_driver_service"

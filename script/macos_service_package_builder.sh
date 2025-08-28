@@ -11,7 +11,7 @@ IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package id
 BUILD_DIR="${ROOT_DIR}/target"                          # Directory where build will be performed
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
-INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
+INSTALLER_FILES_DIR="${ROOT_DIR}/platforms/macos/package"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
 APPLE_DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
@@ -82,7 +82,7 @@ if [ "$SKIP_LICENSE" = false ]; then
 fi
 
 # Extract version using cargo
-VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CARGO_BIN_NAME}'), ''))")
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == 'fsct-platform-macos'), ''))")
 if [ -z "$VERSION" ]; then
     echo "Error: Failed to extract version using cargo metadata"
     exit 1
@@ -203,7 +203,7 @@ chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 echo "========================================"
 echo "Generating EULA from FSCT_Driver_EULA.md..."
 # Generate EULA.rtf from FSCT_Driver_EULA.md using pandoc
-pandoc --from markdown --to rtf -s -o "${PACKAGE_DIR}/EULA.rtf" "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md"
+pandoc --from markdown --to rtf -s -o "${PACKAGE_DIR}/EULA.rtf" "${ROOT_DIR}/platforms/common/FSCT_Driver_EULA.md"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to generate EULA.rtf using pandoc"
     exit 1
@@ -217,13 +217,13 @@ fi
 echo "EULA generated successfully: ${PACKAGE_DIR}/EULA.rtf"
 
 # Copy the EULA.md to the binary root directory
-cp "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md" "${BIN_ROOT}/usr/local/share/fsct-driver/EULA.md"
+cp "${ROOT_DIR}/platforms/common/FSCT_Driver_EULA.md" "${BIN_ROOT}/usr/local/share/fsct-driver/EULA.md"
 
 echo "========================================"
 echo "Generating license information..."
 if [ "$SKIP_LICENSE" = false ]; then
     echo "Generating LICENSES.md using cargo about..."
-    (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs -o "${PACKAGE_DIR}/LICENSES.md")
+    (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m platforms/macos/Cargo.toml licenses.hbs -o "${PACKAGE_DIR}/LICENSES.md")
     if [ $? -ne 0 ]; then
         echo "Error: Failed to generate LICENSES.md using cargo about"
         exit 1
