@@ -2,11 +2,10 @@
 resolver = "3"
 members = [
   "core",
-  "ports/native", # legacy monolithic platform crate (to be deprecated)
-  "ports/node",
   "platforms/windows",
   "platforms/macos",
   "platforms/linux",
+  "bindings/node",
 ]
 
 [workspace.package]
