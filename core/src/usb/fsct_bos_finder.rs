@@ -102,7 +102,7 @@ fn decode_bos_descriptor(data: &[u8]) -> Result<BosDescriptor, BosError> {
     Ok(descriptor)
 }
 
-fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData, BosError> {
+fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData<'_>, BosError> {
     if data.len() < std::mem::size_of::<BosCapabilityDescriptor>() {
         return Err(BosError::TooShort { name: "BosCapabilityDescriptor", expected: std::mem::size_of::<BosCapabilityDescriptor>(), actual: data.len() });
     }

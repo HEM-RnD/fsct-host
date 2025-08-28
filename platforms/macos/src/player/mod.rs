@@ -21,7 +21,6 @@ use fsct_core::{FsctDriver, ManagedPlayerId};
 use fsct_core::service::{ServiceHandle, spawn_service};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use anyhow::anyhow;
