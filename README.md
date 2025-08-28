@@ -17,7 +17,6 @@ Node.js.
 - **core/**: Contains the Rust core implementation of FSCT, including decoding capabilities and device handling.
 - **platforms/**: Platform-specific OS services and integrations (per-OS crates).
 - **bindings/**: Language bindings (Node.js today; others planned).
-- Legacy: **ports/** remains temporarily during migration.
 - **script/**: Utility scripts for building, testing, and maintaining the project.
 - **Cargo.toml**: Rust project configuration that defines dependencies and build instructions.
 - **LICENSE** and **LICENSE-FSCT.md**: Licensing details for the Ferrum Streaming Control Technology™ and related
@@ -47,8 +46,6 @@ npm install @hemspzoo/fsct-lib
 - Active player selection (authoritative): see docs/active_player_selection.md
 - Proposed architecture and background: see docs/proposed_architecture.md
 - Device management overview: see docs/device_management.md
-- Workspace reorganization plan: see docs/architecture.md
-- Migration guide (ports/native -> platforms/*, ports/node -> bindings/node): see MIGRATION.md
 
 ## Building the Project
 
