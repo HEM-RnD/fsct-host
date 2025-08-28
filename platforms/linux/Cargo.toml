@@ -15,5 +15,5 @@ anyhow.workspace = true
 log = "0.4"
 
 [[bin]]
-name = "fsct_driver_service"
-path = "src/bin/service_main.rs"
+name = "fsct_driver_service_linux"
+path = "src/main.rs"
