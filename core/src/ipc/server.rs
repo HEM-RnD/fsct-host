@@ -24,7 +24,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use parity_tokio_ipc::Endpoint;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -157,10 +157,6 @@ pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: Strin
 
         info!("IPC server stopped");
     })
-}
-
-pub fn run_ipc_server(driver: Arc<dyn FsctDriver>) -> ServiceHandle {
-    run_ipc_server_with_endpoint(driver, default_endpoint())
 }
 
 #[derive(Clone)]

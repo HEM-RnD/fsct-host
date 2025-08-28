@@ -18,7 +18,7 @@
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use fsct_core::{LocalDriver, MultiServiceHandle};
+use fsct_core::LocalDriver;
 
 use crate::service::cli::LogLevel;
 use crate::service::logger::init_standalone_logger;
