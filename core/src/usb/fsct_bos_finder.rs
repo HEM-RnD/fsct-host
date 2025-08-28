@@ -136,7 +136,7 @@ fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData<'_>, B
 
 fn decode_bos_descriptor_with_capabilities(
     data: &[u8],
-) -> Result<Vec<BosCapabilityDescWithData>, BosError> {
+) -> Result<Vec<BosCapabilityDescWithData<'_>>, BosError> {
     let descriptor = decode_bos_descriptor(data)?;
     let total_length = descriptor.wTotalLength as usize;
     if data.len() < total_length {
