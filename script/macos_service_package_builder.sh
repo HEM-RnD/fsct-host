@@ -5,7 +5,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
-CARGO_BIN_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
+CARGO_BIN_NAME="fsct_driver_service_macos"                      # Name of the binary target for Cargo
 APP_NAME="fsct_driver_service"                                # Application name (final binary name)
 IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
 BUILD_DIR="${ROOT_DIR}/target"                          # Directory where build will be performed

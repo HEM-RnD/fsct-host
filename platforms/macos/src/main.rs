@@ -1,3 +1,9 @@
+
+#[cfg(target_os = "macos")]
+pub mod service;
+
+#[cfg(target_os = "macos")]
+pub mod player;
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
     fsct_platform_macos::fsct_main()

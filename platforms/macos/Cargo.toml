@@ -20,5 +20,5 @@ media-remote = { git = "https://github.com/HEM-RnD/media-remote.git", branch = "
 tokio = { workspace = true, features = ["full"] }
 
 [[bin]]
-name = "fsct_driver_service"
-path = "src/bin/service_main.rs"
+name = "fsct_driver_service_macos"
+path = "src/main.rs"
