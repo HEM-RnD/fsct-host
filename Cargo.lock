@@ -566,61 +566,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fsct-node-lib"
-version = "0.2.13"
-dependencies = [
- "async-trait",
- "env_logger",
- "fsct_core",
- "log",
- "napi",
- "napi-build",
- "napi-derive",
- "systemd-journal-logger",
- "tokio",
-]
-
-[[package]]
-name = "fsct-platform-linux"
-version = "0.2.13"
-dependencies = [
- "anyhow",
- "fsct_core",
- "log",
-]
-
-[[package]]
-name = "fsct-platform-macos"
-version = "0.2.13"
-dependencies = [
- "anyhow",
- "env_logger",
- "fsct_core",
- "log",
- "media-remote",
- "tokio",
-]
-
-[[package]]
-name = "fsct-platform-windows"
-version = "0.2.13"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "env_logger",
- "fsct_core",
- "log",
- "log4rs",
- "tokio",
- "windows",
- "windows-core",
- "windows-future",
- "windows-service",
-]
-
-[[package]]
-name = "fsct_core"
+name = "fsct-core"
 version = "0.2.13"
 dependencies = [
  "anyhow",
@@ -637,6 +583,60 @@ dependencies = [
  "tokio-util",
  "uuid",
  "winapi",
+]
+
+[[package]]
+name = "fsct-node-lib"
+version = "0.2.13"
+dependencies = [
+ "async-trait",
+ "env_logger",
+ "fsct-core",
+ "log",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "systemd-journal-logger",
+ "tokio",
+]
+
+[[package]]
+name = "fsct-platform-linux"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "fsct-core",
+ "log",
+]
+
+[[package]]
+name = "fsct-platform-macos"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "fsct-core",
+ "log",
+ "media-remote",
+ "tokio",
+]
+
+[[package]]
+name = "fsct-platform-windows"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "env_logger",
+ "fsct-core",
+ "log",
+ "log4rs",
+ "tokio",
+ "windows",
+ "windows-core",
+ "windows-future",
+ "windows-service",
 ]
 
 [[package]]

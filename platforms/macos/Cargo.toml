@@ -10,7 +10,7 @@ repository.workspace = true
 description = "macOS platform service and OS bindings for FSCT."
 
 [dependencies]
-fsct_core.workspace = true
+fsct-core.workspace = true
 anyhow.workspace = true
 env_logger.workspace = true
 log = "0.4"

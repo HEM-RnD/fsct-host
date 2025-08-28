@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use fsct_core::player_state::{PlayerState, TrackMetadata};
-use fsct_core::{FsctDriver, ManagedPlayerId};
-use fsct_core::service::{ServiceHandle, spawn_service};
+use fsct::definitions::{FsctStatus, TimelineInfo};
+use fsct::player_state::{PlayerState, TrackMetadata};
+use fsct::{FsctDriver, ManagedPlayerId};
+use fsct::service::{ServiceHandle, spawn_service};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Arc;

@@ -32,8 +32,8 @@ use windows_service::{
 };
 use windows_service::service::ServiceType;
 use crate::service::constants::SERVICE_NAME;
-use fsct_core::LocalDriver;
-use crate::run_os_watcher;
+use fsct::LocalDriver;
+use crate::player::run_os_watcher;
 
 // Define service events
 #[derive(Clone)]

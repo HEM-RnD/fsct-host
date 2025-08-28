@@ -17,7 +17,7 @@
 
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver};
+use fsct::{LocalDriver};
 use std::sync::Arc;
 use crate::run_os_watcher;
 

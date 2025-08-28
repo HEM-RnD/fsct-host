@@ -10,7 +10,7 @@ repository.workspace = true
 description = "Linux platform service and OS bindings for FSCT."
 
 [dependencies]
-fsct_core.workspace = true
+fsct-core.workspace = true
 anyhow.workspace = true
 log = "0.4"
 

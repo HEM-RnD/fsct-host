@@ -27,9 +27,9 @@ use windows::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use fsct_core::definitions::{TimelineInfo, FsctStatus};
-use fsct_core::player_state::{PlayerState, TrackMetadata};
-use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
+use fsct::definitions::{TimelineInfo, FsctStatus};
+use fsct::player_state::{PlayerState, TrackMetadata};
+use fsct::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 

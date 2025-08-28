@@ -73,7 +73,8 @@ try
 
     # === Configuration ===
     $PROJECT_NAME = "fsct-platform-windows"
-    $PROJECT_BIN = "fsct_driver_service"
+    $PROJECT_BIN = "fsct_driver_service_windows"
+    $PACKAGE_BIN = " fsct_driver_service.exe"
     $SIGN_CERT_THUMBPRINT = "aef0182f5de48143c336a56f9ef5b706a9eb0403"
     $TIMESTAMP_URL = "http://timestamp.globalsign.com/tsa/r6advanced1"
     $SIGN_ENABLED = $true
@@ -314,7 +315,7 @@ try
     try
     {
         cargo build -p $PROJECT_NAME --release
-        Copy-Item "target\release\$PROJECT_BIN.exe" "$BUILD_DIR\$PROJECT_BIN.exe" -Force
+        Copy-Item "target\release\$PROJECT_BIN.exe" "$BUILD_DIR\$PACKAGE_BIN" -Force
     }
     catch
     {
@@ -388,7 +389,7 @@ try
     Write-Host "[INFO] Installer version: $installerVersion"
 
     # === Signing EXE ===
-    if (-not (Sign-File -FilePath "$BUILD_DIR\$PROJECT_BIN.exe" -Description "EXE"))
+    if (-not (Sign-File -FilePath "$BUILD_DIR\$PACKAGE_BIN" -Description "EXE"))
     {
         exit 1
     }

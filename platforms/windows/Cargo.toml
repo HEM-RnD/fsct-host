@@ -10,7 +10,7 @@ repository.workspace = true
 description = "Windows platform service and OS bindings for FSCT."
 
 [target.'cfg(target_os = "windows")'.dependencies]
-fsct_core.workspace = true
+fsct-core.workspace = true
 anyhow.workspace = true
 log = "0.4"
 clap = { version = "4.5", features = ["derive"] }
@@ -30,5 +30,5 @@ windows-service = "0.8.0"
 windows-future = "0.2.1"
 
 [[bin]]
-name = "fsct_driver_service"
-path = "src/bin/service_main.rs"
+name = "fsct_driver_service_windows"
+path = "src/main.rs"

@@ -18,12 +18,12 @@
 use log::{info, error, debug};
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use fsct_core::LocalDriver;
+use fsct::LocalDriver;
 
 use crate::service::cli::LogLevel;
 use crate::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
-use crate::run_os_watcher;
+use crate::player::run_os_watcher;
 
 async fn shutdown_signal() {
     debug!("Press Ctrl+C or close the console window to exit");

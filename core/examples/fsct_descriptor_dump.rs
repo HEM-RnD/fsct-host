@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use fsct_core::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
+use fsct::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
 use nusb::DeviceInfo;
-use fsct_core::usb::descriptor_utils::get_fsct_functionality_descriptor_set;
-use fsct_core::usb::{find_fsct_interface_number, open_interface};
+use fsct::usb::descriptor_utils::get_fsct_functionality_descriptor_set;
+use fsct::usb::{find_fsct_interface_number, open_interface};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
