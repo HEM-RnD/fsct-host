@@ -581,6 +581,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsct-platform-linux"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "fsct_core",
+ "log",
+]
+
+[[package]]
+name = "fsct-platform-macos"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "fsct_core",
+ "log",
+ "media-remote",
+ "tokio",
+]
+
+[[package]]
+name = "fsct-platform-windows"
+version = "0.2.13"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fsct_core",
+ "log",
+ "windows",
+ "windows-core",
+ "windows-future",
+ "windows-service",
+]
+
+[[package]]
 name = "fsct_core"
 version = "0.2.13"
 dependencies = [

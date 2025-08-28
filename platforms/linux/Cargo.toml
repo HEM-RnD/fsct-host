@@ -1,0 +1,19 @@
+[package]
+name = "fsct-platform-linux"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+description = "Linux platform service and OS bindings for FSCT."
+
+[dependencies]
+fsct_core.workspace = true
+anyhow.workspace = true
+log = "0.4"
+
+[[bin]]
+name = "fsct_driver_service"
+path = "src/bin/service_main.rs"

@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["core", "ports/native", "ports/node"]
+members = [
+  "core",
+  "ports/native", # legacy monolithic platform crate (to be deprecated)
+  "ports/node",
+  "platforms/windows",
+  "platforms/macos",
+  "platforms/linux",
+]
 
 [workspace.package]
 version = "0.2.13"
