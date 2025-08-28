@@ -72,7 +72,8 @@ try
     }
 
     # === Configuration ===
-    $PROJECT_NAME = "fsct_driver_service"
+    $PROJECT_NAME = "fsct-platform-windows"
+    $PROJECT_BIN = "fsct_driver_service"
     $SIGN_CERT_THUMBPRINT = "aef0182f5de48143c336a56f9ef5b706a9eb0403"
     $TIMESTAMP_URL = "http://timestamp.globalsign.com/tsa/r6advanced1"
     $SIGN_ENABLED = $true
@@ -80,9 +81,9 @@ try
     $LICENSE_ENABLE = $true
 
     $PROJECT_DIR = $projectLocation
-    $WIX_SOURCE_DIR = Join-Path $projectLocation "ports\native\packages\windows"
+    $WIX_SOURCE_DIR = Join-Path $projectLocation "platforms\windows\packages\windows"
     $BUILD_DIR = Join-Path $projectLocation "target\wix_build"
-    $EULA_DIR = Join-Path $projectLocation "ports\native"
+    $EULA_DIR = Join-Path $projectLocation "platforms\common"
     $EULA_RTF = Join-Path $BUILD_DIR "EULA.rtf"
 
     # Parse command line arguments
@@ -312,8 +313,8 @@ try
     Write-Host "[INFO] Building Rust service..."
     try
     {
-        cargo build --release
-        Copy-Item "target\release\$PROJECT_NAME.exe" "$BUILD_DIR\$PROJECT_NAME.exe" -Force
+        cargo build -p $PROJECT_NAME --release
+        Copy-Item "target\release\$PROJECT_BIN.exe" "$BUILD_DIR\$PROJECT_BIN.exe" -Force
     }
     catch
     {
@@ -387,7 +388,7 @@ try
     Write-Host "[INFO] Installer version: $installerVersion"
 
     # === Signing EXE ===
-    if (-not (Sign-File -FilePath "$BUILD_DIR\$PROJECT_NAME.exe" -Description "EXE"))
+    if (-not (Sign-File -FilePath "$BUILD_DIR\$PROJECT_BIN.exe" -Description "EXE"))
     {
         exit 1
     }
@@ -451,7 +452,7 @@ try
 
         try {
             # Use Start-Process to better control output handling
-            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "ports/native/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
+            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "platforms/windows/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
 
             $licenseStdout = Get-Content "$env:TEMP\cargo_stdout.txt" -Raw -ErrorAction SilentlyContinue
             $licenseStderr = Get-Content "$env:TEMP\cargo_stderr.txt" -Raw -ErrorAction SilentlyContinue

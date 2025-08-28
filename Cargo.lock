@@ -606,9 +606,13 @@ name = "fsct-platform-windows"
 version = "0.2.13"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
+ "env_logger",
  "fsct_core",
  "log",
+ "log4rs",
+ "tokio",
  "windows",
  "windows-core",
  "windows-future",
