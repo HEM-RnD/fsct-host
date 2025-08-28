@@ -19,7 +19,7 @@ use anyhow::anyhow;
 use env_logger::Env;
 use fsct::LocalDriver;
 use std::sync::Arc;
-use crate::service::run_os_watcher;
+use crate::player::run_os_watcher;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
