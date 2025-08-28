@@ -109,8 +109,8 @@ mkdir -p "${FAT_BUILD_DIR}"
 # Loop through required targets and build
 targets_array=()
 for target in "${PLATFORM_TARGETS[@]}"; do
-    (cd "${ROOT_DIR}" && cargo build --release --bin ${CARGO_BIN_NAME} --target ${target})
-    targets_array+=("${ROOT_DIR}/target/${target}/release/${CARGO_BIN_NAME}")  
+    (cd "${ROOT_DIR}" && cargo build -p fsct-platform-macos --release --bin ${CARGO_BIN_NAME} --target ${target})
+    targets_array+=("${ROOT_DIR}/target/${target}/release/${CARGO_BIN_NAME}")
 done
 
 # Combine using lipo
