@@ -2,20 +2,13 @@
 <module type="EMPTY_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
-      <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/core/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/core/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/gui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/core/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/platforms/linux/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/platforms/macos/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/platforms/windows/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/bindings/native/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/bindings/native/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/bindings/node/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/bindings/volumio/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/bindings/volumio/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
