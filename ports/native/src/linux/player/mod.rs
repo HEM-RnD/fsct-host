@@ -22,7 +22,6 @@ use fsct_core::{FsctDriver, ManagedPlayerId, ServiceHandle, spawn_service};
 use fsct_core::player_state::PlayerState;
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player_state::TrackMetadata;
-use log::warn;
 use zbus::{Connection, MessageStream, MatchRule};
 use zbus::names::BusName;
 use zbus::proxy::Proxy;
@@ -108,14 +107,34 @@ async fn get_initial(conn: &Connection, bus: &str) -> zbus::Result<(String, Play
 }
 
 pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
+    // Establish DBus session connection upfront; fail fast if it cannot be created.
+    let conn = Connection::session().await?;
+
+    // Install explicit match rules via DBus AddMatch to ensure delivery of needed signals; fail on errors.
+    let bus = DBusProxy::new(&conn).await?;
+    // NameOwnerChanged
+    let rule = MatchRule::builder()
+        .interface("org.freedesktop.DBus")?
+        .member("NameOwnerChanged")?
+        .build();
+    bus.add_match_rule(rule).await?;
+    // PropertiesChanged on MPRIS path
+    let rule = MatchRule::builder()
+        .interface("org.freedesktop.DBus.Properties")?
+        .member("PropertiesChanged")?
+        .path("/org/mpris/MediaPlayer2")?
+        .build();
+    bus.add_match_rule(rule).await?;
+    // Seeked on MPRIS player
+    let rule = MatchRule::builder()
+        .interface("org.mpris.MediaPlayer2.Player")?
+        .member("Seeked")?
+        .path("/org/mpris/MediaPlayer2")?
+        .build();
+    bus.add_match_rule(rule).await?;
+
+    let conn = conn.clone();
     let handle = spawn_service(move |mut stop| async move {
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("zbus connect failed: {e}");
-                return;
-            }
-        };
         // registry keyed by well-known name -> (id, state, last_position_us, owner_unique_name)
         let mut registry: HashMap<String, (ManagedPlayerId, PlayerState, Option<i64>, Option<String>)> = HashMap::new();
 
@@ -154,23 +173,6 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
             }
         }
 
-        // Install explicit match rules via DBus AddMatch to ensure delivery of needed signals
-        if let Ok(bus) = DBusProxy::new(&conn).await {
-            let _ = bus.add_match_rule(MatchRule::builder()
-                .interface("org.freedesktop.DBus").unwrap()
-                .member("NameOwnerChanged").unwrap()
-                .build()).await;
-            let _ = bus.add_match_rule(MatchRule::builder()
-                .interface("org.freedesktop.DBus.Properties").unwrap()
-                .member("PropertiesChanged").unwrap()
-                .path("/org/mpris/MediaPlayer2").unwrap()
-                .build()).await;
-            let _ = bus.add_match_rule(MatchRule::builder()
-                .interface("org.mpris.MediaPlayer2.Player").unwrap()
-                .member("Seeked").unwrap()
-                .path("/org/mpris/MediaPlayer2").unwrap()
-                .build()).await;
-        }
 
         let mut stream = MessageStream::from(&conn);
         use futures_util::StreamExt;
