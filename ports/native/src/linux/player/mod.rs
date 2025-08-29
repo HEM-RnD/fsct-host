@@ -22,13 +22,11 @@ use fsct_core::{FsctDriver, ManagedPlayerId, ServiceHandle, spawn_service};
 use fsct_core::player_state::PlayerState;
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player_state::TrackMetadata;
-use zbus::{Connection, MessageStream, MatchRule};
-use zbus::names::BusName;
-use zbus::proxy::Proxy;
-use zbus::fdo::DBusProxy;
+use zbus::{Connection};
+mod mpris;
 use zbus::zvariant::{OwnedValue, Str, Array};
 
-fn map_status(s: Option<&str>) -> FsctStatus {
+pub fn map_status(s: Option<&str>) -> FsctStatus {
     match s {
         Some("Playing") => FsctStatus::Playing,
         Some("Paused") => FsctStatus::Paused,
@@ -37,7 +35,7 @@ fn map_status(s: Option<&str>) -> FsctStatus {
     }
 }
 
-fn extract_duration_from_metadata(metadata: &HashMap<String, OwnedValue>) -> Option<Duration> {
+pub fn extract_duration_from_metadata(metadata: &HashMap<String, OwnedValue>) -> Option<Duration> {
     if let Some(v) = metadata.get("mpris:length") {
         let us_total: Option<u64> = v.downcast_ref::<i64>().ok().map(|x| x as u64)
             .or_else(|| v.downcast_ref::<i32>().ok().map(|x| x as u64))
@@ -47,7 +45,7 @@ fn extract_duration_from_metadata(metadata: &HashMap<String, OwnedValue>) -> Opt
     None
 }
 
-fn build_state_from_map(metadata: &HashMap<String, OwnedValue>, playback_status: Option<&str>, position_us: Option<i64>, playback_rate: Option<f64>) -> PlayerState {
+pub fn build_state_from_map(metadata: &HashMap<String, OwnedValue>, playback_status: Option<&str>, position_us: Option<i64>, playback_rate: Option<f64>) -> PlayerState {
     let mut texts = TrackMetadata::default();
     let mut duration: Option<Duration> = None;
     if let Some(v) = metadata.get("xesam:title") {
@@ -91,136 +89,77 @@ fn build_state_from_map(metadata: &HashMap<String, OwnedValue>, playback_status:
     }
 }
 
-async fn get_initial(conn: &Connection, bus: &str) -> zbus::Result<(String, PlayerState)> {
-    let path = "/org/mpris/MediaPlayer2";
-    let mp2 = Proxy::new(conn, bus, path, "org.mpris.MediaPlayer2").await?;
-    let player = Proxy::new(conn, bus, path, "org.mpris.MediaPlayer2.Player").await?;
-
-    let identity: String = mp2.get_property("Identity").await?;
-    let metadata: HashMap<String, OwnedValue> = player.get_property("Metadata").await?;
-    let playback_status: Option<String> = player.get_property("PlaybackStatus").await.ok();
-    // Try to get current position (in microseconds). Some players may not expose it.
-    let position_us: Option<i64> = player.get_property("Position").await.ok();
-    let playback_rate: Option<f64> = player.get_property("Rate").await.ok();
-    let state = build_state_from_map(&metadata, playback_status.as_deref(), position_us, playback_rate);
-    Ok((identity, state))
-}
 
 pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
     // Establish DBus session connection upfront; fail fast if it cannot be created.
     let conn = Connection::session().await?;
 
-    // Install explicit match rules via DBus AddMatch to ensure delivery of needed signals; fail on errors.
-    let bus = DBusProxy::new(&conn).await?;
-    // NameOwnerChanged
-    let rule = MatchRule::builder()
-        .interface("org.freedesktop.DBus")?
-        .member("NameOwnerChanged")?
-        .build();
-    bus.add_match_rule(rule).await?;
-    // PropertiesChanged on MPRIS path
-    let rule = MatchRule::builder()
-        .interface("org.freedesktop.DBus.Properties")?
-        .member("PropertiesChanged")?
-        .path("/org/mpris/MediaPlayer2")?
-        .build();
-    bus.add_match_rule(rule).await?;
-    // Seeked on MPRIS player
-    let rule = MatchRule::builder()
-        .interface("org.mpris.MediaPlayer2.Player")?
-        .member("Seeked")?
-        .path("/org/mpris/MediaPlayer2")?
-        .build();
-    bus.add_match_rule(rule).await?;
+    // Install explicit match rules via DBus AddMatch using adapter
+    mpris::install_match_rules(&conn).await?;
 
     let conn = conn.clone();
     let handle = spawn_service(move |mut stop| async move {
         // registry keyed by well-known name -> (id, state, last_position_us, owner_unique_name)
         let mut registry: HashMap<String, (ManagedPlayerId, PlayerState, Option<i64>, Option<String>)> = HashMap::new();
 
-        // Initial discovery via ListNames
-        if let Ok(dbus) = DBusProxy::new(&conn).await {
-            if let Ok(names) = dbus.list_names().await {
-                for owned in names {
-                    let name = owned.to_string();
-                    if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
-                    if let Ok((identity, mut state)) = get_initial(&conn, &name).await {
-                        if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
-                            let _ = driver.update_player_state(id, state.clone()).await;
-                            // After state, push a fresh initial timeline with accurate position if available
-                            if let Some(mut tl) = state.timeline.clone() {
-                                tl.update_time = SystemTime::now();
-                                // fetch current playback rate and apply only if Playing
-                                if let Ok(pxy) = Proxy::new(&conn, name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                    let rate: f64 = pxy.get_property("Rate").await.unwrap_or(1.0);
-                                    tl.rate = if matches!(state.status, FsctStatus::Playing) { rate } else { 0.0 };
-                                } else {
-                                    tl.rate = if matches!(state.status, FsctStatus::Playing) { 1.0 } else { 0.0 };
-                                }
-                                let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
-                                state.timeline = Some(tl);
-                            }
-                            // Try get current owner unique name
-                            let owner = if let Ok(db) = DBusProxy::new(&conn).await {
-                                if let Ok(bus_name) = BusName::try_from(name.as_str()) {
-                                    db.get_name_owner(bus_name).await.ok().map(|u| u.to_string())
-                                } else { None }
-                            } else { None };
-                            registry.insert(name, (id, state, None, owner));
+        // Initial discovery via adapter
+        if let Ok(initials) = mpris::initial_players(&conn).await {
+            for evt in initials {
+                if let mpris::MprisEvent::PlayerAppeared { name, identity, mut state, owner } = evt {
+                    if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
+                        let _ = driver.update_player_state(id, state.clone()).await;
+                        if let Some(mut tl) = state.timeline.clone() {
+                            tl.update_time = SystemTime::now();
+                            let rate: f64 = mpris::get_rate(&conn, name.as_str()).await.unwrap_or(1.0);
+                            tl.rate = if matches!(state.status, FsctStatus::Playing) { rate } else { 0.0 };
+                            let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
+                            state.timeline = Some(tl);
                         }
+                        registry.insert(name, (id, state, None, owner));
                     }
                 }
             }
         }
 
-
-        let mut stream = MessageStream::from(&conn);
+        // Consume events via channel to simplify select
+        let mut evt_stream = mpris::MprisStream::new(conn.clone()).into_stream();
         use futures_util::StreamExt;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            futures_util::pin_mut!(evt_stream);
+            while let Some(item) = evt_stream.next().await {
+                if let Ok(evt) = item { let _ = tx.send(evt); }
+            }
+        });
         loop {
             tokio::select! {
                 _ = stop.signaled() => break,
-                Some(Ok(msg)) = stream.next() => {
-                    let hdr = msg.header();
-                    if hdr.member().map(|m| m.as_str()) == Some("NameOwnerChanged") {
-                        if let Ok((name, old_owner, new_owner)) = msg.body().deserialize::<(String, String, String)>() {
-                            if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
-                            if old_owner.is_empty() && !new_owner.is_empty() {
-                                let owner = Some(new_owner.clone());
-                                if let Ok((identity, mut state)) = get_initial(&conn, &name).await {
-                                    if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
-                                        let _ = driver.update_player_state(id, state.clone()).await;
-                                        // push initial timeline if available
-                                        if let Some(mut tl) = state.timeline.clone() {
-                                            tl.update_time = SystemTime::now();
-                                            if let Ok(pxy) = Proxy::new(&conn, name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                                let rate: f64 = pxy.get_property("Rate").await.unwrap_or(1.0);
-                                                tl.rate = if matches!(state.status, FsctStatus::Playing) { rate } else { 0.0 };
-                                            } else {
-                                                tl.rate = if matches!(state.status, FsctStatus::Playing) { 1.0 } else { 0.0 };
-                                            }
-                                            let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
-                                            state.timeline = Some(tl);
-                                        }
-                                        registry.insert(name, (id, state, None, owner));
-                                    }
+                Some(evt) = rx.recv() => {
+                    match evt {
+                        mpris::MprisEvent::PlayerAppeared { name, identity, mut state, owner } => {
+                            if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
+                                let _ = driver.update_player_state(id, state.clone()).await;
+                                if let Some(mut tl) = state.timeline.clone() {
+                                    tl.update_time = SystemTime::now();
+                                    let rate: f64 = mpris::get_rate(&conn, name.as_str()).await.unwrap_or(1.0);
+                                    tl.rate = if matches!(state.status, FsctStatus::Playing) { rate } else { 0.0 };
+                                    let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
+                                    state.timeline = Some(tl);
                                 }
-                            } else if !old_owner.is_empty() && new_owner.is_empty() {
-                                if let Some((id, _, _, _)) = registry.remove(&name) {
-                                    let _ = driver.update_player_state(id, PlayerState::default()).await;
-                                    let _ = driver.unregister_player(id).await;
-                                }
+                                registry.insert(name, (id, state, None, owner));
                             }
                         }
-                    } else if hdr.member().map(|m| m.as_str()) == Some("PropertiesChanged") {
-                        if let Ok((iface, changed, _inv)) = msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>() {
-                            if iface != "org.mpris.MediaPlayer2.Player" { continue; }
-                            // Route only to players whose owner matches the signal sender (if available)
-                            let sender = hdr.sender().map(|s| s.to_string());
+                        mpris::MprisEvent::PlayerDisappeared { name } => {
+                            if let Some((id, _, _, _)) = registry.remove(&name) {
+                                let _ = driver.update_player_state(id, PlayerState::default()).await;
+                                let _ = driver.unregister_player(id).await;
+                            }
+                        }
+                        mpris::MprisEvent::PropertiesChanged { name: _n, changed, sender } => {
                             for (_name, (id, last, _pos, owner)) in registry.iter_mut() {
                                 if owner.as_ref().is_some() && sender.is_some() && owner.as_ref() != sender.as_ref() { continue; }
                                 let status = changed.get("PlaybackStatus").and_then(|v| v.downcast_ref::<Str>().ok().map(|s| s.to_string()))
                                     .or_else(|| changed.get("PlaybackStatus").and_then(|v| v.downcast_ref::<String>().ok().map(|s| s.clone())));
-                                // If Rate changed directly, update timeline accordingly
                                 if let Some(v) = changed.get("Rate") {
                                     if let Some(mut tl) = last.timeline.clone() {
                                         let mut rate_val = 1.0;
@@ -229,12 +168,9 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                                         else if let Ok(iv) = v.downcast_ref::<i32>() { rate_val = iv as f64; }
                                         tl.rate = if matches!(last.status, FsctStatus::Playing) { rate_val } else { 0.0 };
                                         tl.update_time = SystemTime::now();
-                                        // also refresh duration, as it might change along with rate updates
-                                        if let Ok(pxy) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                            if let Ok(meta) = pxy.get_property::<HashMap<String, OwnedValue>>("Metadata").await {
-                                                if let Some(new_dur) = extract_duration_from_metadata(&meta) {
-                                                    if new_dur != tl.duration { tl.duration = new_dur; }
-                                                }
+                                        if let Ok(meta) = mpris::get_metadata(&conn, _name.as_str()).await {
+                                            if let Some(new_dur) = extract_duration_from_metadata(&meta) {
+                                                if new_dur != tl.duration { tl.duration = new_dur; }
                                             }
                                         }
                                         let _ = driver.update_player_timeline(*id, Some(tl.clone())).await;
@@ -243,36 +179,23 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                                 }
                                 let mut new_state = last.clone();
                                 if let Some(s) = status.as_deref() { new_state.status = map_status(Some(s)); }
-                                // If "Metadata" present, refresh via proxy to avoid complex Value downcasts
                                 if changed.contains_key("Metadata") {
-                                    // find the well-known name for this owner
-                                    // Since we’re in the loop, _name is the well-known name
                                     let well_known = _name.clone();
-                                    if let Ok(pxy) = Proxy::new(&conn, well_known.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                        let meta: Option<HashMap<String, OwnedValue>> = pxy.get_property("Metadata").await.ok();
-                                        let status_str: Option<String> = pxy.get_property("PlaybackStatus").await.ok();
-                                        let rate_opt: Option<f64> = pxy.get_property("Rate").await.ok();
-                                        if let Some(meta_map) = meta.as_ref() {
-                                            let prev_tl = last.timeline.clone();
-                                            new_state = build_state_from_map(meta_map, status_str.as_deref(), None, rate_opt);
-                                            // On any Metadata change, rebuild timeline from fresh Position; do not carry over old position
-                                            if let (Some(_old_tl), Some(mut new_tl)) = (prev_tl, new_state.timeline.clone()) {
-                                                // Fetch fresh position (microseconds) if available
-                                                let mut new_pos = Duration::from_secs(0);
-                                                if let Ok(pxy) = Proxy::new(&conn, well_known.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                                    if let Ok(pos_us) = pxy.get_property::<i64>("Position").await {
-                                                        new_pos = Duration::from_micros(pos_us as u64);
-                                                    }
-                                                }
-                                                // Clamp to duration if needed
-                                                if new_pos > new_tl.duration {
-                                                    new_pos = new_tl.duration;
-                                                }
-                                                new_tl.position = new_pos;
-                                                new_tl.update_time = SystemTime::now();
-                                                let _ = driver.update_player_timeline(*id, Some(new_tl.clone())).await;
-                                                new_state.timeline = Some(new_tl);
-                                            }
+                                    let meta = mpris::get_metadata(&conn, well_known.as_str()).await.ok();
+                                    // PlaybackStatus/Rate are optional; we can get them via proxies too, but we only need rate for timeline when Playing
+                                    let status_str: Option<String> = None;
+                                    let rate_opt: Option<f64> = mpris::get_rate(&conn, well_known.as_str()).await.ok();
+                                    if let Some(meta_map) = meta.as_ref() {
+                                        let prev_tl = last.timeline.clone();
+                                        new_state = build_state_from_map(meta_map, status_str.as_deref(), None, rate_opt);
+                                        if let (Some(_old_tl), Some(mut new_tl)) = (prev_tl, new_state.timeline.clone()) {
+                                            let mut new_pos = Duration::from_secs(0);
+                                            if let Ok(pos_us) = mpris::get_position(&conn, well_known.as_str()).await { new_pos = Duration::from_micros(pos_us as u64); }
+                                            if new_pos > new_tl.duration { new_pos = new_tl.duration; }
+                                            new_tl.position = new_pos;
+                                            new_tl.update_time = SystemTime::now();
+                                            let _ = driver.update_player_timeline(*id, Some(new_tl.clone())).await;
+                                            new_state.timeline = Some(new_tl);
                                         }
                                     }
                                 }
@@ -280,62 +203,40 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                                     let prev = last.clone();
                                     *last = new_state.clone();
                                     let _ = driver.update_player_state(*id, new_state.clone()).await;
-                                    // On any PlaybackStatus change, push fresh timeline with current position and appropriate rate
                                     if prev.status != last.status {
                                         if let Some(mut tl) = last.timeline.clone().or(prev.timeline.clone()) {
-                                            // Try to get Position property for accurate value
-                                            if let Ok(pxy) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                                if let Ok(pos_us) = pxy.get_property::<i64>("Position").await {
-                                                    tl.position = Duration::from_micros(pos_us as u64);
-                                                }
-                                            }
-                                            // Determine playback rate from PropertiesChanged or fallback to proxy
+                                            if let Ok(pos_us) = mpris::get_position(&conn, _name.as_str()).await { tl.position = Duration::from_micros(pos_us as u64); }
                                             let mut rate_val: f64 = 1.0;
-                                            // try read Rate from changed map directly
                                             if let Some(v) = changed.get("Rate") {
                                                 if let Ok(val) = v.downcast_ref::<f64>() { rate_val = val; }
                                                 else if let Ok(iv) = v.downcast_ref::<i64>() { rate_val = iv as f64; }
                                                 else if let Ok(iv) = v.downcast_ref::<i32>() { rate_val = iv as f64; }
-                                            } else if let Ok(pxy) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                                rate_val = pxy.get_property::<f64>("Rate").await.unwrap_or(1.0);
+                                            } else if let Ok(r) = mpris::get_rate(&conn, _name.as_str()).await {
+                                                rate_val = r;
                                             }
                                             tl.rate = if matches!(last.status, FsctStatus::Playing) { rate_val } else { 0.0 };
                                             tl.update_time = SystemTime::now();
-                                            // also refresh duration, as it might change when status/rate changes
-                                            if let Ok(pxy2) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                                if let Ok(meta) = pxy2.get_property::<HashMap<String, OwnedValue>>("Metadata").await {
-                                                    if let Some(new_dur) = extract_duration_from_metadata(&meta) {
-                                                        if new_dur != tl.duration { tl.duration = new_dur; }
-                                                    }
-                                                }
+                                            if let Ok(meta) = mpris::get_metadata(&conn, _name.as_str()).await {
+                                                if let Some(new_dur) = extract_duration_from_metadata(&meta) { if new_dur != tl.duration { tl.duration = new_dur; } }
                                             }
                                             let _ = driver.update_player_timeline(*id, Some(tl.clone())).await;
-                                            // keep internal state timeline in sync after status change
                                             last.timeline = Some(tl);
                                         }
                                     }
                                 }
                             }
                         }
-                    } else if hdr.member().map(|m| m.as_str()) == Some("Seeked") {
-                        if let Ok((pos_us,)) = msg.body().deserialize::<(i64,)>() {
-                            let sender = hdr.sender().map(|s| s.to_string());
+                        mpris::MprisEvent::Seeked { name: _n, pos_us, sender } => {
                             for (_name, (id, last, pos_slot, owner)) in registry.iter_mut() {
                                 if owner.as_ref().is_some() && sender.as_ref().is_some() && owner.as_ref() != sender.as_ref() { continue; }
                                 *pos_slot = Some(pos_us);
                                 if let Some(mut tl) = last.timeline.clone() {
                                     tl.position = Duration::from_micros(pos_us as u64);
                                     tl.update_time = SystemTime::now();
-                                    // also refresh duration on position updates, since it may change
-                                    if let Ok(pxy) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
-                                        if let Ok(meta) = pxy.get_property::<HashMap<String, OwnedValue>>("Metadata").await {
-                                            if let Some(new_dur) = extract_duration_from_metadata(&meta) {
-                                                if new_dur != tl.duration { tl.duration = new_dur; }
-                                            }
-                                        }
+                                    if let Ok(meta) = mpris::get_metadata(&conn, _name.as_str()).await {
+                                        if let Some(new_dur) = extract_duration_from_metadata(&meta) { if new_dur != tl.duration { tl.duration = new_dur; } }
                                     }
                                     let _ = driver.update_player_timeline(*id, Some(tl.clone())).await;
-                                    // keep last state timeline in sync
                                     last.timeline = Some(tl);
                                 }
                             }
