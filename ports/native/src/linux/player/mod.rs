@@ -153,6 +153,7 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                             } else if !old_owner.is_empty() && new_owner.is_empty() {
                                 if let Some((id, _, _, _)) = registry.remove(&name) {
                                     let _ = driver.update_player_state(id, PlayerState::default()).await;
+                                    let _ = driver.unregister_player(id).await;
                                 }
                             }
                         }
