@@ -18,139 +18,188 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use anyhow::anyhow;
 use fsct_core::{FsctDriver, ManagedPlayerId, ServiceHandle, spawn_service};
 use fsct_core::player_state::PlayerState;
 use fsct_core::definitions::{FsctStatus, TimelineInfo};
 use fsct_core::player_state::TrackMetadata;
 use log::warn;
-use mpris::{Player, PlayerFinder, Metadata, PlaybackStatus};
+use zbus::{Connection, MessageStream, MatchRule};
+use zbus::names::BusName;
+use zbus::proxy::Proxy;
+use zbus::fdo::DBusProxy;
+use zbus::zvariant::{OwnedValue, Str, Array};
 
-fn state_from_metadata_and_status(metadata: &Metadata, status: Option<PlaybackStatus>, position: Option<Duration>) -> PlayerState {
+fn map_status(s: Option<&str>) -> FsctStatus {
+    match s {
+        Some("Playing") => FsctStatus::Playing,
+        Some("Paused") => FsctStatus::Paused,
+        Some("Stopped") => FsctStatus::Stopped,
+        _ => FsctStatus::Unknown,
+    }
+}
+
+fn build_state_from_map(metadata: &HashMap<String, OwnedValue>, playback_status: Option<&str>, position_us: Option<i64>) -> PlayerState {
     let mut texts = TrackMetadata::default();
-    texts.title = metadata.title().map(|s| s.to_string());
-    texts.artist = metadata.artists().and_then(|v| v.get(0).map(|s| s.to_string()));
-    texts.album = metadata.album_name().map(|s| s.to_string());
-
-    let timeline = metadata.length().map(|len| {
-        let pos = position.unwrap_or(Duration::from_secs(0));
-        TimelineInfo {
-            position: pos,
-            update_time: SystemTime::now(),
-            duration: len,
-            rate: match status {
-                Some(PlaybackStatus::Playing) => 1.0,
-                Some(PlaybackStatus::Paused) => 0.0,
-                _ => 0.0,
-            },
+    let mut duration: Option<Duration> = None;
+    if let Some(v) = metadata.get("xesam:title") {
+        if let Ok(sv) = v.downcast_ref::<Str>() { texts.title = Some(sv.to_string()); }
+        else if let Ok(s) = v.downcast_ref::<String>() { texts.title = Some(s.clone()); }
+    }
+    if let Some(v) = metadata.get("xesam:artist") {
+        if let Ok(arr) = v.downcast_ref::<Array>() {
+            for elem in arr.iter() { // elem: Value
+                if let Ok(sv) = elem.downcast_ref::<Str>() { texts.artist = Some(sv.to_string()); break; }
+                if let Ok(s) = elem.downcast_ref::<String>() { texts.artist = Some(s.clone()); break; }
+            }
         }
-    });
+    }
+    if let Some(v) = metadata.get("xesam:album") {
+        if let Ok(sv) = v.downcast_ref::<Str>() { texts.album = Some(sv.to_string()); }
+        else if let Ok(s) = v.downcast_ref::<String>() { texts.album = Some(s.clone()); }
+    }
+    if let Some(v) = metadata.get("mpris:length") {
+        let us_total: Option<u64> = v.downcast_ref::<i64>().ok().map(|x| x as u64)
+            .or_else(|| v.downcast_ref::<i32>().ok().map(|x| x as u64))
+            .or_else(|| v.downcast_ref::<u64>().ok().map(|x| x));
+        if let Some(us) = us_total { duration = Some(Duration::from_micros(us)); }
+    }
+    let pos = position_us.map(|us| Duration::from_micros(us as u64)).unwrap_or(Duration::from_secs(0));
+    let status = map_status(playback_status);
+    let rate = if matches!(status, FsctStatus::Playing) { 1.0 } else { 0.0 };
 
-    let fsct_status = match status {
-        Some(PlaybackStatus::Playing) => FsctStatus::Playing,
-        Some(PlaybackStatus::Paused) => FsctStatus::Paused,
-        Some(PlaybackStatus::Stopped) | None => FsctStatus::Stopped,
-    };
+    PlayerState {
+        status,
+        texts,
+        timeline: duration.map(|d| TimelineInfo { position: pos, update_time: SystemTime::now(), duration: d, rate }),
+    }
+}
 
-    PlayerState { status: fsct_status, texts, timeline }
+async fn get_initial(conn: &Connection, bus: &str) -> zbus::Result<(String, PlayerState)> {
+    let path = "/org/mpris/MediaPlayer2";
+    let mp2 = Proxy::new(conn, bus, path, "org.mpris.MediaPlayer2").await?;
+    let player = Proxy::new(conn, bus, path, "org.mpris.MediaPlayer2.Player").await?;
+
+    let identity: String = mp2.get_property("Identity").await?;
+    let metadata: HashMap<String, OwnedValue> = player.get_property("Metadata").await?;
+    let playback_status: Option<String> = player.get_property("PlaybackStatus").await.ok();
+    let state = build_state_from_map(&metadata, playback_status.as_deref(), None);
+    Ok((identity, state))
 }
 
 pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
-    // Discover MPRIS players and register either one or many. For simplicity and robustness on Linux,
-    // we will register all detected players and track them; the Orchestrator can pick the best. 
-    let finder = PlayerFinder::new().map_err(|e| anyhow!(e))?;
-
-    let players: Vec<Player> = match finder.find_all() {
-        Ok(list) => list,
-        Err(e) => {
-            // If discovery fails, start with an empty set and rely on periodic refresh
-            warn!("Failed to discover MPRIS players initially: {:?}", e);
-            Vec::new()
-        },
-    };
-
-    // Initial registration using a temporary local registry; long-running registry is in the async task
-    for p in players {
-        let identity = p.identity();
-        let bus_name = p.bus_name().to_string();
-        let fsct_id = driver.register_player(format!("native-linux-mpris:{}.{}", identity, bus_name)).await?;
-        // initial state
-        let md = p.get_metadata().ok();
-        let status = p.get_playback_status().ok();
-        let pos = p.get_position().ok();
-        let state = if let Some(md) = md { state_from_metadata_and_status(&md, status, pos) } else { PlayerState::default() };
-        let _ = driver.update_player_state(fsct_id, state.clone()).await;
-    }
-
-    // Spawn watcher task using a helper thread for non-Send MPRIS types; the async task diffs and updates driver
     let handle = spawn_service(move |mut stop| async move {
-        use tokio::sync::mpsc;
-        #[derive(Clone)]
-        struct ReportedPlayer { bus: String, identity: String, state: PlayerState }
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<ReportedPlayer>>();
+        let conn = match Connection::session().await { Ok(c) => c, Err(e) => { warn!("zbus connect failed: {e}"); return; } };
+        // registry keyed by well-known name -> (id, state, last_position_us, owner_unique_name)
+        let mut registry: HashMap<String, (ManagedPlayerId, PlayerState, Option<i64>, Option<String>)> = HashMap::new();
 
-        // Start blocking thread that owns MPRIS connection
-        std::thread::spawn(move || {
-            let maybe_finder = PlayerFinder::new();
-            if maybe_finder.is_err() {
-                warn!("Failed to create PlayerFinder: {:?}", maybe_finder.err());
-                return;
-            }
-            let finder = maybe_finder.unwrap();
-            loop {
-                match finder.find_all() {
-                    Ok(players) => {
-                        let mut batch: Vec<ReportedPlayer> = Vec::with_capacity(players.len());
-                        for p in players {
-                            let bus = p.bus_name().to_string();
-                            let identity = p.identity().to_string();
-                            let md = p.get_metadata().ok();
-                            let status = p.get_playback_status().ok();
-                            let pos = p.get_position().ok();
-                            let state = if let Some(md) = md { state_from_metadata_and_status(&md, status, pos) } else { PlayerState::default() };
-                            batch.push(ReportedPlayer { bus, identity, state });
+        // Initial discovery via ListNames
+        if let Ok(dbus) = DBusProxy::new(&conn).await {
+            if let Ok(names) = dbus.list_names().await {
+                for owned in names {
+                    let name = owned.to_string();
+                    if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
+                    if let Ok((identity, state)) = get_initial(&conn, &name).await {
+                        if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
+                            let _ = driver.update_player_state(id, state.clone()).await;
+                            // Try get current owner unique name
+                            let owner = if let Ok(db) = DBusProxy::new(&conn).await {
+                                if let Ok(bus_name) = BusName::try_from(name.as_str()) {
+                                    db.get_name_owner(bus_name).await.ok().map(|u| u.to_string())
+                                } else { None }
+                            } else { None };
+                            registry.insert(name, (id, state, None, owner));
                         }
-                        let _ = tx.send(batch);
-                    }
-                    Err(e) => {
-                        warn!("MPRIS discovery failed: {:?}", e);
-                        let _ = tx.send(Vec::new());
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(750));
-            }
-        });
-
-        // Async side registry (bus -> (fsct_id, last_state))
-        let mut registry: HashMap<String, (ManagedPlayerId, PlayerState)> = HashMap::new();
-
-        while let Some(batch) = tokio::select! {
-            _ = stop.signaled() => None,
-            b = rx.recv() => b,
-        } {
-            // mark seen
-            let mut seen: HashMap<String, ()> = HashMap::new();
-            for rp in batch.into_iter() {
-                seen.insert(rp.bus.clone(), ());
-                if let Some((fsct_id, last)) = registry.get_mut(&rp.bus) {
-                    if *last != rp.state {
-                        *last = rp.state.clone();
-                        let _ = driver.update_player_state(*fsct_id, rp.state).await;
-                    }
-                } else {
-                    // new player
-                    let name = format!("native-linux-mpris:{}.{}", rp.identity, rp.bus);
-                    if let Ok(id) = driver.register_player(name).await {
-                        let _ = driver.update_player_state(id, rp.state.clone()).await;
-                        registry.insert(rp.bus, (id, rp.state));
                     }
                 }
             }
-            // handle removed
-            let removed: Vec<String> = registry.keys().filter(|k| !seen.contains_key(*k)).cloned().collect();
-            for bus in removed {
-                if let Some((id, _)) = registry.remove(&bus) {
-                    let _ = driver.update_player_state(id, PlayerState::default()).await;
+        }
+
+        // Install explicit match rules via DBus AddMatch to ensure delivery of needed signals
+        if let Ok(bus) = DBusProxy::new(&conn).await {
+            let _ = bus.add_match_rule(MatchRule::builder()
+                .interface("org.freedesktop.DBus").unwrap()
+                .member("NameOwnerChanged").unwrap()
+                .build()).await;
+            let _ = bus.add_match_rule(MatchRule::builder()
+                .interface("org.freedesktop.DBus.Properties").unwrap()
+                .member("PropertiesChanged").unwrap()
+                .path("/org/mpris/MediaPlayer2").unwrap()
+                .build()).await;
+            let _ = bus.add_match_rule(MatchRule::builder()
+                .interface("org.mpris.MediaPlayer2.Player").unwrap()
+                .member("Seeked").unwrap()
+                .path("/org/mpris/MediaPlayer2").unwrap()
+                .build()).await;
+        }
+
+        let mut stream = MessageStream::from(&conn);
+        use futures_util::StreamExt;
+        loop {
+            tokio::select! {
+                _ = stop.signaled() => break,
+                Some(Ok(msg)) = stream.next() => {
+                    let hdr = msg.header();
+                    if hdr.member().map(|m| m.as_str()) == Some("NameOwnerChanged") {
+                        if let Ok((name, old_owner, new_owner)) = msg.body().deserialize::<(String, String, String)>() {
+                            if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
+                            if old_owner.is_empty() && !new_owner.is_empty() {
+                                let owner = Some(new_owner.clone());
+                                if let Ok((identity, state)) = get_initial(&conn, &name).await {
+                                    if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
+                                        let _ = driver.update_player_state(id, state.clone()).await;
+                                        registry.insert(name, (id, state, None, owner));
+                                    }
+                                }
+                            } else if !old_owner.is_empty() && new_owner.is_empty() {
+                                if let Some((id, _, _, _)) = registry.remove(&name) {
+                                    let _ = driver.update_player_state(id, PlayerState::default()).await;
+                                }
+                            }
+                        }
+                    } else if hdr.member().map(|m| m.as_str()) == Some("PropertiesChanged") {
+                        if let Ok((iface, changed, _inv)) = msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>() {
+                            if iface != "org.mpris.MediaPlayer2.Player" { continue; }
+                            // Route only to players whose owner matches the signal sender (if available)
+                            let sender = hdr.sender().map(|s| s.to_string());
+                            for (_name, (id, last, _pos, owner)) in registry.iter_mut() {
+                                if owner.as_ref().is_some() && sender.is_some() && owner.as_ref() != sender.as_ref() { continue; }
+                                let status = changed.get("PlaybackStatus").and_then(|v| v.downcast_ref::<Str>().ok().map(|s| s.to_string()))
+                                    .or_else(|| changed.get("PlaybackStatus").and_then(|v| v.downcast_ref::<String>().ok().map(|s| s.clone())));
+                                let mut new_state = last.clone();
+                                if let Some(s) = status.as_deref() { new_state.status = map_status(Some(s)); }
+                                // If "Metadata" present, refresh via proxy to avoid complex Value downcasts
+                                if changed.contains_key("Metadata") {
+                                    // find the well-known name for this owner
+                                    // Since we’re in the loop, _name is the well-known name
+                                    let well_known = _name.clone();
+                                    if let Ok(pxy) = Proxy::new(&conn, well_known.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
+                                        let meta: Option<HashMap<String, OwnedValue>> = pxy.get_property("Metadata").await.ok();
+                                        let status_str: Option<String> = pxy.get_property("PlaybackStatus").await.ok();
+                                        if let Some(meta_map) = meta.as_ref() {
+                                            new_state = build_state_from_map(meta_map, status_str.as_deref(), None);
+                                        }
+                                    }
+                                }
+                                if *last != new_state {
+                                    *last = new_state.clone();
+                                    let _ = driver.update_player_state(*id, new_state).await;
+                                }
+                            }
+                        }
+                    } else if hdr.member().map(|m| m.as_str()) == Some("Seeked") {
+                        if let Ok((pos_us,)) = msg.body().deserialize::<(i64,)>() {
+                            let sender = hdr.sender().map(|s| s.to_string());
+                            for (_name, (id, last, pos_slot, owner)) in registry.iter_mut() {
+                                if owner.as_ref().is_some() && sender.as_ref().is_some() && owner.as_ref() != sender.as_ref() { continue; }
+                                *pos_slot = Some(pos_us);
+                                if let Some(mut tl) = last.timeline.clone() {
+                                    tl.position = Duration::from_micros(pos_us as u64);
+                                    tl.update_time = SystemTime::now();
+                                    let _ = driver.update_player_timeline(*id, Some(tl)).await;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

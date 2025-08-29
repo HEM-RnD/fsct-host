@@ -48,12 +48,9 @@ npm install @hemspzoo/fsct-lib
 
 ## Building the Project
 
-### Linux prerequisites
+### Linux notes
 
-The native Linux player integration uses MPRIS over D-Bus. You need system packages to build/run the service:
-- Debian/Ubuntu: `sudo apt install libdbus-1-dev pkg-config`
-- Fedora: `sudo dnf install dbus-devel pkgconf-pkg-config`
-- Arch: `sudo pacman -S dbus pkgconf`
+The native Linux player integration uses MPRIS over D-Bus via the pure-Rust zbus stack. No system dbus development packages are required at build time. A running D-Bus session is required at runtime (standard on desktop environments).
 
 Make sure you have Rust installed. To build the Rust library, run:
 
