@@ -65,7 +65,7 @@ fn build_state_from_map(metadata: &HashMap<String, OwnedValue>, playback_status:
     }
     let pos = position_us.map(|us| Duration::from_micros(us as u64)).unwrap_or(Duration::from_secs(0));
     let status = map_status(playback_status);
-    let rate = if matches!(status, FsctStatus::Playing) { 1.0 } else { 0.0 };
+    let rate = match status { FsctStatus::Playing => 1.0, FsctStatus::Paused => 0.0, FsctStatus::Stopped => 0.0, _ => 0.0 };
 
     PlayerState {
         status,
@@ -82,7 +82,9 @@ async fn get_initial(conn: &Connection, bus: &str) -> zbus::Result<(String, Play
     let identity: String = mp2.get_property("Identity").await?;
     let metadata: HashMap<String, OwnedValue> = player.get_property("Metadata").await?;
     let playback_status: Option<String> = player.get_property("PlaybackStatus").await.ok();
-    let state = build_state_from_map(&metadata, playback_status.as_deref(), None);
+    // Try to get current position (in microseconds). Some players may not expose it.
+    let position_us: Option<i64> = player.get_property("Position").await.ok();
+    let state = build_state_from_map(&metadata, playback_status.as_deref(), position_us);
     Ok((identity, state))
 }
 
@@ -98,9 +100,16 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                 for owned in names {
                     let name = owned.to_string();
                     if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
-                    if let Ok((identity, state)) = get_initial(&conn, &name).await {
+                    if let Ok((identity, mut state)) = get_initial(&conn, &name).await {
                         if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
                             let _ = driver.update_player_state(id, state.clone()).await;
+                            // After state, push a fresh initial timeline with accurate position if available
+                            if let Some(mut tl) = state.timeline.clone() {
+                                tl.update_time = SystemTime::now();
+                                tl.rate = match state.status { FsctStatus::Playing => 1.0, _ => 0.0 };
+                                let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
+                                state.timeline = Some(tl);
+                            }
                             // Try get current owner unique name
                             let owner = if let Ok(db) = DBusProxy::new(&conn).await {
                                 if let Ok(bus_name) = BusName::try_from(name.as_str()) {
@@ -144,9 +153,16 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                             if !name.starts_with("org.mpris.MediaPlayer2.") { continue; }
                             if old_owner.is_empty() && !new_owner.is_empty() {
                                 let owner = Some(new_owner.clone());
-                                if let Ok((identity, state)) = get_initial(&conn, &name).await {
+                                if let Ok((identity, mut state)) = get_initial(&conn, &name).await {
                                     if let Ok(id) = driver.register_player(format!("native-linux-mpris:{identity}.{name}")).await {
                                         let _ = driver.update_player_state(id, state.clone()).await;
+                                        // push initial timeline if available
+                                        if let Some(mut tl) = state.timeline.clone() {
+                                            tl.update_time = SystemTime::now();
+                                            tl.rate = match state.status { FsctStatus::Playing => 1.0, _ => 0.0 };
+                                            let _ = driver.update_player_timeline(id, Some(tl.clone())).await;
+                                            state.timeline = Some(tl);
+                                        }
                                         registry.insert(name, (id, state, None, owner));
                                     }
                                 }
@@ -177,13 +193,43 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                                         let meta: Option<HashMap<String, OwnedValue>> = pxy.get_property("Metadata").await.ok();
                                         let status_str: Option<String> = pxy.get_property("PlaybackStatus").await.ok();
                                         if let Some(meta_map) = meta.as_ref() {
+                                            let prev_tl = last.timeline.clone();
                                             new_state = build_state_from_map(meta_map, status_str.as_deref(), None);
+                                            // If duration changed, emit timeline update with preserved position if possible
+                                            if let (Some(old_tl), Some(mut new_tl)) = (prev_tl, new_state.timeline.clone()) {
+                                                if old_tl.duration != new_tl.duration {
+                                                    // carry over latest known position if newer
+                                                    new_tl.position = old_tl.position;
+                                                    new_tl.rate = match new_state.status { FsctStatus::Playing => 1.0, _ => 0.0 };
+                                                    new_tl.update_time = SystemTime::now();
+                                                    let _ = driver.update_player_timeline(*id, Some(new_tl.clone())).await;
+                                                    // Also keep last.state timeline synchronized
+                                                    new_state.timeline = Some(new_tl);
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 if *last != new_state {
+                                    let prev = last.clone();
                                     *last = new_state.clone();
-                                    let _ = driver.update_player_state(*id, new_state).await;
+                                    let _ = driver.update_player_state(*id, new_state.clone()).await;
+                                    // On any PlaybackStatus change, push fresh timeline with current position and appropriate rate
+                                    if prev.status != last.status {
+                                        if let Some(mut tl) = prev.timeline.clone().or(last.timeline.clone()) {
+                                            // Try to get Position property for accurate value
+                                            if let Ok(pxy) = Proxy::new(&conn, _name.as_str(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player").await {
+                                                if let Ok(pos_us) = pxy.get_property::<i64>("Position").await {
+                                                    tl.position = Duration::from_micros(pos_us as u64);
+                                                }
+                                            }
+                                            tl.rate = match last.status { FsctStatus::Playing => 1.0, _ => 0.0 };
+                                            tl.update_time = SystemTime::now();
+                                            let _ = driver.update_player_timeline(*id, Some(tl.clone())).await;
+                                            // keep internal state timeline in sync after status change
+                                            last.timeline = Some(tl);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -196,7 +242,9 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Servi
                                 if let Some(mut tl) = last.timeline.clone() {
                                     tl.position = Duration::from_micros(pos_us as u64);
                                     tl.update_time = SystemTime::now();
-                                    let _ = driver.update_player_timeline(*id, Some(tl)).await;
+                                    let _ = driver.update_player_timeline(*id, Some(tl.clone())).await;
+                                    // keep last state timeline in sync
+                                    last.timeline = Some(tl);
                                 }
                             }
                         }
