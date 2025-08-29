@@ -40,6 +40,10 @@ windows-future = "0.2.1"
 media-remote = { git = "https://github.com/HEM-RnD/media-remote.git", branch = "feature/add_playback_Rate" }
 tokio = { workspace = true, features = ["rt"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+mpris = "2.0"
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+
 [[bin]]
 name = "fsct_driver_service"
 path = "src/service_main.rs"
