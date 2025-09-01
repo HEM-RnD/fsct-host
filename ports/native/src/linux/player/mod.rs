@@ -15,6 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use std::fmt::format;
 use std::sync::Arc;
 use futures_util::StreamExt;
 use log::{info, warn};
@@ -24,7 +25,7 @@ use crate::linux::player::mpris::Player;
 mod mpris;
 
 async fn register_player(driver: &dyn FsctDriver, player: Player) -> Result<(), anyhow::Error> {
-    let id = driver.register_player(player.identity.clone()).await?;
+    let id = driver.register_player(player.name.clone()).await?;
     info!("Registered player: {}", id);
     Ok(())
 }

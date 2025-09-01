@@ -1,25 +1,43 @@
 // Internal MPRIS adapter: hide zbus details and expose typed events for the watcher.
 // Copyright 2025 HEM Sp. z o.o.
 
-mod player;
-
+use anyhow::bail;
 use futures_util::Stream;
+use zbus::export::ordered_stream::OrderedStreamExt;
+use zbus::fdo::DBusProxy;
 
-
-mod media_player2;
 mod watcher;
-
-use media_player2::*;
-use player::*;
+pub mod media_player2;
+pub mod player;
 
 pub use watcher::SessionWatcher;
 
 pub struct Player {
     conn: zbus::Connection,
     pub name: String,
-    pub identity: String,
-    // state: PlayerState,
-    // owner: Option<String>,
 }
 
+impl Player {
+    pub async fn as_media_player2_interface(&self) -> anyhow::Result<media_player2::MediaPlayer2Proxy<'_>>
+    {
+        Ok(media_player2::MediaPlayer2Proxy::new(&self.conn, self.name.as_str()).await?)
+    }
 
+    pub async fn as_player_interface(&self) -> anyhow::Result<player::PlayerProxy<'_>>
+    {
+        Ok(player::PlayerProxy::new(&self.conn, self.name.as_str()).await?)
+    }
+
+    pub async fn wait_for_disconnect(&self) -> anyhow::Result<()>
+    {
+        let dbus = DBusProxy::builder(&self.conn).destination(self.name.as_str())?.build().await?;
+        let mut name_owner_changed = dbus.receive_name_owner_changed().await?;
+        while let Some(event) = name_owner_changed.next().await {
+            let args = event.args()?;
+            if args.new_owner().is_none() {
+                return Ok(());
+            }
+        }
+        bail!("Player disconnected unexpectedly");
+    }
+}

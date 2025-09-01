@@ -1,6 +1,6 @@
 use futures_util::Stream;
 use zbus::fdo::DBusProxy;
-use crate::linux::player::mpris::{MediaPlayer2Proxy, Player};
+use crate::linux::player::mpris::{media_player2::MediaPlayer2Proxy, Player};
 
 pub struct SessionWatcher {
     conn: zbus::Connection,
@@ -20,11 +20,7 @@ impl SessionWatcher {
         if !name.starts_with("org.mpris.MediaPlayer2.") { return Ok(None); }
         let name = name.to_string();
         let conn = self.conn.clone();
-        let identity = match MediaPlayer2Proxy::builder(&conn).destination(name.as_str())?.build().await {
-            Ok(mp2) => mp2.identity().await.unwrap_or_else(|_| name.clone()),
-            Err(_) => name.clone(),
-        };
-        let player = Player { conn, name, identity };
+        let player = Player { conn, name };
         Ok(Some(player))
     }
 

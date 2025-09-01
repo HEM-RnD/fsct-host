@@ -19,7 +19,15 @@
 //!
 //! [Writing a client proxy]: https://dbus2.github.io/zbus/client.html
 //! [D-Bus standard interfaces]: https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces,
+#![allow(non_snake_case)]
+
+use std::time::Duration;
 use zbus::proxy;
+use serde::{Deserialize, Serialize};
+use zbus::zvariant::*;
+use zbus::zvariant::OwnedValue;
+use zbus::zvariant::Type;
+
 #[proxy(
     interface = "org.mpris.MediaPlayer2.Player",
     default_path = "/org/mpris/MediaPlayer2"
@@ -85,9 +93,9 @@ pub trait Player {
 
     /// LoopStatus property
     #[zbus(property)]
-    fn loop_status(&self) -> zbus::Result<String>;
+    fn loop_status(&self) -> zbus::Result<LoopStatus>;
     #[zbus(property)]
-    fn set_loop_status(&self, value: &str) -> zbus::Result<()>;
+    fn set_loop_status(&self, value: LoopStatus) -> zbus::Result<()>;
 
     /// MaximumRate property
     #[zbus(property)]
@@ -103,7 +111,7 @@ pub trait Player {
 
     /// PlaybackStatus property
     #[zbus(property)]
-    fn playback_status(&self) -> zbus::Result<String>;
+    fn playback_status(&self) -> zbus::Result<PlaybackStatus>;
 
     /// Position property
     #[zbus(property)]
@@ -126,4 +134,25 @@ pub trait Player {
     fn volume(&self) -> zbus::Result<f64>;
     #[zbus(property)]
     fn set_volume(&self, value: f64) -> zbus::Result<()>;
+}
+
+/// A repeat / loop status
+#[derive(Deserialize, Serialize, Type, Debug, PartialEq, Eq, Copy, Clone, OwnedValue, Value)]
+#[zvariant(signature = "s")]
+pub enum LoopStatus {
+    /// "None" if the playback will stop when there are no more tracks to play
+    None,
+    /// "Track" if the current track will start again from the begining once it has finished playing
+    Track,
+    /// "Playlist" if the playback loops through a list of tracks
+    Playlist,
+}
+
+/// The current playback status.
+#[derive(Deserialize, Serialize, Type, Debug, PartialEq, Eq, Copy, Clone, OwnedValue, Value)]
+#[zvariant(signature = "s")]
+pub enum PlaybackStatus {
+    Playing,
+    Paused,
+    Stopped,
 }
