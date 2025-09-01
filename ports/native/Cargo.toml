@@ -44,6 +44,7 @@ tokio = { workspace = true, features = ["rt"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 zvariant = "4"
 futures-util = "0.3"
+async-stream = "0.3"
 
 [[bin]]
 name = "fsct_driver_service"
