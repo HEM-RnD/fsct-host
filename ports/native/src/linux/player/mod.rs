@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use futures_util::StreamExt;
 use log::{info, warn};
-use fsct_core::{FsctDriver, ManagedPlayerId, ServiceHandle, spawn_service};
+use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
 use crate::linux::player::mpris::Player;
 
 mod mpris;
@@ -30,7 +30,7 @@ async fn register_player(driver: &dyn FsctDriver, player: Player) -> Result<(), 
 }
 
 pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
-    let player_watcher = mpris::PlayerWatcher::new().await?;
+    let player_watcher = mpris::SessionWatcher::new().await?;
     let handle = spawn_service(|_stop_| async move {
         let mut stream = player_watcher.iter_player(true).await;
         futures_util::pin_mut!(stream);
