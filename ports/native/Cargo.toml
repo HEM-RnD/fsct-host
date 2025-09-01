@@ -24,6 +24,7 @@ log = "0.4"
 log4rs = "1.2"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
+tokio-util = "0.7.16"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61.3", features = [

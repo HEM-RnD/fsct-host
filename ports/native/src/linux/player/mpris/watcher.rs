@@ -1,5 +1,6 @@
 use futures_util::Stream;
 use zbus::fdo::DBusProxy;
+use zbus::names::OwnedBusName;
 use crate::linux::player::mpris::{media_player2::MediaPlayer2Proxy, Player};
 
 pub struct SessionWatcher {
@@ -16,11 +17,10 @@ impl SessionWatcher {
         Self { conn }
     }
 
-    async fn get_player(&self, name: &str) -> anyhow::Result<Option<Player>> {
-        if !name.starts_with("org.mpris.MediaPlayer2.") { return Ok(None); }
-        let name = name.to_string();
+    async fn get_player(&self, bus_name: OwnedBusName) -> anyhow::Result<Option<Player>> {
+        if !bus_name.starts_with("org.mpris.MediaPlayer2.") { return Ok(None); }
         let conn = self.conn.clone();
-        let player = Player { conn, name };
+        let player = Player { conn, bus_name };
         Ok(Some(player))
     }
 
@@ -35,7 +35,7 @@ impl SessionWatcher {
             if with_initial {
                 let names = bus.list_names().await?;
                 for bus_name in names.into_iter() {
-                    if let Some(player) = self.get_player(bus_name.as_str()).await? {
+                    if let Some(player) = self.get_player(bus_name).await? {
                         yield player;
                     }
                 }
@@ -47,8 +47,9 @@ impl SessionWatcher {
                 let args = signal.args()?;
                 // Only consider appearances (new owner present)
                 if args.new_owner().is_none() { continue; }
+                let bus_name = args.name().to_owned().into();
 
-                if let Some(player) = self.get_player(args.name().as_str()).await? {
+                if let Some(player) = self.get_player(bus_name).await? {
                     yield player;
                 }
             }

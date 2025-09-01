@@ -730,6 +730,7 @@ dependencies = [
  "media-remote",
  "serde",
  "tokio",
+ "tokio-util",
  "windows",
  "windows-core",
  "windows-future",
