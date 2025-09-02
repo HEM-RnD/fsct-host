@@ -17,41 +17,69 @@
 
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::LocalDriver;
+use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver};
 use std::sync::Arc;
 use crate::run_os_watcher;
 
-/// Linux service entrypoint (skeleton implementation).
-///
-/// It initializes logging, starts the LocalDriver (orchestrator + USB watch),
-/// starts a placeholder OS watcher (no-op for now), and waits for Ctrl+C for a graceful shutdown.
+mod cli;
+use cli::Cli;
+use clap::Parser;
+use log::info;
+use crate::linux::linux_local_socket_path;
+
+/// Linux service entrypoint with CLI to choose mode (standalone/driver/user).
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
+    // Parse CLI
+    let args = Cli::parse();
+
+    // Initialize logging via env_logger (FSCT_LOG, FSCT_LOG_STYLE)
     let env = Env::default()
         .filter_or("FSCT_LOG", "info")
         .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
+    let mut services = MultiServiceHandle::new();
 
-    // Initialize local driver and run background services (orchestrator + USB watch)
-    let driver = Arc::new(LocalDriver::with_new_managers());
-    let mut handle = driver.run().await.map_err(|e| anyhow!(e))?;
+    let endpoint = linux_local_socket_path();
 
-    // Start Linux OS watcher placeholder (to be replaced with real MPRIS/DBus integration)
-    if let Ok(watcher) = run_os_watcher(driver.clone()).await {
-        handle.add(watcher);
+    let driver: Arc<dyn FsctDriver> = if args.user {
+        // In user mode, connect to IPC driver
+        info!("Connecting to IPC driver at {}", endpoint);
+        Arc::new(fsct_core::ipc::client::IpcDriver::connect_to_endpoint(endpoint.into()).await?)
+    } else {
+        // in driver and standalone mode use in-process driver
+        let driver = Arc::new(LocalDriver::with_new_managers());
+        services = driver.run().await.map_err(|e| anyhow!(e))?;
+        driver
+    };
+
+
+    if args.driver {
+        // In driver mode, expose IPC driver over IPC and do not start OS watcher
+        if let Ok(metadata) = std::fs::metadata(endpoint) {
+            if metadata.is_file() {
+                info!("Removing stale IPC socket file: {}", endpoint);
+                std::fs::remove_file(endpoint).expect("Failed to remove stale IPC socket file");
+            }
+        }
+
+        let ipc = fsct_core::ipc::server::run_ipc_server_with_endpoint(driver.clone(), endpoint.into());
+        services.add(ipc);
+    } else {
+        // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
+        if let Ok(watcher) = run_os_watcher(driver.clone()).await {
+            services.add(watcher);
+        }
     }
 
-    // Wait for termination signal
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C signal");
-    println!("Stopping service.");
+    tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C signal");
+    let res = services.shutdown().await;
+    if let Err(e) = res { return Err(e.into()); }
 
-    let res = handle.shutdown().await;
-    if let Err(e) = res {
-        println!("Error while stopping service: {}", e);
-        return Err(e.into());
+    if args.driver {
+        if let Err(r) = std::fs::remove_file(endpoint) {
+            log::warn!("Failed to remove IPC socket file: {}", r);
+        }
     }
-    println!("Exit.");
     Ok(())
 }
