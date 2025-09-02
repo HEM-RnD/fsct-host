@@ -15,33 +15,34 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::fmt::format;
+mod mpris;
+
 use std::sync::{Arc, Mutex};
 use anyhow::bail;
-use futures_util::future::select;
-use futures_util::{StreamExt, TryFutureExt};
+use futures_util::StreamExt;
 use log::{info, warn};
 use tokio::select;
-use tokio::task::JoinSet;
 use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, PlayerState, ServiceHandle};
 use tokio_util::sync::{CancellationToken, DropGuard};
 use zbus::export::ordered_stream::OrderedStreamExt;
 use fsct_core::definitions::FsctStatus;
-
-mod mpris;
+use std::time::{Duration, SystemTime};
+use zbus::zvariant::OwnedValue;
+use fsct_core::definitions::TimelineInfo;
+use fsct_core::player_state::TrackMetadata;
 use mpris::*;
 
 struct PlayerRegistrationManager {
     driver: Arc<dyn FsctDriver>,
     cancellation_token: CancellationToken,
-    drop_guard: DropGuard,
+    _drop_guard: DropGuard,
 }
 
 impl PlayerRegistrationManager {
     fn new(driver: Arc<dyn FsctDriver>) -> Self {
         let cancellation_token = CancellationToken::new();
         let drop_guard = cancellation_token.clone().drop_guard();
-        Self { driver, cancellation_token, drop_guard }
+        Self { driver, cancellation_token, _drop_guard: drop_guard }
     }
 
     async fn register_player(&self, player: mpris::Player) -> Result<(), anyhow::Error> {
@@ -71,11 +72,6 @@ impl From<PlaybackStatus> for FsctStatus {
         }
     }
 }
-
-use std::time::{Duration, SystemTime};
-use zbus::zvariant::OwnedValue;
-use fsct_core::definitions::{TimelineInfo, FsctTextMetadata};
-use fsct_core::player_state::TrackMetadata;
 
 struct PlayerHandler {
     player: Player,
@@ -124,38 +120,51 @@ impl PlayerHandler {
     }
 
     fn parse_metadata(map: &std::collections::HashMap<String, OwnedValue>) -> (fsct_core::player_state::TrackMetadata, Option<Duration>) {
-        use zbus::zvariant::*;
-        let mut md = fsct_core::player_state::TrackMetadata::default();
+        let mut md = TrackMetadata::default();
         let mut dur: Option<Duration> = None;
         for (name, value) in map.iter() {
             match name.as_str() {
-                "xesam:title" => md.title = value.clone().try_into().ok(),
-                "xesam:artist" => {
-                    let one_artist = value.clone().try_into().ok();
-                    if let Some(one_artist) = one_artist {
-                        md.artist = Some(one_artist);
-                    } else {
-                        let multiple_artists: Option<Vec<String>> = value.clone().try_into().ok(); //Vec::<String>::try_from(value).ok();
-                        if let Some(mulitple_artists) = multiple_artists {
-                            md.artist = Some(mulitple_artists.join(", "));
-                        }
-                    }
-                }
-                "xesam:album" => md.album = value.clone().try_into().ok(),
-                "xesam:genre" => md.genre = value.clone().try_into().ok(),
-                "mpris:length" => {
-                    if let Ok(us) = <u64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
-                        dur = Some(Duration::from_micros(us));
-                    } else if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
-                        dur = Some(Self::micros_to_duration(us));
-                    } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(value.clone()) {
-                        dur = Some(Self::micros_to_duration(x as i64));
-                    }
-                }
+                "xesam:title" => md.title = Self::parse_text(value),
+                "xesam:artist" => md.artist = Self::parse_artists(value),
+                "xesam:album" => md.album = Self::parse_text(value),
+                "xesam:genre" => md.genre = Self::parse_text(value),
+                "mpris:length" => dur = Self::parse_length(value),
                 _ => ()
             }
         }
         (md, dur)
+    }
+
+    fn parse_artists(value: &OwnedValue) -> Option<String> {
+        let one_artist = Self::parse_text(value);
+        let artists = if let Some(one_artist) = one_artist {
+            Some(one_artist)
+        } else {
+            Self::parse_text_array(value)
+        };
+        artists
+    }
+
+    fn parse_text_array(value: &OwnedValue) -> Option<String> {
+        let multiple_texts: Option<Vec<String>> = value.clone().try_into().ok(); //Vec::<String>::try_from(value).ok();
+        if let Some(multiple_texts) = multiple_texts {
+            Some(multiple_texts.join(", "))
+        } else { None }
+    }
+
+    fn parse_text(value: &OwnedValue) -> Option<String> {
+        value.clone().try_into().ok()
+    }
+
+    fn parse_length(value: &OwnedValue) -> Option<Duration> {
+        let duration = if let Ok(us) = <u64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+            Some(Duration::from_micros(us))
+        } else if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+            Some(Self::micros_to_duration(us))
+        } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+            Some(Self::micros_to_duration(x as i64))
+        } else { None };
+        duration
     }
 
     async fn build_initial_state<'a>(&self, player_proxy: &PlayerProxy<'a>) -> anyhow::Result<()> {
@@ -346,7 +355,7 @@ impl PlayerHandler {
 
 pub async fn run_os_player_watcher(driver: Arc<dyn FsctDriver>, player_watcher: mpris::SessionWatcher) -> anyhow::Result<()> {
     let manager = PlayerRegistrationManager::new(driver.clone());
-    let mut stream = player_watcher.iter_player(true).await;
+    let stream = player_watcher.iter_player(true).await;
     futures_util::pin_mut!(stream);
     while let Some(player) = stream.next().await {
         match player {
