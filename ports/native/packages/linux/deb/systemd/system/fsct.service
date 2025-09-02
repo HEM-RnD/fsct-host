@@ -1,11 +1,12 @@
 [Unit]
 Description=FSCT driver (system-wide)
-After=network.target
+Requires=fsct.socket
+After=fsct.socket network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/fsct-driver
+ExecStart=/usr/bin/fsct-driver --driver
 Restart=on-failure
 RestartSec=1s
 NoNewPrivileges=true

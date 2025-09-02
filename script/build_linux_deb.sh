@@ -7,7 +7,7 @@ PACKAGE_NAME="fsct-host"
 CARGO_BIN_DRIVER="fsct_driver_service"   # Adjust if different
 CARGO_BIN_USER="fsct_user_client"        # Adjust if different or omit if none yet
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
-VERSION="$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; d=json.load(sys.stdin); print(next((p['version'] for p in d['packages'] if p['name']=='${CARGO_BIN_DRIVER}'), '0.0.0')))")"
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CARGO_BIN_DRIVER}'), ''))")
 
 # Flags
 SKIP_BUILD=false
@@ -37,7 +37,7 @@ mkdir -p "${BIN_DIR_SYS}" "${BIN_DIR_USER}" "${SYSTEMD_SYS_DIR}" "${SYSTEMD_USER
 
 if [ "${SKIP_BUILD}" = false ]; then
   echo "Building Rust binaries..."
-  (cd "${ROOT_DIR}" && cargo build --package fsct_native --release)
+  (cd "${ROOT_DIR}" && cargo build --package "${CARGO_BIN_DRIVER}" --release)
 fi
 
 # Locate binaries
