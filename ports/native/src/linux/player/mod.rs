@@ -218,7 +218,7 @@ impl PlayerHandler {
 
     async fn update_status(&self, value: PlaybackStatus) {
         // before we update the status, we need to recalculate position at the current timepoint
-        self.recalc_position();
+        self.recalculate_position();
         let new_status: FsctStatus = value.into();
         self.state.lock().unwrap().status = new_status;
         let _ = self.driver.update_player_status(self.id, new_status).await;
@@ -293,7 +293,7 @@ impl PlayerHandler {
 
     async fn update_rate(&self, rate: Option<f64>) {
         // before we update the rate, we need to recalculate the timeline to have position calculated at the current timepoint
-        self.recalculate_timeline().await;
+        self.recalculate_position();
         self.timeline_parts.lock().unwrap().rate = rate;
         self.update_timeline().await;
     }
@@ -327,7 +327,7 @@ impl PlayerHandler {
         } else { None }
     }
 
-    fn recalc_position(&self) {
+    fn recalculate_position(&self) {
         let status = self.state.lock().unwrap().status;
         let mut timeline_parts = self.timeline_parts.lock().unwrap();
         if let Some(position) = timeline_parts.position {
@@ -339,10 +339,6 @@ impl PlayerHandler {
             timeline_parts.position = Some(pos);
             timeline_parts.update_time = now;
         }
-    }
-    async fn recalculate_timeline(&self) {
-        self.recalc_position();
-        self.update_timeline().await;
     }
 }
 
