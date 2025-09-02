@@ -75,12 +75,22 @@ impl From<PlaybackStatus> for FsctStatus {
 use std::time::{Duration, SystemTime};
 use zbus::zvariant::OwnedValue;
 use fsct_core::definitions::{TimelineInfo, FsctTextMetadata};
+use fsct_core::player_state::TrackMetadata;
 
 struct PlayerHandler {
     player: Player,
     id: ManagedPlayerId,
     driver: Arc<dyn FsctDriver>,
     state: Mutex<PlayerState>,
+    timeline_parts: Mutex<TimelineParts>,
+}
+
+#[derive(Clone)]
+struct TimelineParts {
+    position: Option<Duration>,
+    rate: Option<f64>,
+    duration: Option<Duration>,
+    update_time: SystemTime,
 }
 
 impl PlayerHandler {
@@ -89,7 +99,13 @@ impl PlayerHandler {
             player,
             id,
             driver,
-            state: Mutex::new(PlayerState::default()),
+            timeline_parts: Mutex::new(TimelineParts {
+                position: None,
+                rate: None,
+                duration: None,
+                update_time: SystemTime::now(),
+            }),
+            state: Mutex::default(),
         }
     }
 
@@ -107,26 +123,10 @@ impl PlayerHandler {
         }
     }
 
-    fn recalc_position(old_tl: &TimelineInfo, now: SystemTime) -> Duration {
-        let elapsed = now.duration_since(old_tl.update_time).unwrap_or(Duration::from_micros(0));
-        let advance = (elapsed.as_micros() as f64) * old_tl.rate;
-        let advance = Duration::from_micros(advance.max(0.0) as u64);
-        let mut pos = old_tl.position + advance;
-        if pos > old_tl.duration { pos = old_tl.duration; }
-        pos
-    }
-
     fn parse_metadata(map: &std::collections::HashMap<String, OwnedValue>) -> (fsct_core::player_state::TrackMetadata, Option<Duration>) {
         use zbus::zvariant::*;
         let mut md = fsct_core::player_state::TrackMetadata::default();
         let mut dur: Option<Duration> = None;
-        if let Some(v) = map.get("mpris:length") {
-            if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(v.clone()) {
-                dur = Some(Self::micros_to_duration(us));
-            } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(v.clone()) {
-                dur = Some(Self::micros_to_duration(x as i64));
-            }
-        }
         for (name, value) in map.iter() {
             match name.as_str() {
                 "xesam:title" => md.title = value.clone().try_into().ok(),
@@ -143,6 +143,13 @@ impl PlayerHandler {
                 }
                 "xesam:album" => md.album = value.clone().try_into().ok(),
                 "xesam:genre" => md.genre = value.clone().try_into().ok(),
+                "mpris:length" => {
+                    if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+                        dur = Some(Self::micros_to_duration(us));
+                    } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+                        dur = Some(Self::micros_to_duration(x as i64));
+                    }
+                }
                 _ => ()
             }
         }
@@ -151,16 +158,22 @@ impl PlayerHandler {
 
     async fn build_initial_state<'a>(&self, player_proxy: &PlayerProxy<'a>) -> anyhow::Result<()> {
         let status: FsctStatus = player_proxy.playback_status().await?.into();
-        let rate_prop = player_proxy.rate().await.ok();
-        let pos_us = player_proxy.position().await.unwrap_or(0);
-        let metadata = player_proxy.metadata().await?;
-        let (texts, duration_opt) = Self::parse_metadata(&metadata);
-
+        let rate = player_proxy.rate().await.ok();
+        let position = player_proxy.position().await.map(Self::micros_to_duration).ok();
         let now = Self::now();
-        let position = Self::micros_to_duration(pos_us);
-        let duration = duration_opt.unwrap_or(Duration::from_micros(0));
-        let rate = Self::effective_rate(status, rate_prop);
-        let timeline = Some(TimelineInfo { position, update_time: now, duration, rate });
+        let metadata = player_proxy.metadata().await?;
+        let (texts, duration) = Self::parse_metadata(&metadata);
+
+        let timeline_parts = TimelineParts {
+            position,
+            rate,
+            duration,
+            update_time: now,
+        };
+
+        let timeline = Self::get_timeline(&timeline_parts, status);
+
+        *self.timeline_parts.lock().unwrap() = timeline_parts;
 
         let mut state = self.state.lock().unwrap();
         state.status = status;
@@ -193,24 +206,7 @@ impl PlayerHandler {
             match value {
                 Ok(value) => {
                     info!("Playback status (prop: {}) changed: {:?}", res.name(), value);
-                    let new_status: FsctStatus = value.into();
-                    // Update status and recalc timeline based on previous timeline rate
-                    let rate_opt = player_proxy.rate().await.ok();
-                    let (new_timeline, new_status_copy) = {
-                        let mut st = self.state.lock().unwrap();
-                        let now = Self::now();
-                        let mut new_tl = st.timeline.clone();
-                        if let Some(old_tl) = st.timeline.clone() { // todo remove some clones
-                            let new_pos = Self::recalc_position(&old_tl, now);
-                            let new_rate = Self::effective_rate(new_status, rate_opt);
-                            new_tl = Some(TimelineInfo { position: new_pos, update_time: now, duration: old_tl.duration, rate: new_rate });
-                            st.timeline = new_tl.clone();
-                        }
-                        st.status = new_status;
-                        (new_tl, st.status)
-                    };
-                    if new_timeline.is_some() { let _ = self.driver.update_player_timeline(self.id, new_timeline).await; }
-                    let _ = self.driver.update_player_status(self.id, new_status_copy).await;
+                    self.update_status(value).await;
                 }
                 Err(e) => {
                     warn!("Error receiving playback status: {}", e);
@@ -220,24 +216,23 @@ impl PlayerHandler {
         }
     }
 
+    async fn update_status(&self, value: PlaybackStatus) {
+        // before we update the status, we need to recalculate position at the current timepoint
+        self.recalc_position();
+        let new_status: FsctStatus = value.into();
+        self.state.lock().unwrap().status = new_status;
+        let _ = self.driver.update_player_status(self.id, new_status).await;
+        // but we update the timeline at the end so that the timeline is updated with the new status
+        self.update_timeline().await;
+    }
+
     async fn handle_rate_changed_task<'a>(&'a self, player_proxy: &PlayerProxy<'a>) {
         let mut sig = player_proxy.receive_rate_changed().await;
         while let Some(res) = sig.next().await {
             match res.get().await {
                 Ok(rate_val) => {
                     info!("Rate changed: {}", rate_val);
-                    let new_timeline = {
-                        let mut st = self.state.lock().unwrap();
-                        let now = Self::now();
-                        if let Some(old_tl) = st.timeline.clone() { //todo less clones
-                            let new_pos = Self::recalc_position(&old_tl, now);
-                            let eff = Self::effective_rate(st.status, Some(rate_val));
-                            let tl = Some(TimelineInfo { position: new_pos, update_time: now, duration: old_tl.duration, rate: eff });
-                            st.timeline = tl.clone();
-                            tl
-                        } else { None }
-                    };
-                    if new_timeline.is_some() { let _ = self.driver.update_player_timeline(self.id, new_timeline).await; }
+                    self.update_rate(Some(rate_val)).await;
                 }
                 Err(e) => warn!("Error receiving rate: {}", e),
             }
@@ -252,18 +247,7 @@ impl PlayerHandler {
                 Ok(args) => {
                     let pos_us = args.Position();
                     info!("Seeked to: {}", pos_us);
-                    let rate_opt = player_proxy.rate().await.ok();
-                    let new_timeline = {
-                        let mut st = self.state.lock().unwrap();
-                        let now = Self::now();
-                        let position = Self::micros_to_duration(*pos_us);
-                        let eff = Self::effective_rate(st.status, rate_opt);
-                        let duration = st.timeline.as_ref().map(|t| t.duration).unwrap_or(Duration::from_micros(0));
-                        let tl = Some(TimelineInfo { position, update_time: now, duration, rate: eff });
-                        st.timeline = tl.clone();
-                        tl
-                    };
-                    let _ = self.driver.update_player_timeline(self.id, new_timeline).await;
+                    self.update_position(Some(Self::micros_to_duration(*pos_us))).await;
                 }
                 Err(e) => warn!("Error receiving position: {}", e),
             }
@@ -278,35 +262,87 @@ impl PlayerHandler {
                 Ok(map) => {
                     info!("Metadata changed: {:?}", map);
                     let (texts, duration) = Self::parse_metadata(&map);
-                    // Update texts individually (drop lock before awaits)
-                    for (ty, opt) in texts.iter() { // iterator yields (FsctTextMetadata, &Option<String>)
-                        let _ = self.driver.update_player_metadata(self.id, ty, opt.clone()).await;
-                    }
-                    let rate = player_proxy.rate().await.ok();
-                    let now = Self::now();
-
-                    // IMPORTANT: PlayerProxy caches Position and there is no PropertyChanged for it (Seeked is emitted instead).
-                    // We must bypass the proxy cache and query via org.freedesktop.DBus.Properties.
-                    let pos = self.player.position_uncached().await.ok().map(Self::micros_to_duration);
-                    let new_timeline = {
-                        let mut st = self.state.lock().unwrap();
-                        st.texts = texts;
-                        let rate = Self::effective_rate(st.status, rate);
-                        let mut timeline = st.timeline.clone();
-                        if let Some(duration) = duration && let Some(position) = pos {
-                            timeline = Some(TimelineInfo { position, update_time: now, duration, rate });
-                            info!("new_timeline: {:?}", timeline);
-                        } else {
-                            timeline = None;
-                        }
-                        st.timeline = timeline.clone();
-                        timeline
-                    };
-                    let _ = self.driver.update_player_timeline(self.id, new_timeline).await;
+                    self.update_texts(texts).await;
+                    self.update_duration(duration).await;
                 }
                 Err(e) => warn!("Error receiving metadata: {}", e),
             }
         }
+    }
+
+    async fn update_texts(&self, texts: TrackMetadata) {
+        self.state.lock().unwrap().texts = texts.clone();
+        for (ty, opt) in texts.iter() { // iterator yields (FsctTextMetadata, &Option<String>)
+            let _ = self.driver.update_player_metadata(self.id, ty, opt.clone()).await;
+        }
+    }
+
+    async fn update_duration(&self, duration: Option<Duration>) {
+        self.timeline_parts.lock().unwrap().duration = duration;
+        self.update_timeline().await;
+    }
+
+    async fn update_position(&self, position: Option<Duration>) {
+        {
+            let mut parts = self.timeline_parts.lock().unwrap();
+            parts.position = position;
+            parts.update_time = Self::now();
+        }
+        self.update_timeline().await;
+    }
+
+    async fn update_rate(&self, rate: Option<f64>) {
+        // before we update the rate, we need to recalculate the timeline to have position calculated at the current timepoint
+        self.recalculate_timeline().await;
+        self.timeline_parts.lock().unwrap().rate = rate;
+        self.update_timeline().await;
+    }
+
+    async fn update_timeline(&self) {
+        let new_timeline = {
+            let parts = self.timeline_parts.lock().unwrap().clone();
+            let mut state = self.state.lock().unwrap();
+            let status = state.status;
+            let timeline = Self::get_timeline(&parts, status);
+            if timeline != state.timeline {
+                state.timeline = timeline.clone();
+                Some(timeline)
+            } else {
+                None
+            }
+        };
+        if let Some(timeline) = new_timeline {
+            let _ = self.driver.update_player_timeline(self.id, timeline).await;
+        }
+    }
+
+    fn get_timeline(parts: &TimelineParts, status: FsctStatus) -> Option<TimelineInfo> {
+        if let Some(duration) = parts.duration && let Some(position) = parts.position {
+            Some(TimelineInfo {
+                duration,
+                position,
+                update_time: parts.update_time,
+                rate: Self::effective_rate(status, parts.rate),
+            })
+        } else { None }
+    }
+
+    fn recalc_position(&self) {
+        let status = self.state.lock().unwrap().status;
+        let mut timeline_parts = self.timeline_parts.lock().unwrap();
+        if let Some(position) = timeline_parts.position {
+            let now = Self::now();
+            let elapsed = now.duration_since(timeline_parts.update_time).unwrap_or(Duration::from_micros(0));
+            let advance = (elapsed.as_micros() as f64) * Self::effective_rate(status, timeline_parts.rate);
+            let advance = Duration::from_micros(advance.max(0.0) as u64); // don't advance backwards
+            let pos = position + advance;
+            timeline_parts.position = Some(pos);
+            timeline_parts.update_time = now;
+        }
+    }
+    async fn recalculate_timeline(&self) {
+        self.recalc_position();
+        self.update_timeline().await;
     }
 }
 
