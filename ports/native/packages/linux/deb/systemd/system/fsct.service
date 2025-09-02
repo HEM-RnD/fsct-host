@@ -1,18 +1,24 @@
 [Unit]
 Description=FSCT driver (system-wide)
-Requires=fsct.socket
-After=fsct.socket network.target
+After=network.target
 
 [Service]
 Type=simple
 User=root
-Group=fsct
 ExecStart=/usr/bin/fsct-driver
 Restart=on-failure
+RestartSec=1s
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
 PrivateTmp=true
+# Resource limits and accounting
+LimitNOFILE=4096
+TasksMax=256
+MemoryAccounting=true
+MemoryMax=1G
+#CPUAccounting=true
+#CPUQuota=80%
 
 [Install]
 WantedBy=multi-user.target

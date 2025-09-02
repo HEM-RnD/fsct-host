@@ -1,17 +1,10 @@
 #!/bin/sh
 set -e
 
-# Create fsct group if missing
-if ! getent group fsct >/dev/null; then
-    addgroup --system fsct 2>/dev/null || groupadd --system fsct || true
-fi
-
-# Reload systemd
+# Reload systemd and enable/start units
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload || true
-    systemctl enable fsct.socket || true
     systemctl enable fsct.service || true
-    systemctl start fsct.socket || true
     systemctl restart fsct.service || true
 
     # Install/enable user unit globally so new users get it by default

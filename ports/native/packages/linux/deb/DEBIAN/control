@@ -1,12 +1,10 @@
-Package: fsct-driver
+Package: fsct-host
 Version: 0.0.0
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: HEM Sp. z o.o. <info@hem-e.com>
-Depends: systemd (>= 245), adduser | passwd
+Maintainer: HEM Sp. z o.o. <support@hem-e.com>
+Depends: systemd (>= 245)
 Description: FSCT Host services (driver and per-user client)
- FSCT provides a system-wide driver daemon and per-user client integration for Ferrum Streaming Control Technology(R).
- It allows to send current player states to connected devices.
- Per user clients are used to gather information about the current player state from the system (MPRIS via D-BUS).
- Additionally, supported players can cmomunicate with the driver directly.
+ FSCT Host provides a system-wide driver daemon and per-user client integration for Ferrum Streaming Control Technology (R).
+ It allows per-user clients to send their current player state to connected devices via a system driver.

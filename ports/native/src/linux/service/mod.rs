@@ -53,14 +53,15 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         driver
     };
 
+    let mut systemd_socket_activated = false;
 
     if args.driver {
+        let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+        if listen_fds > 0 { systemd_socket_activated = true; }
         // In driver mode, expose IPC driver over IPC and do not start OS watcher
-        if let Ok(metadata) = std::fs::metadata(endpoint) {
-            if metadata.is_file() {
-                info!("Removing stale IPC socket file: {}", endpoint);
-                std::fs::remove_file(endpoint).expect("Failed to remove stale IPC socket file");
-            }
+        // If not using systemd socket activation (LISTEN_FDS==0), remove a potential stale socket file.
+        if systemd_socket_activated == false {
+            if let Err(e) = std::fs::remove_file(endpoint) { let _ = e; /* ignore if not present */ }
         }
 
         let ipc = fsct_core::ipc::server::run_ipc_server_with_endpoint(driver.clone(), endpoint.into());
@@ -77,8 +78,11 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     if let Err(e) = res { return Err(e.into()); }
 
     if args.driver {
-        if let Err(r) = std::fs::remove_file(endpoint) {
-            log::warn!("Failed to remove IPC socket file: {}", r);
+        // Only attempt to remove the socket file if we created it ourselves (no socket activation)
+        if systemd_socket_activated == false {
+            if let Err(r) = std::fs::remove_file(endpoint) {
+                log::warn!("Failed to remove IPC socket file: {}", r);
+            }
         }
     }
     Ok(())

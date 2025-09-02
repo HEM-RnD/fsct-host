@@ -3,10 +3,14 @@ Description=FSCT IPC socket
 
 [Socket]
 ListenStream=/run/fsct/fsct.sock
-SocketMode=0660
+SocketMode=0666
 SocketUser=root
-SocketGroup=fsct
-DirectoryMode=0770
+DirectoryMode=0775
+# Optional: clean up the socket file on stop
+# RemoveOnStop=yes
+# Throttle activations to avoid thrash
+TriggerLimitIntervalSec=2s
+TriggerLimitBurst=16
 
 [Install]
 WantedBy=sockets.target

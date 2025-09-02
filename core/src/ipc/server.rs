@@ -76,6 +76,15 @@ impl IpcServer {
         let mut endpoint = Endpoint::new(endpoint.clone());
         endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
         let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+        // #[cfg(unix)]
+        // {
+        //     use std::os::unix::fs::PermissionsExt;
+        //     if let Ok(meta) = std::fs::metadata(&self.endpoint) {
+        //         let mut mode = meta.permissions();
+        //         mode.set_mode(0o666);
+        //         let _ = std::fs::set_permissions(&self.endpoint, mode);
+        //     }
+        // }
 
         tokio::pin!(incoming);
         loop {
