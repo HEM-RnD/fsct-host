@@ -100,7 +100,7 @@ impl PlayerHandler {
     }
 
     fn parse_text_array(value: &OwnedValue) -> Option<String> {
-        let multiple_texts: Option<Vec<String>> = value.clone().try_into().ok(); //Vec::<String>::try_from(value).ok();
+        let multiple_texts: Option<Vec<String>> = value.clone().try_into().ok();
         if let Some(multiple_texts) = multiple_texts {
             Some(multiple_texts.join(", "))
         } else { None }
