@@ -20,7 +20,7 @@ mod mpris;
 use std::sync::{Arc, Mutex};
 use anyhow::bail;
 use futures_util::StreamExt;
-use log::{info, warn};
+use log::{debug, info, warn};
 use tokio::select;
 use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, PlayerState, ServiceHandle};
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -48,7 +48,6 @@ impl PlayerRegistrationManager {
     async fn register_player(&self, player: mpris::Player) -> Result<(), anyhow::Error> {
         let id = self.driver.register_player(player.name()).await?;
         let cancel_token = self.cancellation_token.child_token();
-        info!("Registered player: {}", id);
         let driver = self.driver.clone();
         tokio::spawn(async move {
             let player_handler = PlayerHandler::new(player, id, driver.clone());
@@ -57,7 +56,6 @@ impl PlayerRegistrationManager {
                 _ = player_handler.handle_player_task() => {}
             }
             let _ = driver.unregister_player(id).await;
-            info!("Unregistered player: {}", id);
         });
         Ok(())
     }
@@ -197,6 +195,7 @@ impl PlayerHandler {
         let player_proxy = self.player.as_player_interface().await?;
         self.build_initial_state(&player_proxy).await?;
         let initial_state = { self.state.lock().unwrap().clone() };
+        debug!("Player {} is ready, initial state: {:?}", self.id, initial_state);
         self.driver.update_player_state(self.id, initial_state).await?;
         select! {
             res = self.player.wait_for_disconnect() => {
@@ -216,7 +215,7 @@ impl PlayerHandler {
             let value = res.get().await;
             match value {
                 Ok(value) => {
-                    info!("Playback status (prop: {}) changed: {:?}", res.name(), value);
+                    debug!("Playback status (prop: {}) changed: {:?}", res.name(), value);
                     self.update_status(value).await;
                 }
                 Err(e) => {
@@ -242,7 +241,7 @@ impl PlayerHandler {
         while let Some(res) = sig.next().await {
             match res.get().await {
                 Ok(rate_val) => {
-                    info!("Rate changed: {}", rate_val);
+                    debug!("Rate changed: {}", rate_val);
                     self.update_rate(Some(rate_val)).await;
                 }
                 Err(e) => warn!("Error receiving rate: {}", e),
@@ -257,7 +256,7 @@ impl PlayerHandler {
             match event.args() {
                 Ok(args) => {
                     let pos_us = args.Position();
-                    info!("Seeked to: {}", pos_us);
+                    debug!("Seeked to: {}", pos_us);
                     self.update_position(Some(Self::micros_to_duration(*pos_us))).await;
                 }
                 Err(e) => warn!("Error receiving position: {}", e),
@@ -271,7 +270,7 @@ impl PlayerHandler {
         while let Some(res) = sig.next().await {
             match res.get().await {
                 Ok(map) => {
-                    info!("Metadata changed: {:?}", map);
+                    debug!("Metadata changed: {:?}", map);
                     let (texts, duration) = Self::parse_metadata(&map);
                     self.update_texts(texts).await;
                     self.update_duration(duration).await;
