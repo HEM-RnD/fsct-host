@@ -25,7 +25,7 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
-use parity_tokio_ipc::Endpoint;
+use parity_tokio_ipc::{Endpoint, SecurityAttributes};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use futures::StreamExt;
@@ -44,23 +44,6 @@ use std::future::Future;
 use std::pin::Pin;
 use anyhow::{anyhow, bail, Context};
 
-/// Default endpoint resolver based on platform and optional FSCT_IPC_ENDPOINT override.
-fn default_endpoint() -> String {
-    if let Ok(override_ep) = std::env::var("FSCT_IPC_ENDPOINT") {
-        if !override_ep.trim().is_empty() {
-            return override_ep;
-        }
-    }
-    // Windows Named Pipe path or Unix Domain Socket path
-    #[cfg(windows)]
-    { r"\\.\pipe\fsct_host_v1".to_string() }
-    #[cfg(unix)]
-    {
-        let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-        format!("{base}/fsct/fsct.sock")
-    }
-}
-
 /// IPC server that exposes FsctDriver API over a local IPC connection.
 pub struct IpcServer {
     endpoint: String,
@@ -70,11 +53,6 @@ pub struct IpcServer {
 }
 
 impl IpcServer {
-    /// Create a new IpcServer bound to the given driver. Endpoint is taken from FSCT_IPC_ENDPOINT or platform default.
-    pub fn new(driver: Arc<dyn FsctDriver>) -> Self {
-        Self { endpoint: default_endpoint(), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
-    }
-
     /// Create with an explicit endpoint path (useful for tests).
     pub fn with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> Self {
         Self { endpoint, driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
@@ -95,7 +73,9 @@ impl IpcServer {
             let _ = std::fs::remove_file(endpoint);
         }
 
-        let incoming = Endpoint::new(endpoint.clone()).incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+        let mut endpoint = Endpoint::new(endpoint.clone());
+        endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
+        let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
 
         tokio::pin!(incoming);
         loop {
@@ -181,10 +161,6 @@ pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: Strin
     })
 }
 
-pub fn run_ipc_server(driver: Arc<dyn FsctDriver>) -> ServiceHandle {
-    run_ipc_server_with_endpoint(driver, default_endpoint())
-}
-
 #[derive(Clone)]
 struct FsctRpcService {
     driver: Arc<dyn FsctDriver>,
@@ -220,7 +196,7 @@ impl Into<Value> for Nil {
 
 fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error> {
     let pid_u64 = param.as_u64()
-                       .with_context(|| "invalid param: player_id must be integer")?;
+        .with_context(|| "invalid param: player_id must be integer")?;
     let pid = std::num::NonZeroU32::new(pid_u64 as u32)
         .with_context(|| "invalid player_id: must be non-zero")?;
     Ok(pid)
@@ -228,7 +204,7 @@ fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error>
 
 fn parse_device_id(param: &Value) -> Result<Uuid, anyhow::Error> {
     let did_bytes = param.as_slice()
-                         .with_context(|| "invalid param: device_id must be binary")?;
+        .with_context(|| "invalid param: device_id must be binary")?;
     if did_bytes.len() != 16 {
         bail!("invalid device_id: uuid binary must be 16 bytes");
     }
@@ -253,7 +229,7 @@ impl FsctRpcService {
         Self {
             driver,
             conn_players: Arc::new(Mutex::new(HashSet::new())),
-            connection_id
+            connection_id,
         }
     }
     fn conn_players_arc(&self) -> Arc<Mutex<HashSet<NonZeroU32>>> {

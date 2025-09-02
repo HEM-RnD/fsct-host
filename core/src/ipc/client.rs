@@ -103,11 +103,6 @@ pub struct IpcDriver {
 }
 
 impl IpcDriver {
-    /// Connect to the default endpoint (or FSCT_IPC_ENDPOINT) and verify protocol compatibility.
-    pub async fn create() -> Result<Self, Error> {
-        Self::connect_to_endpoint(default_endpoint()).await
-    }
-
     /// Connect to a specific endpoint and verify protocol compatibility.
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         // Establish persistent connection
@@ -126,11 +121,17 @@ impl IpcDriver {
         let map = response.as_map().ok_or_else(|| anyhow::anyhow!("invalid response: expected map"))?;
         let major = map
             .iter()
-            .find_map(|(k, v)| match k { Value::String(s) if s.as_str() == Some("major") => v.as_u64(), _ => None })
+            .find_map(|(k, v)| match k {
+                Value::String(s) if s.as_str() == Some("major") => v.as_u64(),
+                _ => None
+            })
             .ok_or_else(|| anyhow::anyhow!("missing major"))?;
         let minor = map
             .iter()
-            .find_map(|(k, v)| match k { Value::String(s) if s.as_str() == Some("minor") => v.as_u64(), _ => None })
+            .find_map(|(k, v)| match k {
+                Value::String(s) if s.as_str() == Some("minor") => v.as_u64(),
+                _ => None
+            })
             .ok_or_else(|| anyhow::anyhow!("missing minor"))?;
         let negotiated_version = ProtocolVersion { major: major as u16, minor: minor as u16 };
 
@@ -145,7 +146,7 @@ impl IpcDriver {
             ));
         }
 
-        Ok(Self { client, negotiated_version})
+        Ok(Self { client, negotiated_version })
     }
 
     /// Returns the negotiated protocol version obtained during creation.
@@ -258,7 +259,10 @@ impl FsctDriver for IpcDriver {
     }
 
     async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        let param = match preferred { Some(pid) => encode_player_id(pid), None => Value::Nil };
+        let param = match preferred {
+            Some(pid) => encode_player_id(pid),
+            None => Value::Nil
+        };
         let _response: Value = self
             .client
             .request("set_preferred_player", &[param])
