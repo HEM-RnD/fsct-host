@@ -16,12 +16,8 @@ use fsct_core::device_manager::ManagedDeviceId;
 use fsct_core::player_state::PlayerState;
 use fsct_core::service::ServiceHandle;
 
-#[cfg(target_os = "linux")]
-use fsct_driver_service::run_os_watcher; // from ports/native lib exposing platform watcher
-#[cfg(target_os = "windows")]
 use fsct_driver_service::run_os_watcher;
-#[cfg(target_os = "macos")]
-use fsct_driver_service::run_os_watcher;
+
 
 #[derive(Default)]
 struct LoggingDriver {
