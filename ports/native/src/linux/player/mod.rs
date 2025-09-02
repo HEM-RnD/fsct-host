@@ -144,7 +144,9 @@ impl PlayerHandler {
                 "xesam:album" => md.album = value.clone().try_into().ok(),
                 "xesam:genre" => md.genre = value.clone().try_into().ok(),
                 "mpris:length" => {
-                    if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+                    if let Ok(us) = <u64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
+                        dur = Some(Duration::from_micros(us));
+                    } else if let Ok(us) = <i64 as TryFrom<OwnedValue>>::try_from(value.clone()) {
                         dur = Some(Self::micros_to_duration(us));
                     } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(value.clone()) {
                         dur = Some(Self::micros_to_duration(x as i64));
