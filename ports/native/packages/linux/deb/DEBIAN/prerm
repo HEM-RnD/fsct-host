@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+if command -v systemctl >/dev/null; then
+    systemctl stop fsct.service || true
+    systemctl stop fsct.socket || true
+    systemctl disable fsct.service || true
+    systemctl disable fsct.socket || true
+
+    # Disable global user unit so it won't auto-enable for new users
+    systemctl --global disable fsct-user.service || true
+
+    # Attempt to stop user services for logged-in users
+    if command -v loginctl >/dev/null; then
+        for u in $(loginctl list-users --no-legend | awk '{print $1}'); do
+            su -s /bin/sh -c "systemctl --user disable --now fsct-user.service || true" "$u" 2>/dev/null || true
+        done
+    fi
+
+    systemctl daemon-reload || true
+fi
+
+exit 0

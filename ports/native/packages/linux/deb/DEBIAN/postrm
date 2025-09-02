@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# On purge, remove leftover files
+if [ "$1" = "purge" ]; then
+    rm -f /lib/systemd/system/fsct.service || true
+    rm -f /lib/systemd/system/fsct.socket || true
+    rm -f /usr/lib/systemd/user/fsct-user.service || true
+    systemctl daemon-reload || true
+fi
+
+exit 0

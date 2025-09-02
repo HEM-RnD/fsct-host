@@ -1,0 +1,12 @@
+[Unit]
+Description=FSCT IPC socket
+
+[Socket]
+ListenStream=/run/fsct/fsct.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=fsct
+DirectoryMode=0770
+
+[Install]
+WantedBy=sockets.target
