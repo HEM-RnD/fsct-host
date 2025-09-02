@@ -15,11 +15,22 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-pub mod service;
-pub mod player;
+use clap::Parser;
 
-/// Returns the default path of the Unix Domain Socket used by FSCT IPC on Linux.
-/// It prefers XDG_RUNTIME_DIR and falls back to /tmp when unavailable.
-pub fn linux_local_socket_path() -> &'static str {
-    "/run/fsct/fsct.sock"
+/// Linux service CLI
+///
+/// Behavior:
+/// - default (no flags): standalone -> local driver + OS watcher (talks directly in-process)
+/// - --driver: driver mode -> start local driver and expose it via IPC (no OS watcher)
+/// - --user: user mode -> start OS watcher and connect to driver via IPC
+#[derive(Parser, Debug)]
+#[command(author, version, about = "FSCT Linux service", long_about = None)]
+pub struct Cli {
+    /// Run in driver mode (expose LocalDriver over IPC)
+    #[arg(long, short, conflicts_with = "user")]
+    pub driver: bool,
+
+    /// Run in user mode (OS watcher talks to IPC driver)
+    #[arg(long, short, conflicts_with = "driver")]
+    pub user: bool,
 }
