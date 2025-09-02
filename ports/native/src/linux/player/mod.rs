@@ -285,7 +285,7 @@ impl PlayerHandler {
         while let Some(res) = sig.next().await {
             match res.get().await {
                 Ok(map) => {
-                    info!("Metadata changed");
+                    info!("Metadata changed: {:?}", map);
                     let (texts, duration_opt) = Self::parse_metadata(&map);
                     // Update texts individually (drop lock before awaits)
                     for (ty, opt) in texts.iter() { // iterator yields (FsctTextMetadata, &Option<String>)
