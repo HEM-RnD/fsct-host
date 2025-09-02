@@ -1,7 +1,7 @@
 use futures_util::Stream;
 use zbus::fdo::DBusProxy;
 use zbus::names::OwnedBusName;
-use crate::linux::player::mpris::{media_player2::MediaPlayer2Proxy, Player};
+use crate::linux::player::mpris::player::Player;
 
 pub struct SessionWatcher {
     conn: zbus::Connection,
@@ -20,7 +20,7 @@ impl SessionWatcher {
     async fn get_player(&self, bus_name: OwnedBusName) -> anyhow::Result<Option<Player>> {
         if !bus_name.starts_with("org.mpris.MediaPlayer2.") { return Ok(None); }
         let conn = self.conn.clone();
-        let player = Player { conn, bus_name };
+        let player = Player::new(conn, bus_name);
         Ok(Some(player))
     }
 

@@ -24,8 +24,9 @@ use log::{info, warn};
 use tokio::select;
 use tokio::task::JoinSet;
 use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
-use crate::linux::player::mpris::{Player, SessionWatcher};
+use crate::linux::player::mpris::SessionWatcher;
 use tokio_util::sync::{CancellationToken, DropGuard};
+use mpris::Player;
 
 mod mpris;
 
