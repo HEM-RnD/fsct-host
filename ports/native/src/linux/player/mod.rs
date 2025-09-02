@@ -144,21 +144,8 @@ impl PlayerHandler {
                 "xesam:album" => md.album = value.clone().try_into().ok(),
                 "xesam:genre" => md.genre = value.clone().try_into().ok(),
                 _ => ()
-                // if let Ok(s) = <String as TryFrom<zbus::zvariant::OwnedValue>>::try_from(value.clone()) { md.title = Some(s); }
             }
         }
-        // if let Some(v) = map.get("xesam:title") {
-        //     if let Ok(s) = <String as TryFrom<zbus::zvariant::OwnedValue>>::try_from(v.clone()) { md.title = Some(s); }
-        // }
-        // if let Some(v) = map.get("xesam:artist") {
-        //     if let Ok(s) = <String as TryFrom<zbus::zvariant::OwnedValue>>::try_from(v.clone()) { md.artist = Some(s); }
-        // }
-        // if let Some(v) = map.get("xesam:album") {
-        //     if let Ok(s) = <String as TryFrom<zbus::zvariant::OwnedValue>>::try_from(v.clone()) { md.album = Some(s); }
-        // }
-        // if let Some(v) = map.get("xesam:genre") {
-        //     if let Ok(s) = <String as TryFrom<zbus::zvariant::OwnedValue>>::try_from(v.clone()) { md.genre = Some(s); }
-        // }
         (md, dur)
     }
 
@@ -193,7 +180,7 @@ impl PlayerHandler {
             }
             _ = self.handle_playback_status_changed_task(&player_proxy) => {}
             _ = self.handle_rate_changed_task(&player_proxy) => {}
-            _ = self.handle_position_changed_task(&player_proxy) => {}
+            _ = self.handle_seeked_task(&player_proxy) => {}
             _ = self.handle_metadata_changed_task(&player_proxy) => {}
         }
         Ok(())
@@ -257,16 +244,18 @@ impl PlayerHandler {
         }
     }
 
-    async fn handle_position_changed_task<'a>(&'a self, player_proxy: &PlayerProxy<'a>) {
-        let mut sig = player_proxy.receive_position_changed().await;
-        while let Some(res) = sig.next().await {
-            match res.get().await {
-                Ok(pos_us) => {
+    async fn handle_seeked_task<'a>(&'a self, player_proxy: &PlayerProxy<'a>) -> anyhow::Result<()> {
+        let mut sig = player_proxy.receive_seeked().await
+            .inspect_err(|e| warn!("Error subscribing to seek signal: {}", e))?;
+        while let Some(event) = OrderedStreamExt::next(&mut sig).await {
+            match event.args() {
+                Ok(args) => {
+                    let pos_us = args.Position();
                     let rate_opt = player_proxy.rate().await.ok();
                     let new_timeline = {
                         let mut st = self.state.lock().unwrap();
                         let now = Self::now();
-                        let position = Self::micros_to_duration(pos_us);
+                        let position = Self::micros_to_duration(*pos_us);
                         let eff = Self::effective_rate(st.status, rate_opt);
                         let duration = st.timeline.as_ref().map(|t| t.duration).unwrap_or(Duration::from_micros(0));
                         let tl = Some(TimelineInfo { position, update_time: now, duration, rate: eff });
@@ -278,6 +267,7 @@ impl PlayerHandler {
                 Err(e) => warn!("Error receiving position: {}", e),
             }
         }
+        Ok(())
     }
 
     async fn handle_metadata_changed_task<'a>(&'a self, player_proxy: &PlayerProxy<'a>) {
