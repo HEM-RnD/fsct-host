@@ -251,6 +251,7 @@ impl PlayerHandler {
             match event.args() {
                 Ok(args) => {
                     let pos_us = args.Position();
+                    info!("Seeked to: {}", pos_us);
                     let rate_opt = player_proxy.rate().await.ok();
                     let new_timeline = {
                         let mut st = self.state.lock().unwrap();
@@ -276,22 +277,30 @@ impl PlayerHandler {
             match res.get().await {
                 Ok(map) => {
                     info!("Metadata changed: {:?}", map);
-                    let (texts, duration_opt) = Self::parse_metadata(&map);
+                    let (texts, duration) = Self::parse_metadata(&map);
                     // Update texts individually (drop lock before awaits)
                     for (ty, opt) in texts.iter() { // iterator yields (FsctTextMetadata, &Option<String>)
                         let _ = self.driver.update_player_metadata(self.id, ty, opt.clone()).await;
                     }
-                    // Reset timeline position to 0 and update duration
-                    let rate_opt = player_proxy.rate().await.ok();
+                    let rate = player_proxy.rate().await.ok();
+                    let now = Self::now();
+
+                    // IMPORTANT: PlayerProxy caches Position and there is no PropertyChanged for it (Seeked is emitted instead).
+                    // We must bypass the proxy cache and query via org.freedesktop.DBus.Properties.
+                    let pos = self.player.position_uncached().await.ok().map(Self::micros_to_duration);
                     let new_timeline = {
                         let mut st = self.state.lock().unwrap();
                         st.texts = texts;
-                        let now = Self::now();
-                        let duration = duration_opt.or(st.timeline.as_ref().map(|t| t.duration)).unwrap_or(Duration::from_micros(0));
-                        let eff = Self::effective_rate(st.status, rate_opt);
-                        let tl = Some(TimelineInfo { position: Duration::from_micros(0), update_time: now, duration, rate: eff });
-                        st.timeline = tl.clone();
-                        tl
+                        let rate = Self::effective_rate(st.status, rate);
+                        let mut timeline = st.timeline.clone();
+                        if let Some(duration) = duration && let Some(position) = pos {
+                            timeline = Some(TimelineInfo { position, update_time: now, duration, rate });
+                            info!("new_timeline: {:?}", timeline);
+                        } else {
+                            timeline = None;
+                        }
+                        st.timeline = timeline.clone();
+                        timeline
                     };
                     let _ = self.driver.update_player_timeline(self.id, new_timeline).await;
                 }

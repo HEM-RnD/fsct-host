@@ -1,5 +1,5 @@
 use zbus::names::OwnedBusName;
-use zbus::fdo::DBusProxy;
+use zbus::fdo::{DBusProxy, PropertiesProxy};
 use anyhow::bail;
 use zbus::export::ordered_stream::OrderedStreamExt;
 use crate::linux::player::mpris::{media_player2, media_player2_player};
@@ -42,5 +42,24 @@ impl Player {
 
     pub fn name(&self) -> String {
         self.bus_name.to_string()
+    }
+
+    pub async fn position_uncached(&self) -> anyhow::Result<i64> {
+        // Query Position via org.freedesktop.DBus.Properties to bypass proxy caching
+        let props = PropertiesProxy::builder(&self.conn)
+            .destination(self.bus_name.clone())?
+            .path("/org/mpris/MediaPlayer2")?
+            .build()
+            .await?;
+        let iface = zbus::names::InterfaceName::try_from("org.mpris.MediaPlayer2.Player")?;
+        let val: zbus::zvariant::OwnedValue = props.get(iface, "Position").await?;
+        // Try to extract i64, fallback to i32
+        if let Ok(us) = <i64 as std::convert::TryFrom<zbus::zvariant::OwnedValue>>::try_from(val.clone()) {
+            Ok(us)
+        } else if let Ok(us32) = <i32 as std::convert::TryFrom<zbus::zvariant::OwnedValue>>::try_from(val) {
+            Ok(us32 as i64)
+        } else {
+            bail!("Unexpected type for Position property")
+        }
     }
 }
