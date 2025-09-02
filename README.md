@@ -48,6 +48,10 @@ npm install @hemspzoo/fsct-lib
 
 ## Building the Project
 
+### Linux notes
+
+The native Linux player integration uses MPRIS over D-Bus via the pure-Rust zbus stack. No system dbus development packages are required at build time. A running D-Bus session is required at runtime (standard on desktop environments).
+
 Make sure you have Rust installed. To build the Rust library, run:
 
 ```bash 

@@ -14,24 +14,17 @@
 //
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
+#![allow(unused_imports)]
 
-#[cfg(target_os = "windows")]
-pub mod windows;
+mod watcher;
+mod media_player2;
+mod media_player2_player;
+mod player;
 
-#[cfg(target_os = "windows")]
-use windows::*;
+pub use watcher::SessionWatcher;
+pub use player::Player;
+pub use media_player2_player::PlaybackStatus;
+pub use media_player2_player::PlayerProxy;
+pub use media_player2::MediaPlayer2Proxy;
+pub use media_player2_player::LoopStatus;
 
-#[cfg(target_os = "macos")]
-pub mod macos;
-
-#[cfg(target_os = "macos")]
-use macos::*;
-
-#[cfg(target_os = "linux")]
-pub mod linux;
-
-#[cfg(target_os = "linux")]
-use linux::*;
-
-pub use service::fsct_main;
-pub use player::run_os_watcher;
