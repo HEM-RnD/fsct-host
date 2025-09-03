@@ -3,7 +3,7 @@ Description=FSCT per-user client (MPRIS integration)
 After=default.target
 
 [Service]
-ExecStart=/usr/bin/fsct-driver --user
+ExecStart=/usr/bin/fsctd --user
 Restart=on-failure
 
 [Install]

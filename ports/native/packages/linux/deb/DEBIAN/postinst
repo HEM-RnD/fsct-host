@@ -4,16 +4,20 @@ set -e
 # Reload systemd and enable/start units
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload || true
-    systemctl enable fsct.service || true
-    systemctl restart fsct.service || true
+
+    # Enable socket and service with new names
+    systemctl enable fsct.socket || true
+    systemctl enable --now fsct-driver.service || true
 
     # Install/enable user unit globally so new users get it by default
-    systemctl --global enable fsct-user.service || true
+    systemctl --global enable fsct-mpris.service || true
 
     # Try to start per-user service for currently logged-in users
     if command -v loginctl >/dev/null; then
         for u in $(loginctl list-users --no-legend | awk '{print $1}'); do
-            su -s /bin/sh -c "systemctl --user daemon-reload; systemctl --user enable --now fsct-user.service || true" "$u" 2>/dev/null || true
+            su -s /bin/sh -c "systemctl --user daemon-reload; \
+                systemctl --user disable --now fsct-user.service || true; \
+                systemctl --user enable --now fsct-mpris.service || true" "$u" 2>/dev/null || true
         done
     fi
 fi

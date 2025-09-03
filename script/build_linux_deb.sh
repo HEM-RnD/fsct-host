@@ -3,9 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
-PACKAGE_NAME="fsct-host"
+PACKAGE_NAME="fsct-driver"
 CARGO_BIN_DRIVER="fsct_driver_service"   # Adjust if different
-CARGO_BIN_USER="fsct_user_client"        # Adjust if different or omit if none yet
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CARGO_BIN_DRIVER}'), ''))")
 
@@ -42,23 +41,18 @@ fi
 
 # Locate binaries
 DRIVER_SRC="${ROOT_DIR}/target/release/${CARGO_BIN_DRIVER}"
-USER_SRC="${ROOT_DIR}/target/release/${CARGO_BIN_USER}"
 
 if [ ! -f "${DRIVER_SRC}" ]; then
   echo "Error: Driver binary not found at ${DRIVER_SRC}. Adjust CARGO_BIN_DRIVER in this script."; exit 1
 fi
 
 # Install binaries
-install -Dm755 "${DRIVER_SRC}" "${BIN_DIR_SYS}/fsct-driver"
-# User helper is optional; if present, install to /usr/lib/fsct and our user unit will call it in %h/.local/bin if you prefer; we place here for now.
-if [ -f "${USER_SRC}" ]; then
-  install -Dm755 "${USER_SRC}" "${BIN_DIR_SYS}/fsct-user"
-fi
+install -Dm755 "${DRIVER_SRC}" "${BIN_DIR_SYS}/fsctd"
 
 # Systemd units
 install -Dm644 "${PKG_TPL_DIR}/systemd/system/fsct.socket" "${SYSTEMD_SYS_DIR}/fsct.socket"
-install -Dm644 "${PKG_TPL_DIR}/systemd/system/fsct.service" "${SYSTEMD_SYS_DIR}/fsct.service"
-install -Dm644 "${PKG_TPL_DIR}/systemd/user/fsct-user.service" "${SYSTEMD_USER_DIR}/fsct-user.service"
+install -Dm644 "${PKG_TPL_DIR}/systemd/system/fsct-driver.service" "${SYSTEMD_SYS_DIR}/fsct-driver.service"
+install -Dm644 "${PKG_TPL_DIR}/systemd/user/fsct-mpris.service" "${SYSTEMD_USER_DIR}/fsct-mpris.service"
 
 # Licenses and notices
 if [ "${SKIP_LICENSE}" = false ]; then
@@ -73,6 +67,7 @@ CONTROL_SRC="${PKG_TPL_DIR}/DEBIAN/control"
 sed -e "s/^Version: .*/Version: ${VERSION}/" -e "s/^Architecture: .*/Architecture: ${ARCH}/" "${CONTROL_SRC}" > "${DEBIAN_DIR}/control"
 install -Dm755 "${PKG_TPL_DIR}/DEBIAN/postinst" "${DEBIAN_DIR}/postinst"
 install -Dm755 "${PKG_TPL_DIR}/DEBIAN/prerm" "${DEBIAN_DIR}/prerm"
+install -Dm755 "${PKG_TPL_DIR}/DEBIAN/postrm" "${DEBIAN_DIR}/postrm"
 
 # md5sums (optional)
 (

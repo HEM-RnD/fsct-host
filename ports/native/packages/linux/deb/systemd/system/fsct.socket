@@ -6,6 +6,7 @@ ListenStream=/run/fsct/fsct.sock
 SocketMode=0666
 SocketUser=root
 DirectoryMode=0775
+Service=fsct-driver.service
 # Optional: clean up the socket file on stop
 # RemoveOnStop=yes
 # Throttle activations to avoid thrash
