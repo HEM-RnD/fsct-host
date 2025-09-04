@@ -1,0 +1,38 @@
+#!/bin/sh
+set -e
+
+# Automatically added by debhelper will be placed here
+
+# After dh_installsystemduser has enabled the user unit globally, try to start
+# it for currently logged-in users so they don't need to re-login.
+case "$1" in
+    configure|reconfigure)
+        if command -v loginctl >/dev/null 2>&1; then
+            # Determine helper command for user scope
+            if command -v deb-systemd-invoke >/dev/null 2>&1; then
+                HELPER_CMD="deb-systemd-invoke --user"
+            elif command -v systemctl >/dev/null 2>&1; then
+                HELPER_CMD="systemctl --user"
+            else
+                HELPER_CMD=""
+            fi
+            [ -n "$HELPER_CMD" ] || exit 0
+            # Iterate over logged-in users (UIDs)
+            loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
+                [ -n "$UID" ] || continue
+                # Resolve username from UID; su requires a name
+                USERNAME=$(getent passwd "$UID" | cut -d: -f1)
+                [ -n "$USERNAME" ] || continue
+                # Run helper under the user context
+                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload || true; $HELPER_CMD restart fsct-mpris.service || true" 2>/dev/null || true
+            done
+        fi
+    ;;
+    *)
+        :
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

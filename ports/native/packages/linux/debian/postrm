@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+# Nothing special needed beyond dh snippets; ensure daemon-reload for users best-effort
+case "$1" in
+    remove|purge|abort-install|abort-upgrade|disappear)
+        if command -v loginctl >/dev/null 2>&1; then
+            # Determine helper
+            if command -v deb-systemd-invoke >/dev/null 2>&1; then
+                HELPER_CMD="deb-systemd-invoke --user"
+            elif command -v systemctl >/dev/null 2>&1; then
+                HELPER_CMD="systemctl --user"
+            else
+                HELPER_CMD=""
+            fi
+            [ -n "$HELPER_CMD" ] || exit 0
+            loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
+                [ -n "$UID" ] || continue
+                USERNAME=$(getent passwd "$UID" | cut -d: -f1)
+                [ -n "$USERNAME" ] || continue
+                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload || true" 2>/dev/null || true
+            done
+        fi
+    ;;
+    *) : ;;
+esac
+
+#DEBHELPER#
+
+exit 0
