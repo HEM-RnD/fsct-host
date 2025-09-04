@@ -10,7 +10,7 @@ override_dh_auto_configure:
 	# Nothing to configure for Rust
 
 override_dh_auto_build:
-	cargo build --package fsct_driver_service --release
+	cargo build --package fsct_driver_service --release --locked
 
 override_dh_auto_install:
 	# Install binary
