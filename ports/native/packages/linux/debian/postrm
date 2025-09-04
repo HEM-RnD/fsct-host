@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Nothing special needed beyond dh snippets; ensure daemon-reload for users best-effort
+# Nothing special needed beyond dh snippets; ensure daemon-reload for users best-effort and non-interactive
 case "$1" in
     remove|purge|abort-install|abort-upgrade|disappear)
         if command -v loginctl >/dev/null 2>&1; then
@@ -14,12 +14,18 @@ case "$1" in
                 HELPER_CMD=""
             fi
             [ -n "$HELPER_CMD" ] || exit 0
+            set +e
             loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
                 [ -n "$UID" ] || continue
+                STATE=$(loginctl show-user "$UID" -p State --value 2>/dev/null)
+                [ "$STATE" = "active" ] || continue
                 USERNAME=$(getent passwd "$UID" | cut -d: -f1)
                 [ -n "$USERNAME" ] || continue
-                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload || true" 2>/dev/null || true
+                XDG_RUNTIME_DIR="/run/user/$UID" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID/bus" \
+                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload >/dev/null 2>&1 || true" </dev/null 2>/dev/null || true
             done
+            set -e
         fi
     ;;
     *) : ;;
