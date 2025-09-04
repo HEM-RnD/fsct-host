@@ -61,6 +61,38 @@ impl IpcServer {
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
     pub async fn serve(&self) -> anyhow::Result<()> {
         let endpoint = &self.endpoint;
+
+        // On Unix, if LISTEN_FDS>0, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
+        #[cfg(unix)]
+        {
+            let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+            if listen_fds > 0 {
+                use std::os::fd::{FromRawFd, IntoRawFd};
+                use tokio::net::UnixListener;
+                use anyhow::Context;
+
+                info!("FSCT IPC server: detected LISTEN_FDS={}, using fd 3 (socket activation)", listen_fds);
+                // SAFETY: fd 3 is expected to be a valid listening Unix domain socket provided by the launcher (systemd or helper)
+                let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(3) };
+                std_listener.set_nonblocking(true).context("failed to set nonblocking on fd 3")?;
+                let listener = UnixListener::from_std(std_listener).context("failed to adopt fd 3 as UnixListener")?;
+
+                loop {
+                    match listener.accept().await {
+                        Ok((stream, _addr)) => {
+                            let handle = self.start_connection_service(stream);
+                            self.connections.lock().unwrap().add(handle);
+                        }
+                        Err(e) => {
+                            error!("IPC accept (fd3) failed: {}", e);
+                            break;
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
+
         info!("FSCT IPC server listening on: {}", endpoint);
 
         // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
@@ -69,22 +101,13 @@ impl IpcServer {
             if let Some(parent) = std::path::Path::new(endpoint).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            // Remove stale socket if any
+            // Remove stale socket if any (only when not socket-activated, as handled above)
             let _ = std::fs::remove_file(endpoint);
         }
 
         let mut endpoint = Endpoint::new(endpoint.clone());
         endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
         let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-        // #[cfg(unix)]
-        // {
-        //     use std::os::unix::fs::PermissionsExt;
-        //     if let Ok(meta) = std::fs::metadata(&self.endpoint) {
-        //         let mut mode = meta.permissions();
-        //         mode.set_mode(0o666);
-        //         let _ = std::fs::set_permissions(&self.endpoint, mode);
-        //     }
-        // }
 
         tokio::pin!(incoming);
         loop {
