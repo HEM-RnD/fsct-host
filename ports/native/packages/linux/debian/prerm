@@ -1,36 +1,30 @@
 #!/bin/sh
 set -e
 
-case "$1" in
-    remove|deconfigure)
-        # Best-effort stop of the user unit for currently logged-in users
-        if command -v loginctl >/dev/null 2>&1; then
-            # Determine helper
-            if command -v deb-systemd-invoke >/dev/null 2>&1; then
-                HELPER_CMD="deb-systemd-invoke --user"
-            elif command -v systemctl >/dev/null 2>&1; then
-                HELPER_CMD="systemctl --user"
-            else
-                HELPER_CMD=""
-            fi
-            [ -n "$HELPER_CMD" ] || exit 0
-            set +e
-            loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
-                [ -n "$UID" ] || continue
-                STATE=$(loginctl show-user "$UID" -p State --value 2>/dev/null)
-                [ "$STATE" = "active" ] || continue
-                USERNAME=$(getent passwd "$UID" | cut -d: -f1)
-                [ -n "$USERNAME" ] || continue
-                XDG_RUNTIME_DIR="/run/user/$UID" \
-                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID/bus" \
-                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD stop fsct-mpris.service >/dev/null 2>&1 || true" </dev/null 2>/dev/null || true
-            done
-            set -e
-        fi
-    ;;
-    *) : ;;
-esac
+# Pre-removal script: stop services and sockets before removal or upgrade
 
-#DEBHELPER#
+command -v systemctl >/dev/null 2>&1 || exit 0
+
+case "$1" in
+    remove|deconfigure|upgrade)
+        # Stop system units
+        systemctl stop fsct-driver.service || true
+        systemctl stop fsct-driver.socket || true
+        # Disable to avoid auto-start on upgrade glitches
+        systemctl disable fsct-driver.service || true
+        systemctl disable fsct-driver.socket || true
+
+        # Handle per-user service for all logged-in users
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user stop fsct-driver.service" "$user" || true
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user disable fsct-driver.service" "$user" || true
+        done
+        ;;
+    *)
+        # No action for other maintscript actions
+        ;;
+ esac
 
 exit 0

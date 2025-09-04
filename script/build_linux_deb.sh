@@ -29,6 +29,7 @@ need() { command -v "$1" >/dev/null 2>&1; }
 missing=()
 need dpkg-buildpackage || missing+=("dpkg-dev (dpkg-buildpackage)")
 need dh || missing+=("debhelper (dh)")
+need dh-exec || missing+=("dh-exec (dh)")
 need pkg-config || missing+=("pkg-config")
 need rustc || missing+=("rustc (via rustup preferred)")
 need cargo || missing+=("cargo (via rustup preferred)")
@@ -51,7 +52,7 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
 # Copy a snapshot of the source into BUILD_DIR (excluding target and .git)
-rsync -a --delete --exclude '/target' --exclude '/.git' "${ROOT_DIR}/" "${BUILD_DIR}/"
+rsync -a --delete --exclude '/target/' --exclude '/.git' "${ROOT_DIR}/" "${BUILD_DIR}/"
 
 # Determine version from Cargo workspace (authoritative)
 VERSION=$(grep -m1 '^version\s*=\s*"' "${BUILD_DIR}/Cargo.toml" | sed -E 's/.*version\s*=\s*"([^"]+)".*/\1/')

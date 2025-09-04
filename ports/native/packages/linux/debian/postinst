@@ -1,47 +1,18 @@
 #!/bin/sh
 set -e
 
-# Automatically added by debhelper will be placed here
+command -v systemctl >/dev/null 2>&1 || { echo "systemctl is required but not installed. Files are installed, but required services won't start automatically. " >&2; exit 0; }
 
-# After dh_installsystemduser has enabled the user unit globally, try to start
-# it for currently logged-in users so they don't need to re-login. This must be
-# fully non-interactive and best-effort.
-case "$1" in
-    configure|reconfigure)
-        if command -v loginctl >/dev/null 2>&1; then
-            # Determine helper command for user scope
-            if command -v deb-systemd-invoke >/dev/null 2>&1; then
-                HELPER_CMD="deb-systemd-invoke --user"
-            elif command -v systemctl >/dev/null 2>&1; then
-                HELPER_CMD="systemctl --user"
-            else
-                HELPER_CMD=""
-            fi
-            [ -n "$HELPER_CMD" ] || exit 0
-            # Be non-interactive and best-effort within this block
-            set +e
-            # Iterate over logged-in users (UIDs)
-            loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
-                [ -n "$UID" ] || continue
-                # Only act for active user sessions
-                STATE=$(loginctl show-user "$UID" -p State --value 2>/dev/null)
-                [ "$STATE" = "active" ] || continue
-                # Resolve username from UID; su requires a name
-                USERNAME=$(getent passwd "$UID" | cut -d: -f1)
-                [ -n "$USERNAME" ] || continue
-                # Ensure environment for user instance and avoid any prompts (no TTY)
-                XDG_RUNTIME_DIR="/run/user/$UID" \
-                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID/bus" \
-                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload >/dev/null 2>&1 || true; $HELPER_CMD restart fsct-mpris.service >/dev/null 2>&1 || true" </dev/null 2>/dev/null || true
-            done
-            set -e
-        fi
-    ;;
-    *)
-        :
-    ;;
-esac
+if [ "$1" = "configure" ] || [ "$1" = "install" ]; then
+    systemctl daemon-reload || true
 
-#DEBHELPER#
+    systemctl enable --now fsct-driver.socket || true
+    systemctl enable --now fsct-driver.service || true
+
+    for uid in $(loginctl list-users --no-legend | awk '{print $1}'); do
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload || true" $(id -nu "$uid") || true
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user enable --now fsct-driver.service || true" $(id -nu "$uid") || true
+    done
+fi
 
 exit 0

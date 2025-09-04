@@ -1,7 +1,7 @@
 [Unit]
 Description=FSCT driver
-Requires=fsct.socket
-After=fsct.socket network.target
+Requires=fsct-driver.socket
+After=fsct-driver.socket network.target
 
 [Service]
 Type=simple

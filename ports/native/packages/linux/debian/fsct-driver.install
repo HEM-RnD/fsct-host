@@ -1,0 +1,5 @@
+#!/usr/bin/dh-exec
+../../../../target/release/fsct_driver_service => usr/bin/fsctd
+../../../../LICENSE usr/share/doc/fsct-driver/
+../../../../LICENSE-FSCT.md usr/share/doc/fsct-driver/
+../../../../NOTICE usr/share/doc/fsct-driver/

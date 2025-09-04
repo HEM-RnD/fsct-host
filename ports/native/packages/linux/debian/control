@@ -2,7 +2,7 @@ Source: fsct-driver
 Section: utils
 Priority: optional
 Maintainer: HEM R&D <rnd@hem-e.com>
-Build-Depends: debhelper (>= 13), pkg-config
+Build-Depends: debhelper (>= 13), pkg-config, dh-exec
 Standards-Version: 4.7.0
 Homepage: https://github.com/HEM-RnD/fsct-host
 Rules-Requires-Root: no

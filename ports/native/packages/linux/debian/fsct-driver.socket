@@ -1,5 +1,5 @@
 [Unit]
-Description=FSCT IPC socket
+Description=FSCT IPC socket (for fsct-driver.service)
 
 [Socket]
 ListenStream=/run/fsct/fsct.sock

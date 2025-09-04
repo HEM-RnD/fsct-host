@@ -1,36 +1,39 @@
 #!/bin/sh
 set -e
 
-# Nothing special needed beyond dh snippets; ensure daemon-reload for users best-effort and non-interactive
-case "$1" in
-    remove|purge|abort-install|abort-upgrade|disappear)
-        if command -v loginctl >/dev/null 2>&1; then
-            # Determine helper
-            if command -v deb-systemd-invoke >/dev/null 2>&1; then
-                HELPER_CMD="deb-systemd-invoke --user"
-            elif command -v systemctl >/dev/null 2>&1; then
-                HELPER_CMD="systemctl --user"
-            else
-                HELPER_CMD=""
-            fi
-            [ -n "$HELPER_CMD" ] || exit 0
-            set +e
-            loginctl list-users --no-legend 2>/dev/null | awk '{print $1}' | while read -r UID; do
-                [ -n "$UID" ] || continue
-                STATE=$(loginctl show-user "$UID" -p State --value 2>/dev/null)
-                [ "$STATE" = "active" ] || continue
-                USERNAME=$(getent passwd "$UID" | cut -d: -f1)
-                [ -n "$USERNAME" ] || continue
-                XDG_RUNTIME_DIR="/run/user/$UID" \
-                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID/bus" \
-                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload >/dev/null 2>&1 || true" </dev/null 2>/dev/null || true
-            done
-            set -e
-        fi
-    ;;
-    *) : ;;
-esac
+# Post-removal script: clean up systemd state; on purge ensure units are disabled
 
-#DEBHELPER#
+command -v systemctl >/dev/null 2>&1 || exit 0
+
+action="$1"
+
+# Always try to reload systemd to pick up removals
+systemctl daemon-reload || true
+
+case "$action" in
+    remove|abort-install|abort-upgrade)
+        # For each user, reload user daemon
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload" "$user" || true
+        done
+        ;;
+    purge)
+        # Ensure units are disabled system-wide
+        systemctl disable fsct-driver.service || true
+        systemctl disable fsct-driver.socket || true
+
+        # For each user, disable the user service and reload user daemon
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user disable fsct-driver.service" "$user" || true
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload" "$user" || true
+        done
+        ;;
+    *)
+        ;;
+ esac
 
 exit 0
