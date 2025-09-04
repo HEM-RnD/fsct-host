@@ -13,6 +13,7 @@
 #![cfg(unix)]
 
 use std::process::{Command, Child};
+use std::os::fd::{AsRawFd as _, IntoRawFd as _};
 use std::os::unix::process::CommandExt;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
@@ -68,6 +69,48 @@ fn socket_activation_embedded_helper_works() {
     // Start a background client thread BEFORE spawning the service to emulate systemd-triggered activation.
     // The thread will repeatedly try to connect and, once connected, perform a msgpack-rpc call: get_protocol_version.
     use std::thread;
+
+
+    // Create stdout/stderr pipes first and start reading threads before spawning child
+    use nix::unistd::pipe2;
+    use nix::fcntl::OFlag;
+    use std::os::fd::FromRawFd;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    // Create pipes with CLOEXEC initially; we'll clear CLOEXEC on the write ends passed to the child
+    let (out_r, out_w) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stdout failed");
+    let (err_r, err_w) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stderr failed");
+
+    // Start reader threads on the read ends immediately
+    use std::os::fd::OwnedFd;
+    let out_reader_fd: OwnedFd = out_r;
+    let err_reader_fd: OwnedFd = err_r;
+    let out_reader = unsafe { File::from_raw_fd(out_reader_fd.into_raw_fd()) };
+    let err_reader = unsafe { File::from_raw_fd(err_reader_fd.into_raw_fd()) };
+
+    let out_handle = std::thread::spawn(move || {
+        let mut reader = BufReader::new(out_reader);
+        let mut line = String::new();
+        while let Ok(n) = reader.read_line(&mut line) {
+            if n == 0 { break; }
+            print!("[CHILD][stdout] {}", line);
+            line.clear();
+        }
+    });
+    let err_handle = std::thread::spawn(move || {
+        let mut reader = BufReader::new(err_reader);
+        let mut line = String::new();
+        while let Ok(n) = reader.read_line(&mut line) {
+            if n == 0 { break; }
+            print!("[CHILD][stderr] {}", line);
+            line.clear();
+        }
+    });
+
+    // Prepare write ends to hand to the child; transfer ownership via into_raw_fd when building Stdio
+    let out_w_fd: OwnedFd = out_w;
+    let err_w_fd: OwnedFd = err_w;
+
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
@@ -140,9 +183,19 @@ fn socket_activation_embedded_helper_works() {
     }
 
     println!("[SOCKET] Starting fsct_driver_service");
+
     let fd = listener.as_raw_fd();
     let mut cmd = Command::new(&fsct_bin);
     cmd.arg("--driver");
+
+
+    // Convert write ends into Stdio objects for child's stdout/stderr (transfer ownership)
+    use std::process::Stdio;
+    let child_stdout_stdio = unsafe { Stdio::from(File::from_raw_fd(out_w_fd.into_raw_fd())) };
+    let child_stderr_stdio = unsafe { Stdio::from(File::from_raw_fd(err_w_fd.into_raw_fd())) };
+    cmd.stdout(child_stdout_stdio);
+    cmd.stderr(child_stderr_stdio);
+
     unsafe {
         cmd.pre_exec(move || {
             if dup2(fd, 3) < 0 { return Err(io::Error::last_os_error()); }
@@ -152,17 +205,27 @@ fn socket_activation_embedded_helper_works() {
         });
     }
     cmd.env("LISTEN_FDS", "1");
-    cmd.env("FSCT_LOG", "debug");
+    cmd.env("FSCT_LOG", "info");
 
     let mut child = cmd.spawn().expect("failed to spawn fsct service");
 
     // Wait for the client to finish RPC check
     client_handle.join().expect("client thread panicked");
-    println!("Client finished");
+    println!("[TEST] Client finished");
 
     // Cleanup process and socket
     let _ = terminate_child(&mut child);
-    println!("Service terminated");
+    println!("[TEST] Service terminated");
+
+    // Drop fd owners to close stdio handles
+    drop(child);
+    drop(cmd);
+
+    // Join forwarders to flush remaining logs
+    let _ = out_handle.join();
+    let _ = err_handle.join();
+    println!("[TEST] All done.");
+
     let _ = fs::remove_file(&sock_path);
 }
 
