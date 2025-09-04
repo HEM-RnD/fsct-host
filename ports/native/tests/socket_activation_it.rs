@@ -20,7 +20,7 @@ use std::io;
 use std::os::unix::net::UnixListener;
 use std::os::fd::AsRawFd;
 use std::fs;
-
+use nix::poll::PollTimeout;
 
 fn random_sock_path() -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -65,7 +65,81 @@ fn socket_activation_embedded_helper_works() {
     perm.set_mode(0o666);
     fs::set_permissions(&sock_path, perm).unwrap();
 
-    // Build command: fsct_driver_service --driver, passing fd 3 and LISTEN_FDS=1 using pre_exec
+    // Start a background client thread BEFORE spawning the service to emulate systemd-triggered activation.
+    // The thread will repeatedly try to connect and, once connected, perform a msgpack-rpc call: get_protocol_version.
+    use std::thread;
+
+    let endpoint_str = sock_path.to_string_lossy().to_string();
+    let client_handle = thread::spawn(move || {
+        use parity_tokio_ipc::Endpoint;
+        use tokio_util::compat::TokioAsyncReadCompatExt;
+        // Create a small Tokio runtime inside the thread
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime");
+        rt.block_on(async move {
+            // we want to be sure that main thread has already started waiting for the socket before we connect to it, so we wait a bit
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            // we try only once to connect to the socket, because we want to be sure that service may run after a connection attempt and handle an incoming connection which triggers socket activation
+            println!("[CLIENT] Connecting to {}", endpoint_str);
+            let client = match Endpoint::connect(endpoint_str.clone()).await {
+                Ok(stream) => msgpack_rpc::Client::new(stream.compat()),
+                Err(_) => {
+                    panic!("client failed to connect in time to {}", endpoint_str);
+                }
+            };
+            // Call get_protocol_version and assert shape
+            println!("[CLIENT] Connected, sending get_protocol_version request");
+            let ver = client.request("get_protocol_version", &[]).await
+                .expect("get_protocol_version request failed");
+            // Expect a map { major: <int>, minor: <int> }
+            let m = ver.as_map().expect("protocol version is not a map");
+            let mut major = None;
+            let mut minor = None;
+            for (k, v) in m.iter() {
+                if let msgpack_rpc::Value::String(s) = k {
+                    if let Some(ks) = s.as_str() {
+                        match ks {
+                            "major" => { major = v.as_u64(); }
+                            "minor" => { minor = v.as_u64(); }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let (maj, min) = (major.unwrap_or(0), minor.unwrap_or(0));
+            println!("[CLIENT] Read protocol version: {}.{}", maj, min);
+            assert!(maj > 0 || min >= 0, "invalid protocol version map: {:?}", ver);
+        });
+    });
+
+    // Wait until we detect a connection attempt on the listening socket (POLLIN),
+    // then spawn the fsct_driver_service which should adopt fd=3 and accept the pending client.
+    {
+        println!("[SOCKET] Waiting for first incoming connection on {}", sock_path.display());
+        use nix::poll::{poll, PollFd, PollFlags};
+        use std::os::fd::{RawFd, BorrowedFd};
+        let raw: RawFd = listener.as_raw_fd();
+        let start = Instant::now();
+        let timeout_total = Duration::from_secs(10);
+        loop {
+            // nix 0.29 requires BorrowedFd for PollFd::new
+            let bfd = unsafe { BorrowedFd::borrow_raw(raw) };
+            let mut pfd = [PollFd::new(bfd, PollFlags::POLLIN)];
+            let poll_timeout: PollTimeout = Duration::from_millis(200).try_into().unwrap();
+            let n = poll(&mut pfd, poll_timeout).expect("poll failed"); // 200 ms step
+            if n > 0 {
+                // Either a connection is pending or an error/hup occurred; proceed to spawn the service.
+                break;
+            }
+            if start.elapsed() > timeout_total {
+                panic!("timeout waiting for first incoming connection on {}", sock_path.display());
+            }
+        }
+    }
+
+    println!("[SOCKET] Starting fsct_driver_service");
     let fd = listener.as_raw_fd();
     let mut cmd = Command::new(&fsct_bin);
     cmd.arg("--driver");
@@ -82,30 +156,13 @@ fn socket_activation_embedded_helper_works() {
 
     let mut child = cmd.spawn().expect("failed to spawn fsct service");
 
-    // Try to connect to the socket a few times
-    use std::os::unix::net::UnixStream;
-    use std::io::{Write, Read};
-
-    let start2 = Instant::now();
-    let timeout2 = Duration::from_secs(5);
-    let mut connected = false;
-    while start2.elapsed() < timeout2 {
-        match UnixStream::connect(&sock_path) {
-            Ok(mut s) => {
-                let _ = s.write_all(b"hello from test\n");
-                let mut buf = [0u8; 32];
-                // let _ = s.read_timeout(&mut buf);
-                connected = true;
-                break;
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(50)),
-        }
-    }
-
-    assert!(connected, "client failed to connect to {}", sock_path.display());
+    // Wait for the client to finish RPC check
+    client_handle.join().expect("client thread panicked");
+    println!("Client finished");
 
     // Cleanup process and socket
     let _ = terminate_child(&mut child);
+    println!("Service terminated");
     let _ = fs::remove_file(&sock_path);
 }
 
