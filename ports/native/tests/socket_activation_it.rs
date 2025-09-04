@@ -49,7 +49,7 @@ fn clear_cloexec(fd: i32) -> io::Result<()> {
 }
 
 #[test]
-fn socket_activation_embedded_helper_works() {
+fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts_connection() {
     // In a proper cargo test run for this package, Cargo sets CARGO_BIN_EXE_fsct_driver_service.
     // Hitting this branch means test setup is broken; fail hard.
     let fsct_bin: &str = env!("CARGO_BIN_EXE_fsct_driver_service");
