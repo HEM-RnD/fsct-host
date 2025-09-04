@@ -78,15 +78,12 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     // Create pipes with CLOEXEC initially; we'll clear CLOEXEC on the write ends passed to the child
-    let (out_r, out_w) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stdout failed");
-    let (err_r, err_w) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stderr failed");
+    let (out_rd_fd, out_wr_fd) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stdout failed");
+    let (err_rd_fd, err_wr_fd) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stderr failed");
 
     // Start reader threads on the read ends immediately
-    use std::os::fd::OwnedFd;
-    let out_reader_fd: OwnedFd = out_r;
-    let err_reader_fd: OwnedFd = err_r;
-    let out_reader = unsafe { File::from_raw_fd(out_reader_fd.into_raw_fd()) };
-    let err_reader = unsafe { File::from_raw_fd(err_reader_fd.into_raw_fd()) };
+    let out_reader = unsafe { File::from_raw_fd(out_rd_fd.into_raw_fd()) };
+    let err_reader = unsafe { File::from_raw_fd(err_rd_fd.into_raw_fd()) };
 
     let out_handle = std::thread::spawn(move || {
         let mut reader = BufReader::new(out_reader);
@@ -106,11 +103,6 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
             line.clear();
         }
     });
-
-    // Prepare write ends to hand to the child; transfer ownership via into_raw_fd when building Stdio
-    let out_w_fd: OwnedFd = out_w;
-    let err_w_fd: OwnedFd = err_w;
-
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
@@ -191,8 +183,8 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     // Convert write ends into Stdio objects for child's stdout/stderr (transfer ownership)
     use std::process::Stdio;
-    let child_stdout_stdio = unsafe { Stdio::from(File::from_raw_fd(out_w_fd.into_raw_fd())) };
-    let child_stderr_stdio = unsafe { Stdio::from(File::from_raw_fd(err_w_fd.into_raw_fd())) };
+    let child_stdout_stdio = unsafe { Stdio::from(File::from_raw_fd(out_wr_fd.into_raw_fd())) };
+    let child_stderr_stdio = unsafe { Stdio::from(File::from_raw_fd(err_wr_fd.into_raw_fd())) };
     cmd.stdout(child_stdout_stdio);
     cmd.stderr(child_stderr_stdio);
 
