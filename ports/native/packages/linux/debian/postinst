@@ -24,7 +24,7 @@ case "$1" in
                 USERNAME=$(getent passwd "$UID" | cut -d: -f1)
                 [ -n "$USERNAME" ] || continue
                 # Run helper under the user context
-                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload || true; $HELPER_CMD restart fsct-mpris.service || true" 2>/dev/null || true
+                su -s /bin/sh - "$USERNAME" -c "$HELPER_CMD daemon-reload; $HELPER_CMD enable --now fsct-mpris.service" 2>/dev/null
             done
         fi
     ;;
