@@ -1,0 +1,30 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export CARGO_TERM_COLOR=always
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Nothing to configure for Rust
+
+override_dh_auto_build:
+	cargo build --package fsct_driver_service --release
+
+override_dh_auto_install:
+	# Install binary
+	install -D -m 0755 ../../../../target/release/fsct_driver_service debian/fsct-driver/usr/bin/fsctd
+	# Install systemd units (system)
+	install -D -m 0644 systemd/system/fsct.socket debian/fsct-driver/lib/systemd/system/fsct.socket
+	install -D -m 0644 systemd/system/fsct-driver.service debian/fsct-driver/lib/systemd/system/fsct-driver.service
+	# Install user unit and enable globally by shipping symlink
+	install -D -m 0644 systemd/user/fsct-mpris.service debian/fsct-driver/usr/lib/systemd/user/fsct-mpris.service
+	install -d debian/fsct-driver/usr/lib/systemd/user/default.target.wants
+	ln -sf ../fsct-mpris.service debian/fsct-driver/usr/lib/systemd/user/default.target.wants/fsct-mpris.service
+	# Docs
+	install -D -m 0644 ../../../../LICENSE debian/fsct-driver/usr/share/doc/fsct-driver/LICENSE
+	install -D -m 0644 ../../../../LICENSE-FSCT.md debian/fsct-driver/usr/share/doc/fsct-driver/LICENSE-FSCT.md
+	install -D -m 0644 ../../../../NOTICE debian/fsct-driver/usr/share/doc/fsct-driver/NOTICE
+
+# Use dh_systemd to enable/daemon-reload automatically

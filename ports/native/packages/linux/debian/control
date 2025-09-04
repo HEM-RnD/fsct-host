@@ -1,0 +1,14 @@
+Source: fsct-driver
+Section: utils
+Priority: optional
+Maintainer: HEM R&D <rnd@hem-e.com>
+Build-Depends: debhelper-compat (= 13), cargo, pkg-config
+Standards-Version: 4.7.0
+Homepage: https://github.com/HEM-RnD/fsct-host
+Rules-Requires-Root: no
+
+Package: fsct-driver
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: FSCT driver service and systemd units
+ FSCT Host native driver service with systemd integration for Linux.
