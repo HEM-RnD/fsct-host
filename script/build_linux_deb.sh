@@ -53,6 +53,35 @@ mkdir -p "${BUILD_DIR}"
 # Copy a snapshot of the source into BUILD_DIR (excluding target and .git)
 rsync -a --delete --exclude '/target' --exclude '/.git' "${ROOT_DIR}/" "${BUILD_DIR}/"
 
+# Determine version from Cargo workspace (authoritative)
+VERSION=$(grep -m1 '^version\s*=\s*"' "${BUILD_DIR}/Cargo.toml" | sed -E 's/.*version\s*=\s*"([^"]+)".*/\1/')
+if [[ -z "${VERSION}" ]]; then
+  echo "Error: Could not determine version from Cargo.toml" >&2
+  exit 1
+fi
+echo "Detected version: ${VERSION}"
+
+# Update Debian changelog in the build snapshot to use the detected version
+CHANGELOG_DIR="${BUILD_DIR}/${PKG_DIR_REL}/debian"
+CHANGELOG_FILE="${CHANGELOG_DIR}/changelog"
+DATE_STR=$(date -R)
+if [[ -f "${CHANGELOG_FILE}" ]]; then
+  # Replace the version in the first line while preserving the rest
+  # Expected format: fsct-driver (X) UNRELEASED; urgency=medium
+  sed -i -E "1s/^fsct-driver \([^\)]*\)/fsct-driver (${VERSION})/" "${CHANGELOG_FILE}"
+  # Also refresh the trailer date/maintainer line to current date
+  sed -i -E "\|^ -- |s|^ -- .*$| -- HEM R&D <rnd@hem-e.com>  ${DATE_STR}|" "${CHANGELOG_FILE}"
+else
+  mkdir -p "${CHANGELOG_DIR}"
+  cat > "${CHANGELOG_FILE}" <<EOF
+fsct-driver (${VERSION}) UNRELEASED; urgency=medium
+
+  * Automated build.
+
+ -- HEM R&D <rnd@hem-e.com>  ${DATE_STR}
+EOF
+fi
+
 echo "Building Debian package with debhelper (out-of-source)..."
 cd "${BUILD_DIR}/${PKG_DIR_REL}"
 
