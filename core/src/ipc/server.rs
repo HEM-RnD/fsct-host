@@ -73,7 +73,7 @@ impl IpcServer {
     pub async fn serve(&mut self) -> anyhow::Result<()> {
         let endpoint = self.endpoint.take().expect("serve() called after shutdown");
 
-        // On Unix, if LISTEN_FDS>0, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
+        #[cfg(unix)]
         if let EndpointDefinitionType::Fd(fd) = endpoint {
             let std_listener = std::os::unix::net::UnixListener::from(fd);
             std_listener.set_nonblocking(true).context("failed to set nonblocking on fd")?;
@@ -91,7 +91,9 @@ impl IpcServer {
                     }
                 }
             }
-        } else if let EndpointDefinitionType::Path(path) = endpoint {
+            return Ok(());
+        }
+        if let EndpointDefinitionType::Path(path) = endpoint {
             info!("FSCT IPC server listening on: {}", path);
 
             // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
@@ -125,9 +127,10 @@ impl IpcServer {
                     }
                 }
             }
+            return Ok(());
         }
 
-        Ok(())
+        bail!("invalid endpoint definition");
     }
 
     pub async fn shutdown(&self) {
