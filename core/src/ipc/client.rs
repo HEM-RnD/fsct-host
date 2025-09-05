@@ -80,21 +80,6 @@ fn encode_player_state(ps: &PlayerState) -> Value {
 
 fn encode_player_id(pid: ManagedPlayerId) -> Value { Value::from(pid.get() as u64) }
 
-fn default_endpoint() -> String {
-    if let Ok(override_ep) = std::env::var("FSCT_IPC_ENDPOINT") {
-        if !override_ep.trim().is_empty() {
-            return override_ep;
-        }
-    }
-    #[cfg(windows)]
-    { r"\\.\pipe\fsct_host_v1".to_string() }
-    #[cfg(unix)]
-    {
-        let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-        format!("{base}/fsct/fsct.sock")
-    }
-}
-
 /// IPC-backed implementation of FsctDriver.
 pub struct IpcDriver {
     // Underlying msgpack-rpc client bound to a persistent IPC stream

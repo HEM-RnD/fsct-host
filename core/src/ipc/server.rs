@@ -44,85 +44,85 @@ use std::future::Future;
 use std::pin::Pin;
 use anyhow::{anyhow, bail, Context};
 
+enum EndpointDefinitionType {
+    Path(String),
+    #[cfg(unix)]
+    Fd(OwnedFd),
+}
+
 /// IPC server that exposes FsctDriver API over a local IPC connection.
 pub struct IpcServer {
-    endpoint: String,
+    endpoint: Option<EndpointDefinitionType>,
     driver: Arc<dyn FsctDriver>,
     // Container of per-connection services for cooperative shutdown
     connections: Arc<Mutex<crate::service::MultiServiceHandle>>,
 }
 
 impl IpcServer {
-    /// Create with an explicit endpoint path (useful for tests).
-    pub fn with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> Self {
-        Self { endpoint, driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+    /// Create with an explicit socket path (useful for tests).
+    pub fn with_socket_path(driver: Arc<dyn FsctDriver>, endpoint: &str) -> Self {
+        Self { endpoint: Some(EndpointDefinitionType::Path(endpoint.into())), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+    }
+
+    #[cfg(unix)]
+    pub fn with_socket_fd(driver: Arc<dyn FsctDriver>, endpoint: OwnedFd) -> Self {
+        Self { endpoint: Some(EndpointDefinitionType::Fd(endpoint)), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
     }
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
-    pub async fn serve(&self) -> anyhow::Result<()> {
-        let endpoint = &self.endpoint;
+    pub async fn serve(&mut self) -> anyhow::Result<()> {
+        let endpoint = self.endpoint.take().expect("serve() called after shutdown");
 
         // On Unix, if LISTEN_FDS>0, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
-        #[cfg(unix)]
-        {
-            let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-            if listen_fds > 0 {
-                use std::os::fd::{FromRawFd, IntoRawFd};
-                use tokio::net::UnixListener;
-                use anyhow::Context;
+        if let EndpointDefinitionType::Fd(fd) = endpoint {
+            let std_listener = std::os::unix::net::UnixListener::from(fd);
+            std_listener.set_nonblocking(true).context("failed to set nonblocking on fd")?;
+            let listener = UnixListener::from_std(std_listener).context("failed to adopt fd as UnixListener")?;
 
-                info!("FSCT IPC server: detected LISTEN_FDS={}, using fd 3 (socket activation)", listen_fds);
-                // SAFETY: fd 3 is expected to be a valid listening Unix domain socket provided by the launcher (systemd or helper)
-                let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(3) };
-                std_listener.set_nonblocking(true).context("failed to set nonblocking on fd 3")?;
-                let listener = UnixListener::from_std(std_listener).context("failed to adopt fd 3 as UnixListener")?;
-
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, _addr)) => {
-                            let handle = self.start_connection_service(stream);
-                            self.connections.lock().unwrap().add(handle);
-                        }
-                        Err(e) => {
-                            error!("IPC accept (fd3) failed: {}", e);
-                            break;
-                        }
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _addr)) => {
+                        let handle = self.start_connection_service(stream);
+                        self.connections.lock().unwrap().add(handle);
+                    }
+                    Err(e) => {
+                        error!("IPC accept (fd3) failed: {}", e);
+                        break;
                     }
                 }
-                return Ok(());
             }
-        }
+        } else if let EndpointDefinitionType::Path(path) = endpoint {
+            info!("FSCT IPC server listening on: {}", path);
 
-        info!("FSCT IPC server listening on: {}", endpoint);
-
-        // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
-        #[cfg(unix)]
-        {
-            if let Some(parent) = std::path::Path::new(endpoint).parent() {
-                let _ = std::fs::create_dir_all(parent);
+            // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
+            #[cfg(unix)]
+            {
+                if let Some(parent) = std::path::Path::new(path.as_str()).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                // Remove stale socket if any (only when not socket-activated, as handled above)
+                let _ = std::fs::remove_file(path.as_str());
             }
-            // Remove stale socket if any (only when not socket-activated, as handled above)
-            let _ = std::fs::remove_file(endpoint);
-        }
 
-        let mut endpoint = Endpoint::new(endpoint.clone());
-        endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
-        let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+            let mut endpoint = Endpoint::new(path.clone());
+            endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
+            let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
 
-        tokio::pin!(incoming);
-        loop {
-            match incoming.as_mut().next().await {
-                Some(Ok(stream)) => {
-                    let handle = self.start_connection_service(stream);
-                    self.connections.lock().unwrap().add(handle);
-                }
-                Some(Err(e)) => {
-                    error!("IPC accept failed: {}", e);
-                    break;
-                }
-                None => {
-                    // incoming stream ended
-                    break;
+            tokio::pin!(incoming);
+            loop {
+                match incoming.as_mut().next().await {
+                    Some(Ok(stream)) => {
+                        let handle = self.start_connection_service(stream);
+                        self.connections.lock().unwrap().add(handle);
+                    }
+                    Some(Err(e)) => {
+                        error!("IPC accept failed: {}", e);
+                        break;
+                    }
+                    None => {
+                        // incoming stream ended
+                        break;
+                    }
                 }
             }
         }
@@ -130,7 +130,7 @@ impl IpcServer {
         Ok(())
     }
 
-    async fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         let connections = std::mem::take(self.connections.lock().unwrap().deref_mut());
         if let Err(e) = connections.shutdown().await {
             warn!("Some IPC connection service failed to join on shutdown: {}", e);
@@ -170,13 +170,15 @@ impl IpcServer {
 
 use std::collections::HashSet;
 use std::ops::DerefMut;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::IntoRawFd;
+use tokio::net::UnixListener;
 use tokio::select;
 
-/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
-pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
     spawn_service(move |mut stop| async move {
         // Reuse IpcServer::serve instead of duplicating accept-loop logic
-        let server = IpcServer::with_endpoint(driver, endpoint);
 
         select!(
             res = server.serve() => {
@@ -191,6 +193,18 @@ pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: Strin
 
         info!("IPC server stopped");
     })
+}
+
+/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
+pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+    let server = IpcServer::with_socket_path(driver, &endpoint);
+    run_ipc_server(server)
+}
+
+/// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
+pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
+    let server = IpcServer::with_socket_fd(driver, fd);
+    run_ipc_server(server)
 }
 
 #[derive(Clone)]

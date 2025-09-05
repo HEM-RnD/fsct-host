@@ -1,7 +1,7 @@
 // Example: standalone IPC server exposing FsctDriver over msgpack-rpc
 use std::sync::Arc;
 use fsct_core::LocalDriver;
-use fsct_core::ipc::server::run_ipc_server_with_endpoint;
+use fsct_core::ipc::server::run_ipc_server_with_endpoint_path;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     let driver = Arc::new(LocalDriver::with_new_managers());
     let handle = driver.run().await?;
 
-    let ipc_handle = run_ipc_server_with_endpoint(driver.clone(), endpoint.clone());
+    let ipc_handle = run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone());
 
     println!("FSCT IPC server example listening on: {endpoint}");
     println!("Press Ctrl+C to stop...");

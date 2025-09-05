@@ -12,16 +12,19 @@
 
 #![cfg(unix)]
 
-use std::process::{Command, Child};
 use std::os::fd::{AsRawFd as _, IntoRawFd as _};
-use std::os::unix::process::CommandExt;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::io;
 use std::os::unix::net::UnixListener;
 use std::os::fd::AsRawFd;
 use std::fs;
+use anyhow::{anyhow, bail, Context};
+use nix::libc::setenv;
 use nix::poll::PollTimeout;
+use fsct_core::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
+use std::os::unix::ffi::OsStrExt;
+use nix::libc as libc;
 
 fn random_sock_path() -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -34,6 +37,7 @@ fn random_sock_path() -> PathBuf {
 unsafe extern "C" {
     fn dup2(oldfd: std::os::raw::c_int, newfd: std::os::raw::c_int) -> std::os::raw::c_int;
     fn fcntl(fd: std::os::raw::c_int, cmd: std::os::raw::c_int, ...) -> std::os::raw::c_int;
+    // fn setenv(name: *const i8, value: *const i8, overwrite: std::os::raw::c_int) -> std::os::raw::c_int;
 }
 const F_GETFD: i32 = 1; // get close-on-exec
 const F_SETFD: i32 = 2; // set close-on-exec
@@ -45,6 +49,65 @@ fn clear_cloexec(fd: i32) -> io::Result<()> {
     let new_flags = flags & !FD_CLOEXEC;
     let r = unsafe { fcntl(fd, F_SETFD, new_flags) };
     if r < 0 { return Err(io::Error::last_os_error()); }
+    Ok(())
+}
+
+struct ChildHandle { pid: i32 }
+
+fn fork_exec_service(fsct_bin: &PathBuf, listener_fd: i32, out_wr_fd: i32, err_wr_fd: i32) -> io::Result<ChildHandle> {
+    use std::ffi::CString;
+    unsafe {
+        // Prepare argv
+        let prog = CString::new(fsct_bin.as_os_str().as_bytes()).unwrap();
+        let arg0 = prog.clone();
+        let arg1 = CString::new("--driver").unwrap();
+        let argv: [*const i8; 3] = [arg0.as_ptr(), arg1.as_ptr(), std::ptr::null()];
+
+        // Fork
+        let pid = nix::unistd::fork().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        match pid {
+            nix::unistd::ForkResult::Parent { child } => {
+                // Parent returns handle
+                return Ok(ChildHandle { pid: child.as_raw() });
+            }
+            nix::unistd::ForkResult::Child => {
+                // Child process setup
+                // dup listener to fd 3
+                if dup2(listener_fd, 3) < 0 { libc::_exit(127); }
+                // clear CLOEXEC on 3
+                if clear_cloexec(3).is_err() { libc::_exit(127); }
+
+                // Wire stdout/stderr
+                if dup2(out_wr_fd, 1) < 0 { libc::_exit(127); }
+                if dup2(err_wr_fd, 2) < 0 { libc::_exit(127); }
+                // Clear CLOEXEC on 1,2 as well
+                let _ = clear_cloexec(1);
+                let _ = clear_cloexec(2);
+
+                // Set env: LISTEN_FDS=1, LISTEN_PID=<child_pid>, FSCT_LOG=info
+                let one = CString::new("1").unwrap();
+                setenv(b"LISTEN_FDS\0".as_ptr() as *const i8, one.as_ptr(), 1);
+                let pid = libc::getpid();
+                let pid_str = CString::new(format!("{}", pid)).unwrap();
+                setenv(b"LISTEN_PID\0".as_ptr() as *const i8, pid_str.as_ptr(), 1);
+                let log = CString::new("info").unwrap();
+                setenv(b"FSCT_LOG\0".as_ptr() as *const i8, log.as_ptr(), 1);
+
+                // Exec
+                libc::execvp(prog.as_ptr(), argv.as_ptr());
+                // If exec failed
+                libc::_exit(127);
+            }
+        }
+    }
+}
+
+fn terminate_child(handle: &mut ChildHandle) -> std::io::Result<()> {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::{Pid};
+    let _ = kill(Pid::from_raw(handle.pid), Signal::SIGTERM);
+    // wait
+    let _ = nix::sys::wait::waitpid(Pid::from_raw(handle.pid), None);
     Ok(())
 }
 
@@ -108,6 +171,8 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     let client_handle = thread::spawn(move || {
         use parity_tokio_ipc::Endpoint;
         use tokio_util::compat::TokioAsyncReadCompatExt;
+        use tokio::time::timeout;
+
         // Create a small Tokio runtime inside the thread
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -118,18 +183,22 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
             tokio::time::sleep(Duration::from_millis(300)).await;
             // we try only once to connect to the socket, because we want to be sure that service may run after a connection attempt and handle an incoming connection which triggers socket activation
             println!("[CLIENT] Connecting to {}", endpoint_str);
-            let client = match Endpoint::connect(endpoint_str.clone()).await {
-                Ok(stream) => msgpack_rpc::Client::new(stream.compat()),
-                Err(_) => {
-                    panic!("client failed to connect in time to {}", endpoint_str);
-                }
-            };
+
+            let connection = timeout(Duration::from_secs(2), Endpoint::connect(endpoint_str.clone())).await
+                .with_context(|| format!("client connection timed out after 5 seconds to {}", endpoint_str))?
+                .with_context(|| format!("client failed to connect to {}: invalid endpoint", endpoint_str))?;
+
+            let client = msgpack_rpc::Client::new(connection.compat());
+
             // Call get_protocol_version and assert shape
             println!("[CLIENT] Connected, sending get_protocol_version request");
-            let ver = client.request("get_protocol_version", &[]).await
-                .expect("get_protocol_version request failed");
+            let ver = timeout(Duration::from_secs(1), client.request("get_protocol_version", &[]))
+                .await
+                .with_context(|| format!("get_protocol_version request failed to complete after 5 seconds to {}", endpoint_str))?
+                .map_err(|_| anyhow!("get_protocol_version request failed"))?;
+
             // Expect a map { major: <int>, minor: <int> }
-            let m = ver.as_map().expect("protocol version is not a map");
+            let m = ver.as_map().with_context(|| "protocol version is not a map")?;
             let mut major = None;
             let mut minor = None;
             for (k, v) in m.iter() {
@@ -143,10 +212,16 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
                     }
                 }
             }
-            let (maj, min) = (major.unwrap_or(0), minor.unwrap_or(0));
-            println!("[CLIENT] Read protocol version: {}.{}", maj, min);
-            assert!(maj > 0 || min >= 0, "invalid protocol version map: {:?}", ver);
-        });
+            // let (maj, min) = (major.unwrap_or(0), minor.unwrap_or(0));
+
+            let protocol_version = FSCT_PROTOCOL_VERSION;
+            let read_version = ProtocolVersion { major: major.unwrap_or(0) as u16, minor: minor.unwrap_or(0) as u16 };
+            println!("[CLIENT] Read protocol version: {}", read_version);
+            if protocol_version != read_version {
+                bail!("protocol version mismatch: expected {}, got {}", protocol_version, read_version);
+            }
+            Ok(())
+        })
     });
 
     // Wait until we detect a connection attempt on the listening socket (POLLIN),
@@ -177,41 +252,30 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     println!("[SOCKET] Starting fsct_driver_service");
 
     let fd = listener.as_raw_fd();
-    let mut cmd = Command::new(&fsct_bin);
-    cmd.arg("--driver");
-
-
-    // Convert write ends into Stdio objects for child's stdout/stderr (transfer ownership)
-    use std::process::Stdio;
-    let child_stdout_stdio = unsafe { Stdio::from(File::from_raw_fd(out_wr_fd.into_raw_fd())) };
-    let child_stderr_stdio = unsafe { Stdio::from(File::from_raw_fd(err_wr_fd.into_raw_fd())) };
-    cmd.stdout(child_stdout_stdio);
-    cmd.stderr(child_stderr_stdio);
-
-    unsafe {
-        cmd.pre_exec(move || {
-            if dup2(fd, 3) < 0 { return Err(io::Error::last_os_error()); }
-            clear_cloexec(3)?;
-            let _ = clear_cloexec(fd);
-            Ok(())
-        });
-    }
-    cmd.env("LISTEN_FDS", "1");
-    cmd.env("FSCT_LOG", "info");
-
-    let mut child = cmd.spawn().expect("failed to spawn fsct service");
+    // Convert to raw fds and (optionally) clear CLOEXEC on them before passing
+    let out_wr_raw = out_wr_fd.into_raw_fd();
+    let err_wr_raw = err_wr_fd.into_raw_fd();
+    let _ = clear_cloexec(out_wr_raw);
+    let _ = clear_cloexec(err_wr_raw);
+    let mut child = fork_exec_service(&fsct_bin, fd, out_wr_raw, err_wr_raw)
+        .expect("failed to fork/exec fsct service");
+    // Close our copies of the write ends in the parent so readers see EOF when child closes
+    let _ = nix::unistd::close(out_wr_raw);
+    let _ = nix::unistd::close(err_wr_raw);
 
     // Wait for the client to finish RPC check
-    client_handle.join().expect("client thread panicked");
-    println!("[TEST] Client finished");
+    let res = client_handle.join().expect("client thread panicked");
+    if res.is_err() {
+        println!("[TEST] Client finished with error");
+    } else {
+        println!("[TEST] Client finished successfully");
+    }
 
     // Cleanup process and socket
     let _ = terminate_child(&mut child);
     println!("[TEST] Service terminated");
 
     // Drop fd owners to close stdio handles
-    drop(child);
-    drop(cmd);
 
     // Join forwarders to flush remaining logs
     let _ = out_handle.join();
@@ -219,17 +283,6 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     println!("[TEST] All done.");
 
     let _ = fs::remove_file(&sock_path);
+    res.unwrap();
 }
 
-fn terminate_child(child: &mut Child) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::{kill, Signal};
-        use nix::unistd::Pid;
-        let pid = child.id() as i32;
-        let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    Ok(())
-}

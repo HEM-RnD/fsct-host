@@ -15,9 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver};
+use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver, driver};
 use std::sync::Arc;
 use crate::run_os_watcher;
 
@@ -56,15 +57,21 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     let mut systemd_socket_activated = false;
 
     if args.driver {
-        let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-        if listen_fds > 0 { systemd_socket_activated = true; }
+        systemd_socket_activated = is_systemd_triggered_by_socket_activated();
         // In driver mode, expose IPC driver over IPC and do not start OS watcher
-        // If not using systemd socket activation (LISTEN_FDS==0), remove a potential stale socket file.
-        if systemd_socket_activated == false {
-            if let Err(e) = std::fs::remove_file(endpoint) { let _ = e; /* ignore if not present */ }
-        }
 
-        let ipc = fsct_core::ipc::server::run_ipc_server_with_endpoint(driver.clone(), endpoint.into());
+        let ipc = if systemd_socket_activated {
+            info!("systemd socket activation detected, using fd 3");
+            // If systemd socket activation is used, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
+            // 3 is the only fd that systemd/socket-activation helper will pass to the process,
+            // and it has to be valid fd for the process to be able to use it.
+            fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), unsafe { OwnedFd::from_raw_fd(3) })
+        } else {
+            info!("systemd socket activation not detected, using {}", endpoint);
+            // If not using systemd socket activation (LISTEN_FDS==0), remove a potential stale socket file.
+            if let Err(e) = std::fs::remove_file(endpoint) { let _ = e; /* ignore if not present */ }
+            fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.into())
+        };
         services.add(ipc);
     } else {
         // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
@@ -86,4 +93,12 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn is_systemd_triggered_by_socket_activated() -> bool {
+    let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let listen_pid = std::env::var("LISTEN_PID").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let this_process_pid = std::process::id();
+    // Be sure that FDs are assigned to the correct (this) process; otherwise systemd will not pass them to us.
+    listen_fds > 0 && listen_pid == this_process_pid
 }
