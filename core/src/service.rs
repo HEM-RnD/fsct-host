@@ -19,6 +19,8 @@ use std::future::Future;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use futures::future::join_all;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 
 /// A handle passed to background tasks that lets them observe a stop/shutdown request.
 ///
@@ -87,6 +89,10 @@ impl ServiceHandle {
     pub fn abort(self) {
         self.join.abort();
     }
+
+    pub async fn join(&mut self) -> Result<(), tokio::task::JoinError> {
+        (&mut self.join).await
+    }
 }
 
 /// Spawn a background service task with a standard stop mechanism.
@@ -137,5 +143,21 @@ impl MultiServiceHandle {
         let futures = self.handles.into_iter().map(|h| h.shutdown()).collect::<Vec<_>>();
         let res = join_all(futures).await;
         res.into_iter().find(|r| r.is_err()).unwrap_or(Ok(()))
+    }
+
+    /// Join all services, then await completion of any of them. It is supposed to be used for
+    /// purpose of waiting for any task to finish or ctrl+c/sigterm brake.
+    pub async fn wait_for_any_to_finish(&mut self) -> Result<(), tokio::task::JoinError> {
+        // Wait until any of the managed services finishes (success or error).
+        // Do not consume self; we borrow the handles and await on their join futures.
+        if self.handles.is_empty() {
+            return Ok(());
+        }
+        // Create a FuturesUnordered to drive all joins and return on the first completion.
+        let mut futs: FuturesUnordered<_> = FuturesUnordered::new();
+        for h in self.handles.iter_mut() {
+            futs.push(h.join());
+        }
+        futs.next().await.unwrap_or_else(|| Ok(()))
     }
 }

@@ -81,12 +81,15 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     }
 
     let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {},
-        _ = terminate_signal.recv() => {},
+    let service_res = tokio::select! {
+        _ = tokio::signal::ctrl_c() => {Ok(())},
+        _ = terminate_signal.recv() => {Ok(())},
+        res = services.wait_for_any_to_finish() => {
+            res.inspect_err(|e| log::error!("Service error: {}", e))
+        },
     };
-    let res = services.shutdown().await;
-    if let Err(e) = res { return Err(e.into()); }
+    let shutdown_res = services.shutdown().await
+        .inspect_err(|e| log::error!("Shutdown error: {}", e));
 
     if args.driver {
         // Only attempt to remove the socket file if we created it ourselves (no socket activation)
@@ -96,6 +99,9 @@ pub async fn fsct_main() -> anyhow::Result<()> {
             }
         }
     }
+
+    service_res?;
+    shutdown_res?;
     Ok(())
 }
 
