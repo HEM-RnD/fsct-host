@@ -73,69 +73,50 @@ impl IpcServer {
     pub async fn serve(&mut self) -> anyhow::Result<()> {
         let endpoint = self.endpoint.take().expect("serve() called after shutdown");
 
-        #[cfg(unix)]
-        if let EndpointDefinitionType::Fd(fd) = endpoint {
-            let builder = transport::EndpointListenerBuilder::from_fd(fd);
-            let listener = builder.build().await?;
-            let mut incoming = listener.listen()?;
-            tokio::pin!(incoming);
-            loop {
-                match incoming.as_mut().next().await {
-                    Some(Ok(stream)) => {
-                        let handle = self.start_connection_service(stream);
-                        self.connections.lock().unwrap().add(handle);
-                    }
-                    Some(Err(e)) => {
-                        error!("IPC accept (fd3) failed: {}", e);
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            return Ok(());
-        }
-        if let EndpointDefinitionType::Path(path) = endpoint {
-            info!("FSCT IPC server listening on: {}", path);
+        let listener = match endpoint {
+            EndpointDefinitionType::Path(path) => {
+                info!("FSCT IPC server listening on: {}", path);
 
-            // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
+                // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
+                #[cfg(unix)]
+                {
+                    if let Some(parent) = std::path::Path::new(path.as_str()).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    // Remove stale socket if any (only when not socket-activated, as handled above)
+                    let _ = std::fs::remove_file(path.as_str());
+                }
+
+                let builder = transport::EndpointListenerBuilder::from_path(path.clone())
+                    .security_attributes(transport::SecurityAttributes::allow_all());
+                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
+            }
             #[cfg(unix)]
-            {
-                if let Some(parent) = std::path::Path::new(path.as_str()).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                // Remove stale socket if any (only when not socket-activated, as handled above)
-                let _ = std::fs::remove_file(path.as_str());
+            EndpointDefinitionType::Fd(fd) => {
+                let builder = transport::EndpointListenerBuilder::from_fd(fd);
+                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
             }
+        };
 
-            // Build platform-specific listener via our abstraction
-            #[cfg(unix)]
-            let builder = transport::EndpointListenerBuilder::from_path(path.clone())
-                .security_attributes(transport::SecurityAttributes { mode: Some(0o666) });
-            #[cfg(windows)]
-            let builder = transport::EndpointListenerBuilder::from_path(path.clone());
-            let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-            let mut incoming = listener.listen()?;
-
-            tokio::pin!(incoming);
-            loop {
-                match incoming.as_mut().next().await {
-                    Some(Ok(stream)) => {
-                        let handle = self.start_connection_service(stream);
-                        self.connections.lock().unwrap().add(handle);
-                    }
-                    Some(Err(e)) => {
-                        error!("IPC accept failed: {}", e);
-                        break;
-                    }
-                    None => {
-                        break;
-                    }
+        let mut incoming = listener.listen()?;
+        tokio::pin!(incoming);
+        loop {
+            match incoming.as_mut().next().await {
+                Some(Ok(stream)) => {
+                    let handle = self.start_connection_service(stream);
+                    self.connections.lock().unwrap().add(handle);
                 }
+                Some(Err(e)) => {
+                    error!("IPC accept (fd3) failed: {}", e);
+                    break;
+                }
+                None => break,
             }
-            return Ok(());
         }
 
-        bail!("invalid endpoint definition");
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
