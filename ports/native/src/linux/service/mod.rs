@@ -80,7 +80,11 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         }
     }
 
-    tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C signal");
+    let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = terminate_signal.recv() => {},
+    };
     let res = services.shutdown().await;
     if let Err(e) = res { return Err(e.into()); }
 
