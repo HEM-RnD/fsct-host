@@ -21,8 +21,8 @@ case "$action" in
         ;;
     purge)
         # Ensure units are disabled system-wide
-        systemctl disable fsct-driver.service || true
         systemctl disable fsct-driver.socket || true
+        systemctl disable fsct-driver.service || true
 
         # For each user, disable the user service and reload user daemon
         for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do

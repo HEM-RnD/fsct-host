@@ -8,11 +8,12 @@ command -v systemctl >/dev/null 2>&1 || exit 0
 case "$1" in
     remove|deconfigure|upgrade)
         # Stop system units
-        systemctl stop fsct-driver.service || true
         systemctl stop fsct-driver.socket || true
+        systemctl stop fsct-driver.service || true
+
         # Disable to avoid auto-start on upgrade glitches
-        systemctl disable fsct-driver.service || true
         systemctl disable fsct-driver.socket || true
+        systemctl disable fsct-driver.service || true
 
         # Handle per-user service for all logged-in users
         for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
