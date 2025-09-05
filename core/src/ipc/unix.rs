@@ -14,13 +14,17 @@ use std::os::fd::OwnedFd;
 // Placeholder security attributes API to keep parity with windows implementation.
 // On Unix, we only allow setting file mode (permissions) when bound from path.
 #[derive(Clone, Default)]
-pub struct SecurityAttributesUnix {
+pub struct SecurityAttributes {
     pub mode: Option<u32>, // e.g., 0o666
+}
+
+impl SecurityAttributes {
+    pub fn allow_all() -> Self { Self { mode: Some(0o666) } }
 }
 
 pub struct EndpointListenerBuilder {
     kind: EndpointKind,
-    attrs: SecurityAttributesUnix,
+    attrs: SecurityAttributes,
 }
 
 enum EndpointKind {
@@ -30,12 +34,12 @@ enum EndpointKind {
 
 impl EndpointListenerBuilder {
     pub fn from_path(path: String) -> Self {
-        Self { kind: EndpointKind::FromPath(path), attrs: SecurityAttributesUnix::default() }
+        Self { kind: EndpointKind::FromPath(path), attrs: SecurityAttributes::default() }
     }
     pub fn from_fd(fd: OwnedFd) -> Self {
-        Self { kind: EndpointKind::FromFd(fd), attrs: SecurityAttributesUnix::default() }
+        Self { kind: EndpointKind::FromFd(fd), attrs: SecurityAttributes::default() }
     }
-    pub fn security_attributes(mut self, attrs: SecurityAttributesUnix) -> Self {
+    pub fn security_attributes(mut self, attrs: SecurityAttributes) -> Self {
         self.attrs = attrs;
         self
     }
@@ -82,8 +86,8 @@ enum ListenerInner {
 }
 
 impl EndpointListener {
-    pub fn listen(self) -> EndpointIncoming {
-        EndpointIncoming { inner: self.inner }
+    pub fn listen(self) -> Result<EndpointIncoming> {
+        Ok(EndpointIncoming { inner: self.inner })
     }
 }
 

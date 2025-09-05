@@ -77,7 +77,7 @@ impl IpcServer {
         if let EndpointDefinitionType::Fd(fd) = endpoint {
             let builder = transport::EndpointListenerBuilder::from_fd(fd);
             let listener = builder.build().await?;
-            let mut incoming = listener.listen();
+            let mut incoming = listener.listen()?;
             tokio::pin!(incoming);
             loop {
                 match incoming.as_mut().next().await {
@@ -110,11 +110,11 @@ impl IpcServer {
             // Build platform-specific listener via our abstraction
             #[cfg(unix)]
             let builder = transport::EndpointListenerBuilder::from_path(path.clone())
-                .security_attributes(transport::SecurityAttributesUnix { mode: Some(0o666) });
+                .security_attributes(transport::SecurityAttributes { mode: Some(0o666) });
             #[cfg(windows)]
             let builder = transport::EndpointListenerBuilder::from_path(path.clone());
             let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-            let mut incoming = listener.listen();
+            let mut incoming = listener.listen()?;
 
             tokio::pin!(incoming);
             loop {

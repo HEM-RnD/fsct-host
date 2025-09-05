@@ -81,5 +81,5 @@ async fn two_clients_can_connect_and_request_version() {
     assert_eq!(c1.get_protocol_version().await.unwrap(), FSCT_PROTOCOL_VERSION);
     assert_eq!(c2.get_protocol_version().await.unwrap(), FSCT_PROTOCOL_VERSION);
 
-    server_task.abort();
+    server_task.shutdown().await.unwrap();
 }
