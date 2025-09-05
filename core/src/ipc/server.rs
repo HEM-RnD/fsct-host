@@ -25,7 +25,7 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
-use parity_tokio_ipc::{Endpoint, SecurityAttributes};
+use super::transport;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use futures::StreamExt;
@@ -75,20 +75,21 @@ impl IpcServer {
 
         #[cfg(unix)]
         if let EndpointDefinitionType::Fd(fd) = endpoint {
-            let std_listener = std::os::unix::net::UnixListener::from(fd);
-            std_listener.set_nonblocking(true).context("failed to set nonblocking on fd")?;
-            let listener = UnixListener::from_std(std_listener).context("failed to adopt fd as UnixListener")?;
-
+            let builder = transport::EndpointListenerBuilder::from_fd(fd);
+            let listener = builder.build().await?;
+            let mut incoming = listener.listen();
+            tokio::pin!(incoming);
             loop {
-                match listener.accept().await {
-                    Ok((stream, _addr)) => {
+                match incoming.as_mut().next().await {
+                    Some(Ok(stream)) => {
                         let handle = self.start_connection_service(stream);
                         self.connections.lock().unwrap().add(handle);
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         error!("IPC accept (fd3) failed: {}", e);
                         break;
                     }
+                    None => break,
                 }
             }
             return Ok(());
@@ -106,9 +107,14 @@ impl IpcServer {
                 let _ = std::fs::remove_file(path.as_str());
             }
 
-            let mut endpoint = Endpoint::new(path.clone());
-            endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
-            let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+            // Build platform-specific listener via our abstraction
+            #[cfg(unix)]
+            let builder = transport::EndpointListenerBuilder::from_path(path.clone())
+                .security_attributes(transport::SecurityAttributesUnix { mode: Some(0o666) });
+            #[cfg(windows)]
+            let builder = transport::EndpointListenerBuilder::from_path(path.clone());
+            let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+            let mut incoming = listener.listen();
 
             tokio::pin!(incoming);
             loop {
@@ -122,7 +128,6 @@ impl IpcServer {
                         break;
                     }
                     None => {
-                        // incoming stream ended
                         break;
                     }
                 }
@@ -175,7 +180,9 @@ use std::collections::HashSet;
 use std::ops::DerefMut;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(unix)]
 use std::os::fd::IntoRawFd;
+#[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::select;
 
@@ -204,6 +211,7 @@ pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: 
     run_ipc_server(server)
 }
 
+#[cfg(unix)]
 /// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
 pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
     let server = IpcServer::with_socket_fd(driver, fd);

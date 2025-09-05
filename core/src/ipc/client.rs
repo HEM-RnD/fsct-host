@@ -15,13 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-//! IPC client (phase 3 minimal) using parity-tokio-ipc transport.
+//! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 //! For now, only implements `get_protocol_version` method to interoperate with the msgpack-rpc server.
 
 use anyhow::Error;
 use async_trait::async_trait;
-use parity_tokio_ipc::Endpoint;
 use tokio_util::compat::TokioAsyncReadCompatExt;
+use super::transport;
 
 use crate::definitions::ProtocolVersion;
 use crate::{FsctDriver};
@@ -91,7 +91,7 @@ impl IpcDriver {
     /// Connect to a specific endpoint and verify protocol compatibility.
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         // Establish persistent connection
-        let stream = Endpoint::connect(endpoint.clone()).await
+        let stream = transport::EndpointClient::connect(endpoint.clone()).await
             .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
         let compat_stream = stream.compat();
         let client = Client::new(compat_stream);
