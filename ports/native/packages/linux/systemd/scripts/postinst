@@ -9,8 +9,8 @@ if [ "$1" = "configure" ] || [ "$1" = "install" ]; then
     systemctl enable --now fsct-driver.socket || true
 
     for uid in $(loginctl list-users --no-legend | awk '{print $1}'); do
-        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload || true" $(id -nu "$uid") || true
-        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user enable --now fsct-driver.service || true" $(id -nu "$uid") || true
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload || true" "$(id -nu "$uid")" || true
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user enable --now fsct-driver.service || true" "$(id -nu "$uid")" || true
     done
 fi
 
