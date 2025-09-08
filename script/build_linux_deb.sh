@@ -33,6 +33,8 @@ Usage: $(basename "$0") [options]
   --skip-licensing        Skip generating third-party licenses (cargo-about)
   --allow-missing-deps    Continue even if some tooling is missing (for CI tests)
   --keep-build            Keep staging/build directories (do not clean)
+
+Note: The script auto-detects system glibc version and adds a package dependency: libc6 (>= <detected>).
   -h, --help              Show this help and exit
 EOF
       exit 0
@@ -147,9 +149,38 @@ ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 PACKAGE_FILE="${OUTPUT_DIR}/${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
 rm -f "${PACKAGE_FILE}" || true
 
+# Detect glibc (libc6) version and add dependency
+LIBC_DEP=""
+if command -v getconf >/dev/null 2>&1; then
+  # Prefer getconf GNU_LIBC_VERSION (e.g., "glibc 2.31")
+  glibc_line=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
+  if [[ -n "$glibc_line" && "$glibc_line" == glibc* ]]; then
+    libc_ver=${glibc_line#glibc }
+  fi
+fi
+if [[ -z "${libc_ver:-}" ]]; then
+  # Fallback: ldd --version first line contains "ldd (GNU libc) 2.xx"
+  if command -v ldd >/dev/null 2>&1; then
+    ldd_ver=$(ldd --version 2>/dev/null | head -n1 | sed -E 's/.* ([0-9]+\.[0-9]+(\.[0-9]+)?).*$/\1/')
+    if [[ "$ldd_ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+      libc_ver=$ldd_ver
+    fi
+  fi
+fi
+if [[ -n "${libc_ver:-}" ]]; then
+  # Debian/Ubuntu package providing glibc is libc6; add >= constraint
+  LIBC_DEP="libc6 (>= ${libc_ver})"
+  echo "Detected glibc version: ${libc_ver}; adding dependency: ${LIBC_DEP}"
+else
+  echo "Error: Could not detect glibc version. Skipping automatic libc6 dependency." >&2
+  exit 1
+fi
+
 FPM_ARGS=(
   -v "${VERSION}"
   --package "${PACKAGE_FILE}"
+  --depends "${LIBC_DEP}"
+  --depends libgcc-s1
   "${STAGE_DIR}/=/"
 )
 

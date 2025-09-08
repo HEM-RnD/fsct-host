@@ -25,3 +25,4 @@ anyhow = "1.0.98"
 [profile.release]
 lto = true
 strip = "symbols"
+panic = "abort"
