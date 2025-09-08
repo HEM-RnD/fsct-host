@@ -25,24 +25,34 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
-use super::transport;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::compat::TokioAsyncReadCompatExt;
-use futures::StreamExt;
+use anyhow::{anyhow, bail, Context};
 
+use super::transport;
 use crate::{FsctDriver, ProtocolVersion};
 use crate::service::{spawn_service, ServiceHandle, MultiServiceHandle};
 use crate::player_state::{PlayerState, TrackMetadata};
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use std::time::{Duration, UNIX_EPOCH};
-use uuid::Uuid;
-use std::num::NonZeroU32;
 use crate::FSCT_PROTOCOL_VERSION;
 
+use uuid::Uuid;
 use msgpack_rpc::{serve, Service, Value};
+
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::select;
+use tokio_util::compat::TokioAsyncReadCompatExt;
+use futures::StreamExt;
+#[cfg(unix)]
+use tokio::net::UnixListener;
+
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, IntoRawFd};
+use std::time::{Duration, UNIX_EPOCH};
+use std::num::NonZeroU32;
 use std::future::Future;
 use std::pin::Pin;
-use anyhow::{anyhow, bail, Context};
+use std::collections::HashSet;
+use std::ops::DerefMut;
+
 
 enum EndpointDefinitionType {
     Path(String),
@@ -92,7 +102,7 @@ impl IpcServer {
         Ok(())
     }
 
-    async fn init_listener(&mut self) -> anyhow::Result<EndpointListener> {
+    async fn init_listener(&mut self) -> anyhow::Result<transport::EndpointListener> {
         let endpoint = self.endpoint.take().expect("serve() called after shutdown");
 
         let listener = match endpoint {
@@ -162,16 +172,6 @@ impl IpcServer {
     }
 }
 
-use std::collections::HashSet;
-use std::ops::DerefMut;
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-#[cfg(unix)]
-use std::os::fd::IntoRawFd;
-#[cfg(unix)]
-use tokio::net::UnixListener;
-use tokio::select;
-use crate::ipc::transport::EndpointListener;
 
 fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
     spawn_service(move |mut stop| async move {
