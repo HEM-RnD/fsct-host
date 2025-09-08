@@ -11,8 +11,7 @@
 // - We do not assert server logs, only that a connection is possible.
 
 #![cfg(unix)]
-
-use std::os::fd::{AsRawFd as _, IntoRawFd as _};
+use std::os::fd::IntoRawFd as _;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::io;
@@ -25,6 +24,7 @@ use nix::poll::PollTimeout;
 use fsct_core::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
 use std::os::unix::ffi::OsStrExt;
 use nix::libc as libc;
+use tokio::net::UnixStream;
 
 fn random_sock_path() -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -52,7 +52,9 @@ fn clear_cloexec(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
-struct ChildHandle { pid: i32 }
+struct ChildHandle {
+    pid: i32,
+}
 
 fn fork_exec_service(fsct_bin: &PathBuf, listener_fd: i32, out_wr_fd: i32, err_wr_fd: i32) -> io::Result<ChildHandle> {
     use std::ffi::CString;
@@ -169,7 +171,6 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
-        use parity_tokio_ipc::Endpoint;
         use tokio_util::compat::TokioAsyncReadCompatExt;
         use tokio::time::timeout;
 
@@ -184,7 +185,7 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
             // we try only once to connect to the socket, because we want to be sure that service may run after a connection attempt and handle an incoming connection which triggers socket activation
             println!("[CLIENT] Connecting to {}", endpoint_str);
 
-            let connection = timeout(Duration::from_secs(2), Endpoint::connect(endpoint_str.clone())).await
+            let connection = timeout(Duration::from_secs(2), UnixStream::connect(endpoint_str.as_str())).await
                 .with_context(|| format!("client connection timed out after 5 seconds to {}", endpoint_str))?
                 .with_context(|| format!("client failed to connect to {}: invalid endpoint", endpoint_str))?;
 

@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-//! IPC server (phase 2) using parity-tokio-ipc for transport and MessagePack(-RPC style) framing.
+//! IPC server using unix sockets or windows pipes transport and MessagePack(-RPC style) framing.
 //!
 //! The server currently implements a minimal subset required by docs/ipc_plan.md phase 2:
 //! - Accept connections on a local endpoint
@@ -41,11 +41,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use futures::StreamExt;
-#[cfg(unix)]
-use tokio::net::UnixListener;
 
 #[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, IntoRawFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::time::{Duration, UNIX_EPOCH};
 use std::num::NonZeroU32;
 use std::future::Future;

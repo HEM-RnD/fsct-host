@@ -18,7 +18,7 @@
 use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver, driver};
+use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver};
 use std::sync::Arc;
 use crate::run_os_watcher;
 
