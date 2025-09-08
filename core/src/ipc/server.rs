@@ -71,34 +71,7 @@ impl IpcServer {
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
     pub async fn serve(&mut self) -> anyhow::Result<()> {
-        let endpoint = self.endpoint.take().expect("serve() called after shutdown");
-
-        let listener = match endpoint {
-            EndpointDefinitionType::Path(path) => {
-                info!("FSCT IPC server listening on: {}", path);
-
-                // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
-                #[cfg(unix)]
-                {
-                    if let Some(parent) = std::path::Path::new(path.as_str()).parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    // Remove stale socket if any (only when not socket-activated, as handled above)
-                    let _ = std::fs::remove_file(path.as_str());
-                }
-
-                let builder = transport::EndpointListenerBuilder::from_path(path.clone())
-                    .security_attributes(transport::SecurityAttributes::allow_all());
-                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-                listener
-            }
-            #[cfg(unix)]
-            EndpointDefinitionType::Fd(fd) => {
-                let builder = transport::EndpointListenerBuilder::from_fd(fd);
-                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-                listener
-            }
-        };
+        let listener = self.init_listener().await?;
 
         let mut incoming = listener.listen()?;
         tokio::pin!(incoming);
@@ -117,6 +90,38 @@ impl IpcServer {
         }
 
         Ok(())
+    }
+
+    async fn init_listener(&mut self) -> anyhow::Result<EndpointListener> {
+        let endpoint = self.endpoint.take().expect("serve() called after shutdown");
+
+        let listener = match endpoint {
+            EndpointDefinitionType::Path(path) => {
+                info!("FSCT IPC server listening on: {}", path);
+
+                // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
+                #[cfg(unix)]
+                {
+                    if let Some(parent) = std::path::Path::new(path.as_str()).parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    // Remove stale socket if any (only when not socket-activated, as handled above)
+                    let _ = tokio::fs::remove_file(path.as_str()).await;
+                }
+
+                let builder = transport::EndpointListenerBuilder::from_path(path.clone())
+                    .security_attributes(transport::SecurityAttributes::allow_all());
+                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
+            }
+            #[cfg(unix)]
+            EndpointDefinitionType::Fd(fd) => {
+                let builder = transport::EndpointListenerBuilder::from_fd(fd);
+                let listener = builder.build().await.map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
+            }
+        };
+        Ok(listener)
     }
 
     pub async fn shutdown(&self) {
@@ -166,6 +171,7 @@ use std::os::fd::IntoRawFd;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::select;
+use crate::ipc::transport::EndpointListener;
 
 fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
     spawn_service(move |mut stop| async move {
