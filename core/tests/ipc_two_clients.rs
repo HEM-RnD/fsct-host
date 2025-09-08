@@ -5,7 +5,6 @@ use fsct_core::ipc::client::IpcDriver;
 use fsct_core::ipc::server::IpcServer;
 use fsct_core::FsctDriver;
 use async_trait::async_trait;
-use fsct_core::ProtocolVersion;
 use fsct_core::FSCT_PROTOCOL_VERSION;
 
 fn test_endpoint() -> String {
@@ -49,27 +48,25 @@ async fn two_clients_can_connect_and_request_version() {
     let driver: Arc<dyn FsctDriver> = Arc::new(TestDriver);
     let mut server = IpcServer::with_socket_path(driver, endpoint.as_str());
     // run server in background
-    let endpoint_copy = endpoint.clone();
     let server_task = fsct_core::spawn_service(async move |mut s| {
         tokio::select! {
             _ = server.serve() => (),
             _ = s.signaled() => (),
         }
         server.shutdown().await;
-        #[cfg(unix)] { let _ = std::fs::remove_file(endpoint_copy); }
     });
 
     // Retry connect until server is up
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(5);
-    let mut c1 = loop {
+    let c1 = loop {
         match IpcDriver::connect_to_endpoint(endpoint.clone()).await {
             Ok(c) => break c,
             Err(_) if start.elapsed() < timeout => tokio::time::sleep(Duration::from_millis(50)).await,
             Err(e) => panic!("client1 connect failed: {}", e),
         }
     };
-    let mut c2 = loop {
+    let c2 = loop {
         match IpcDriver::connect_to_endpoint(endpoint.clone()).await {
             Ok(c) => break c,
             Err(_) if start.elapsed() < timeout => tokio::time::sleep(Duration::from_millis(50)).await,

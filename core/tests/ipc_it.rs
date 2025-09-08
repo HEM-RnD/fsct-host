@@ -31,8 +31,6 @@ fn test_endpoint() -> String {
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
     use anyhow::Context;
-    use futures::future::select;
-    use msgpack_rpc::Service;
     use fsct_core::{spawn_service, ServiceHandle};
     use super::*;
 
@@ -47,14 +45,12 @@ mod helpers {
     {
         let endpoint = super::test_endpoint();
         let mut server = IpcServer::with_socket_path(driver, endpoint.as_str());
-        let endpoint_copy = endpoint.clone();
         let server_task = spawn_service(async move |mut s| -> () {
             tokio::select! {
                 _ = server.serve() => (),
                 _ = s.signaled() => (),
             }
             server.shutdown().await;
-            #[cfg(unix)] { let _ = std::fs::remove_file(endpoint_copy); }
         });
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(5);

@@ -1,5 +1,5 @@
 // Platform-specific IPC transport for Unix using Tokio UnixListener/UnixStream
-// Provides identical API to windows.rs: EndpointListenerBuilder, EndpointListener, EndpointClient
+// Simplified: no public security attributes; open to all by default. Listener provides from_path/from_fd.
 
 use anyhow::{Context, Result};
 use futures::Stream;
@@ -11,88 +11,51 @@ use tokio::net::{UnixListener, UnixStream};
 
 use std::os::fd::OwnedFd;
 
-// Placeholder security attributes API to keep parity with windows implementation.
-// On Unix, we only allow setting file mode (permissions) when bound from path.
-#[derive(Clone, Default)]
-pub struct SecurityAttributes {
-    pub mode: Option<u32>, // e.g., 0o666
-}
-
-impl SecurityAttributes {
-    pub fn allow_all() -> Self { Self { mode: Some(0o666) } }
-}
-
-pub struct EndpointListenerBuilder {
-    kind: EndpointKind,
-    attrs: SecurityAttributes,
-}
-
-enum EndpointKind {
-    FromPath(String),
-    FromFd(OwnedFd),
-}
-
-impl EndpointListenerBuilder {
-    pub fn from_path(path: String) -> Self {
-        Self { kind: EndpointKind::FromPath(path), attrs: SecurityAttributes::default() }
-    }
-    pub fn from_fd(fd: OwnedFd) -> Self {
-        Self { kind: EndpointKind::FromFd(fd), attrs: SecurityAttributes::default() }
-    }
-    pub fn security_attributes(mut self, attrs: SecurityAttributes) -> Self {
-        self.attrs = attrs;
-        self
-    }
-
-    pub async fn build(self) -> Result<EndpointListener> {
-        match self.kind {
-            EndpointKind::FromPath(path) => {
-                // Ensure parent directory and remove stale socket
-                if let Some(parent) = Path::new(&path).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::remove_file(&path);
-                let listener = UnixListener::bind(&path)
-                    .with_context(|| format!("failed to bind unix socket at {}", path))?;
-                if let Some(mode) = self.attrs.mode {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = std::fs::metadata(&path) {
-                        let mut perm = meta.permissions();
-                        perm.set_mode(mode);
-                        let _ = std::fs::set_permissions(&path, perm);
-                    }
-                }
-                Ok(EndpointListener { inner: ListenerInner::Unix(listener) })
-            }
-            EndpointKind::FromFd(fd) => {
-                let std_listener = std::os::unix::net::UnixListener::from(fd);
-                std_listener
-                    .set_nonblocking(true)
-                    .context("failed to set nonblocking on fd")?;
-                let listener = UnixListener::from_std(std_listener)
-                    .context("failed to adopt fd as UnixListener")?;
-                Ok(EndpointListener { inner: ListenerInner::Unix(listener) })
-            }
-        }
-    }
-}
-
 pub struct EndpointListener {
-    inner: ListenerInner,
-}
-
-enum ListenerInner {
-    Unix(UnixListener),
+    inner: UnixListener,
 }
 
 impl EndpointListener {
+    /// Bind a Unix socket at the given path. Ensures parent dir exists and sets 0o666 perms.
+    pub async fn from_path(path: String) -> Result<Self> {
+        // Ensure parent directory and remove stale socket
+        if let Some(parent) = Path::new(&path).parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        let _ = tokio::fs::remove_file(&path).await;
+
+        let listener = UnixListener::bind(&path)
+            .with_context(|| format!("failed to bind unix socket at {}", path))?;
+
+        // Set mode 0o666 (rw for everyone)
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = tokio::fs::metadata(&path).await {
+            let mut perm = meta.permissions();
+            perm.set_mode(0o666);
+            let _ = tokio::fs::set_permissions(&path, perm).await;
+        }
+
+        Ok(EndpointListener { inner: listener })
+    }
+
+    /// Adopt an existing file descriptor as a non-blocking UnixListener (Unix only).
+    pub fn from_fd(fd: OwnedFd) -> Result<Self> {
+        let std_listener = std::os::unix::net::UnixListener::from(fd);
+        std_listener
+            .set_nonblocking(true)
+            .context("failed to set nonblocking on fd")?;
+        let listener = UnixListener::from_std(std_listener)
+            .context("failed to adopt fd as UnixListener")?;
+        Ok(EndpointListener { inner: listener })
+    }
+
     pub fn listen(self) -> Result<EndpointIncoming> {
         Ok(EndpointIncoming { inner: self.inner })
     }
 }
 
 pub struct EndpointIncoming {
-    inner: ListenerInner,
+    inner: UnixListener,
 }
 
 impl Stream for EndpointIncoming {
@@ -100,12 +63,10 @@ impl Stream for EndpointIncoming {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        match &mut this.inner {
-            ListenerInner::Unix(listener) => match listener.poll_accept(cx) {
-                Poll::Ready(Ok((stream, _addr))) => Poll::Ready(Some(Ok(stream))),
-                Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
-                Poll::Pending => Poll::Pending,
-            },
+        match this.inner.poll_accept(cx) {
+            Poll::Ready(Ok((stream, _addr))) => Poll::Ready(Some(Ok(stream))),
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
