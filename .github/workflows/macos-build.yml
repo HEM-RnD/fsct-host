@@ -7,19 +7,19 @@ on:
     paths-ignore:
       - '.cross/**'
       - 'Cross.toml'
-      - '.github/workflows/build_cross_images.yml'
+      - '.github/workflows/build-cross-images.yml'
   pull_request:
     branches: [ main, develop, 'release/*', 'hotfix/*' ]
     paths-ignore:
       - '.cross/**'
       - 'Cross.toml'
-      - '.github/workflows/build_cross_images.yml'
+      - '.github/workflows/build-cross-images.yml'
   release:
     types: [ created ]
     paths-ignore:
       - '.cross/**'
       - 'Cross.toml'
-      - '.github/workflows/build_cross_images.yml'
+      - '.github/workflows/build-cross-images.yml'
   workflow_dispatch:
 
 jobs:

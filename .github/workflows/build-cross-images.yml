@@ -6,13 +6,13 @@ on:
     paths:
       - '.cross/**'
       - 'Cross.toml'
-      - '.github/workflows/build_cross_images.yml'
+      - '.github/workflows/build-cross-images.yml'
   pull_request:
     branches: [ develop, main, 'release/**', 'hotfix/**' ]
     paths:
       - '.cross/**'
       - 'Cross.toml'
-      - '.github/workflows/build_cross_images.yml'
+      - '.github/workflows/build-cross-images.yml'
   workflow_dispatch:
 
 permissions:
