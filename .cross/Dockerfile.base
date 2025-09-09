@@ -1,0 +1,22 @@
+FROM debian:buster-slim
+
+LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
+
+# Base tools: packaging, build essentials, rustup
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ruby ruby-dev build-essential pkg-config curl ca-certificates git \
+    gcc g++ wget python3 \
+  && rm -rf /var/lib/apt/lists/*
+
+# fpm for Debian packaging
+RUN gem install --no-document fpm
+
+# Install rustup with a pinned toolchain; toolchain targets added in derived images
+RUN curl --proto '=https' --tlsv1.2 -Sf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+ && chmod +x /tmp/rustup-init.sh \
+ && /tmp/rustup-init.sh -y --default-toolchain 1.86.0 --profile minimal \
+ && rm /tmp/rustup-init.sh
+
+RUN cargo install cargo-about
+
+ENV PATH=/root/.cargo/bin:${PATH}
