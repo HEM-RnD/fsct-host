@@ -2,7 +2,7 @@ name: Build and Push Cross Images
 
 on:
   push:
-    branches: [ develop, main, 'release/**', 'hotfix/**' ]
+    branches: [ develop, main, 'release/**', 'hotfix/**', 'FSCT-51-Add-linux-server-build' ]
     paths:
       - '.cross/**'
       - 'Cross.toml'
