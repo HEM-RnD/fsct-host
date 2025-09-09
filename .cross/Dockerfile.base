@@ -5,9 +5,9 @@ LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
 # Base tools: packaging, build essentials, rustup
 RUN set -eux; \
   echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until; \
-  printf 'deb http://archive.debian.org/debian buster main\n' > /etc/apt/sources.list; \
-  printf 'deb http://archive.debian.org/debian buster-updates main\n' >> /etc/apt/sources.list; \
-  printf 'deb http://archive.debian.org/debian buster-security main\n' >> /etc/apt/sources.list; \
+  printf 'deb http://archive.debian.org/debian buster main contrib non-free\n' > /etc/apt/sources.list; \
+  printf 'deb http://archive.debian.org/debian buster-backports main contrib non-free\n' >> /etc/apt/sources.list; \
+  printf 'deb http://archive.debian.org/debian-security buster/updates main contrib non-free\n' >> /etc/apt/sources.list; \
   apt-get update; \
   apt-get install -y --no-install-recommends \
     ruby ruby-dev build-essential pkg-config curl ca-certificates git \
