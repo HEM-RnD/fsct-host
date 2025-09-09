@@ -1,4 +1,4 @@
-FROM ghcr.io/${OWNER:-HEM-RnD}/fsct-cross:base-buster
+FROM ghcr.io/${OWNER:-hem-rnd}/fsct-cross:base-buster
 
 LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
 

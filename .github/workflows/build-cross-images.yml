@@ -49,11 +49,13 @@ jobs:
       - name: Compute tags
         id: meta
         run: |
+          OWNER_LC=$(echo "${{ env.IMAGE_OWNER }}" | tr '[:upper:]' '[:lower:]')
           REPO="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_PREFIX }}"
           DATE=$(date +'%Y.%m.%d')
           SHORT_SHA=${GITHUB_SHA::7}
           echo "repo=${REPO}" >> $GITHUB_OUTPUT
           echo "date=${DATE}" >> $GITHUB_OUTPUT
+          echo "owner_lc=${OWNER_LC}" >> $GITHUB_OUTPUT
           echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build+push base
@@ -74,7 +76,7 @@ jobs:
           file: .cross/Dockerfile.x86_64-unknown-linux-gnu
           platforms: linux/amd64
           build-args: |
-            OWNER=${{ env.IMAGE_OWNER }}
+            OWNER=${{ steps.meta.outputs.owner_lc }}
           push: true
           tags: |
             ${{ steps.meta.outputs.repo }}:x86_64-unknown-linux-gnu-buster
@@ -87,7 +89,7 @@ jobs:
           file: .cross/Dockerfile.i686-unknown-linux-gnu
           platforms: linux/amd64
           build-args: |
-            OWNER=${{ env.IMAGE_OWNER }}
+            OWNER=${{ steps.meta.outputs.owner_lc }}
           push: true
           tags: |
             ${{ steps.meta.outputs.repo }}:i686-unknown-linux-gnu-buster
@@ -100,7 +102,7 @@ jobs:
           file: .cross/Dockerfile.aarch64-unknown-linux-gnu
           platforms: linux/amd64
           build-args: |
-            OWNER=${{ env.IMAGE_OWNER }}
+            OWNER=${{ steps.meta.outputs.owner_lc }}
           push: true
           tags: |
             ${{ steps.meta.outputs.repo }}:aarch64-unknown-linux-gnu-buster
@@ -113,7 +115,7 @@ jobs:
           file: .cross/Dockerfile.armv7-unknown-linux-gnueabihf
           platforms: linux/amd64
           build-args: |
-            OWNER=${{ env.IMAGE_OWNER }}
+            OWNER=${{ steps.meta.outputs.owner_lc }}
           push: true
           tags: |
             ${{ steps.meta.outputs.repo }}:armv7-unknown-linux-gnueabihf-buster
@@ -126,7 +128,7 @@ jobs:
           file: .cross/Dockerfile.arm-unknown-linux-gnueabihf
           platforms: linux/amd64
           build-args: |
-            OWNER=${{ env.IMAGE_OWNER }}
+            OWNER=${{ steps.meta.outputs.owner_lc }}
           push: true
           tags: |
             ${{ steps.meta.outputs.repo }}:arm-unknown-linux-gnueabihf-buster
