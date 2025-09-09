@@ -195,31 +195,28 @@ fi
 PACKAGE_FILE="${OUTPUT_DIR}/${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
 rm -f "${PACKAGE_FILE}" || true
 
-# Detect glibc (libc6) version and add dependency
+# Detect glibc (libc6) version required by the built binary (cross-safe)
 LIBC_DEP=""
-if command -v getconf >/dev/null 2>&1; then
-  # Prefer getconf GNU_LIBC_VERSION (e.g., "glibc 2.31")
-  glibc_line=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
-  if [[ -n "$glibc_line" && "$glibc_line" == glibc* ]]; then
-    libc_ver=${glibc_line#glibc }
-  fi
+libc_ver=""
+if command -v readelf >/dev/null 2>&1; then
+  libc_ver=$(readelf -V "${BIN_PATH}" 2>/dev/null | grep -o 'GLIBC_[0-9]\+\.[0-9]\\+\(\.[0-9]\+\)\?' | sort -uV | tail -1 | sed 's/^GLIBC_//') || true
 fi
-if [[ -z "${libc_ver:-}" ]]; then
-  # Fallback: ldd --version first line contains "ldd (GNU libc) 2.xx"
-  if command -v ldd >/dev/null 2>&1; then
-    ldd_ver=$(ldd --version 2>/dev/null | head -n1 | sed -E 's/.* ([0-9]+\.[0-9]+(\.[0-9]+)?).*$/\1/')
-    if [[ "$ldd_ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-      libc_ver=$ldd_ver
-    fi
-  fi
+# Fallback: try objdump if readelf not present or produced nothing
+if [[ -z "${libc_ver:-}" ]] && command -v objdump >/dev/null 2>&1; then
+  libc_ver=$(objdump -T "${BIN_PATH}" 2>/dev/null | grep -o 'GLIBC_[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?' | sort -uV | tail -1 | sed 's/^GLIBC_//') || true
 fi
 if [[ -n "${libc_ver:-}" ]]; then
-  # Debian/Ubuntu package providing glibc is libc6; add >= constraint
   LIBC_DEP="libc6 (>= ${libc_ver})"
-  echo "Detected glibc version: ${libc_ver}; adding dependency: ${LIBC_DEP}"
+  echo "Detected required GLIBC from binary: ${libc_ver}; adding dependency: ${LIBC_DEP}"
 else
-  echo "Error: Could not detect glibc version. Skipping automatic libc6 dependency." >&2
-  exit 1
+  # If the binary is statically linked or tools unavailable, decide based on flag
+  echo "Warning: Could not determine GLIBC version from binary (maybe static or tools missing)." >&2
+  if [[ "${ALLOW_MISSING_DEPS}" == true ]]; then
+    echo "Proceeding without explicit libc6 dependency due to --allow-missing-deps" >&2
+  else
+    echo "Error: GLIBC version detection failed. Install binutils (readelf) or use --allow-missing-deps." >&2
+    exit 1
+  fi
 fi
 
 FPM_ARGS=(
@@ -227,6 +224,7 @@ FPM_ARGS=(
   --package "${PACKAGE_FILE}"
   --depends "${LIBC_DEP}"
   --depends libgcc-s1
+  -a "${ARCH}"
   "${STAGE_DIR}/=/"
 )
 

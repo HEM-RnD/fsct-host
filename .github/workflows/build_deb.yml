@@ -47,7 +47,6 @@ jobs:
 
     container:
       image: ghcr.io/hem-rnd/fsct-cross:${{ matrix.rust_target }}-buster
-      options: --user 0:0
 
     steps:
       - name: Checkout
