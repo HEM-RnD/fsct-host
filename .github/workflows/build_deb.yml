@@ -1,0 +1,76 @@
+name: Build Debian packages
+
+on:
+  push:
+    branches: [ develop, main, 'release/**', 'hotfix/**' ]
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - 'build-cross-images.yml'
+  pull_request:
+    branches: [ develop, main, 'release/**', 'hotfix/**' ]
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - 'build-cross-images.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-deb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build .deb (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            deb_arch: amd64
+            cross: true
+          - name: i386
+            rust_target: i686-unknown-linux-gnu
+            deb_arch: i386
+            cross: true
+          - name: armhf
+            rust_target: armv7-unknown-linux-gnueabihf
+            deb_arch: armhf
+          - name: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+            cross: true
+    env:
+      CARGO_TERM_COLOR: always
+
+    container:
+      image: ghcr.io/hem-rnd/fsct-cross:${{ matrix.rust_target }}-buster
+      options: --user 0:0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            /root/.cargo/registry
+            /root/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust_target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Package .deb (full script)
+        env:
+          FSCT_RUST_TARGET: ${{ matrix.rust_target }}
+          FSCT_DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          bash script/build_linux_deb.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.name }}
+          path: target/deb/*.deb
