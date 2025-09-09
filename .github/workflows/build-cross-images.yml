@@ -50,7 +50,7 @@ jobs:
         id: meta
         run: |
           OWNER_LC=$(echo "${{ env.IMAGE_OWNER }}" | tr '[:upper:]' '[:lower:]')
-          REPO="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_PREFIX }}"
+          REPO="${{ env.REGISTRY }}/${OWNER_LC}/${{ env.IMAGE_PREFIX }}"
           DATE=$(date +'%Y.%m.%d')
           SHORT_SHA=${GITHUB_SHA::7}
           echo "repo=${REPO}" >> $GITHUB_OUTPUT
