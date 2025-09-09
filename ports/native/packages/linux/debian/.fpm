@@ -1,0 +1,20 @@
+-t deb
+-s dir
+--name fsct-driver
+--vendor "HEM Sp. z o.o."
+--maintainer "HEM Sp. z o.o."
+--license Apache-2.0
+--category utils
+--deb-user root
+--deb-group root
+--depends systemd
+--description "Ferrum Streaming Control Technology driver with systemd integration for Linux."
+--after-install ../systemd/scripts/postinst
+--before-remove ../systemd/scripts/prerm
+--after-remove ../systemd/scripts/postrm
+--url "https://github.com/HEM-RnD/fsct-host"
+
+
+../systemd/system/fsct-driver.service=/lib/systemd/system/fsct-driver.service
+../systemd/system/fsct-driver.socket=/lib/systemd/system/fsct-driver.socket
+../systemd/user/fsct-driver.service=/usr/lib/systemd/user/fsct-driver.service

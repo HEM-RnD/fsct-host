@@ -1,0 +1,39 @@
+#!/bin/sh
+set -e
+
+# Post-removal script: clean up systemd state; on purge ensure units are disabled
+
+command -v systemctl >/dev/null 2>&1 || exit 0
+
+action="$1"
+
+# Always try to reload systemd to pick up removals
+systemctl daemon-reload || true
+
+case "$action" in
+    remove|abort-install|abort-upgrade)
+        # For each user, reload user daemon
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload" "$user" || true
+        done
+        ;;
+    purge)
+        # Ensure units are disabled system-wide
+        systemctl disable fsct-driver.socket || true
+        systemctl disable fsct-driver.service || true
+
+        # For each user, disable the user service and reload user daemon
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user disable fsct-driver.service" "$user" || true
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload" "$user" || true
+        done
+        ;;
+    *)
+        ;;
+ esac
+
+exit 0

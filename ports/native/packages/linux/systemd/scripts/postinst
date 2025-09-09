@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+command -v systemctl >/dev/null 2>&1 || { echo "systemctl is required but not installed. Files are installed, but required services won't start automatically. " >&2; exit 0; }
+
+if [ "$1" = "configure" ] || [ "$1" = "install" ]; then
+    systemctl daemon-reload || true
+
+    systemctl enable --now fsct-driver.socket || true
+
+    for uid in $(loginctl list-users --no-legend | awk '{print $1}'); do
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user daemon-reload || true" "$(id -nu "$uid")" || true
+        su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user enable --now fsct-driver.service || true" "$(id -nu "$uid")" || true
+    done
+fi
+
+exit 0

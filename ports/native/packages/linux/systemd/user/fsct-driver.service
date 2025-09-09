@@ -1,0 +1,12 @@
+[Unit]
+Description=FSCT per-user client (MPRIS integration)
+After=dbus.service
+BindsTo=dbus.service
+
+[Service]
+ExecStart=/usr/bin/fsctd --user
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
+WantedBy=default.target

@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-//! IPC server (phase 2) using parity-tokio-ipc for transport and MessagePack(-RPC style) framing.
+//! IPC server using unix sockets or windows pipes transport and MessagePack(-RPC style) framing.
 //!
 //! The server currently implements a minimal subset required by docs/ipc_plan.md phase 2:
 //! - Accept connections on a local endpoint
@@ -24,59 +24,64 @@
 
 use std::sync::{Arc, Mutex};
 
-use log::{debug, error, info, warn};
-use parity_tokio_ipc::{Endpoint, SecurityAttributes};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::compat::TokioAsyncReadCompatExt;
-use futures::StreamExt;
+use log::{error, info, warn};
+use anyhow::{anyhow, bail, Context};
 
+use super::transport;
 use crate::{FsctDriver, ProtocolVersion};
 use crate::service::{spawn_service, ServiceHandle, MultiServiceHandle};
 use crate::player_state::{PlayerState, TrackMetadata};
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use std::time::{Duration, UNIX_EPOCH};
-use uuid::Uuid;
-use std::num::NonZeroU32;
 use crate::FSCT_PROTOCOL_VERSION;
 
+use uuid::Uuid;
 use msgpack_rpc::{serve, Service, Value};
+
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::select;
+use tokio_util::compat::TokioAsyncReadCompatExt;
+use futures::StreamExt;
+
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::time::{Duration, UNIX_EPOCH};
+use std::num::NonZeroU32;
 use std::future::Future;
 use std::pin::Pin;
-use anyhow::{anyhow, bail, Context};
+use std::collections::HashSet;
+use std::ops::DerefMut;
+
+
+enum EndpointDefinitionType {
+    Path(String),
+    #[cfg(unix)]
+    Fd(Option<OwnedFd>),
+}
 
 /// IPC server that exposes FsctDriver API over a local IPC connection.
 pub struct IpcServer {
-    endpoint: String,
+    endpoint: EndpointDefinitionType,
     driver: Arc<dyn FsctDriver>,
     // Container of per-connection services for cooperative shutdown
     connections: Arc<Mutex<crate::service::MultiServiceHandle>>,
 }
 
 impl IpcServer {
-    /// Create with an explicit endpoint path (useful for tests).
-    pub fn with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> Self {
-        Self { endpoint, driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+    /// Create with an explicit socket path (useful for tests).
+    pub fn with_socket_path(driver: Arc<dyn FsctDriver>, endpoint: &str) -> Self {
+        Self { endpoint: EndpointDefinitionType::Path(endpoint.into()), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+    }
+
+    #[cfg(unix)]
+    pub fn with_socket_fd(driver: Arc<dyn FsctDriver>, endpoint: OwnedFd) -> Self {
+        Self { endpoint: EndpointDefinitionType::Fd(Some(endpoint)), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
     }
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
-    pub async fn serve(&self) -> anyhow::Result<()> {
-        let endpoint = &self.endpoint;
-        info!("FSCT IPC server listening on: {}", endpoint);
+    pub async fn serve(&mut self) -> anyhow::Result<()> {
+        let listener = self.init_listener().await?;
 
-        // For unix, ensure directory exists with correct perms. Keep minimal for now per phase 2.
-        #[cfg(unix)]
-        {
-            if let Some(parent) = std::path::Path::new(endpoint).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            // Remove stale socket if any
-            let _ = std::fs::remove_file(endpoint);
-        }
-
-        let mut endpoint = Endpoint::new(endpoint.clone());
-        endpoint.set_security_attributes(SecurityAttributes::empty().allow_everyone_connect()?);
-        let incoming = endpoint.incoming().map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-
+        let incoming = listener.listen()?;
         tokio::pin!(incoming);
         loop {
             match incoming.as_mut().next().await {
@@ -88,20 +93,41 @@ impl IpcServer {
                     error!("IPC accept failed: {}", e);
                     break;
                 }
-                None => {
-                    // incoming stream ended
-                    break;
-                }
+                None => break,
             }
         }
 
         Ok(())
     }
 
-    async fn shutdown(&self) {
+    async fn init_listener(&mut self) -> anyhow::Result<transport::EndpointListener> {
+        let listener = match &mut self.endpoint {
+            EndpointDefinitionType::Path(path) => {
+                info!("FSCT IPC server listening on: {}", path);
+                let listener = transport::EndpointListener::from_path(path.clone()).await
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
+            }
+            #[cfg(unix)]
+            EndpointDefinitionType::Fd(fd) => {
+                let fd = fd.take().expect("IPC server already initialized with a socket fd");
+                info!("FSCT IPC server listening on fd: {}", fd.as_raw_fd());
+                let listener = transport::EndpointListener::from_fd(fd)
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                listener
+            }
+        };
+        Ok(listener)
+    }
+
+    pub async fn shutdown(&self) {
         let connections = std::mem::take(self.connections.lock().unwrap().deref_mut());
         if let Err(e) = connections.shutdown().await {
             warn!("Some IPC connection service failed to join on shutdown: {}", e);
+        }
+        #[cfg(unix)]
+        if let EndpointDefinitionType::Path(path) = &self.endpoint {
+            let _ = tokio::fs::remove_file(path.as_str()).await;
         }
     }
 
@@ -136,15 +162,10 @@ impl IpcServer {
     }
 }
 
-use std::collections::HashSet;
-use std::ops::DerefMut;
-use tokio::select;
 
-/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
-pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
     spawn_service(move |mut stop| async move {
         // Reuse IpcServer::serve instead of duplicating accept-loop logic
-        let server = IpcServer::with_endpoint(driver, endpoint);
 
         select!(
             res = server.serve() => {
@@ -159,6 +180,19 @@ pub fn run_ipc_server_with_endpoint(driver: Arc<dyn FsctDriver>, endpoint: Strin
 
         info!("IPC server stopped");
     })
+}
+
+/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
+pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+    let server = IpcServer::with_socket_path(driver, &endpoint);
+    run_ipc_server(server)
+}
+
+#[cfg(unix)]
+/// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
+pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
+    let server = IpcServer::with_socket_fd(driver, fd);
+    run_ipc_server(server)
 }
 
 #[derive(Clone)]

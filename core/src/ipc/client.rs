@@ -15,13 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-//! IPC client (phase 3 minimal) using parity-tokio-ipc transport.
+//! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 //! For now, only implements `get_protocol_version` method to interoperate with the msgpack-rpc server.
 
 use anyhow::Error;
 use async_trait::async_trait;
-use parity_tokio_ipc::Endpoint;
 use tokio_util::compat::TokioAsyncReadCompatExt;
+use super::transport;
 
 use crate::definitions::ProtocolVersion;
 use crate::{FsctDriver};
@@ -80,21 +80,6 @@ fn encode_player_state(ps: &PlayerState) -> Value {
 
 fn encode_player_id(pid: ManagedPlayerId) -> Value { Value::from(pid.get() as u64) }
 
-fn default_endpoint() -> String {
-    if let Ok(override_ep) = std::env::var("FSCT_IPC_ENDPOINT") {
-        if !override_ep.trim().is_empty() {
-            return override_ep;
-        }
-    }
-    #[cfg(windows)]
-    { r"\\.\pipe\fsct_host_v1".to_string() }
-    #[cfg(unix)]
-    {
-        let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-        format!("{base}/fsct/fsct.sock")
-    }
-}
-
 /// IPC-backed implementation of FsctDriver.
 pub struct IpcDriver {
     // Underlying msgpack-rpc client bound to a persistent IPC stream
@@ -106,7 +91,7 @@ impl IpcDriver {
     /// Connect to a specific endpoint and verify protocol compatibility.
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         // Establish persistent connection
-        let stream = Endpoint::connect(endpoint.clone()).await
+        let stream = transport::EndpointClient::connect(endpoint.clone()).await
             .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
         let compat_stream = stream.compat();
         let client = Client::new(compat_stream);

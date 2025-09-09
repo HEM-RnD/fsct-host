@@ -1,0 +1,17 @@
+[Unit]
+Description=FSCT IPC socket (for fsct-driver.service)
+
+[Socket]
+ListenStream=/run/fsct/fsct.sock
+SocketMode=0666
+SocketUser=root
+DirectoryMode=0775
+Service=fsct-driver.service
+# Optional: clean up the socket file on stop
+# RemoveOnStop=yes
+# Throttle activations to avoid thrash
+TriggerLimitIntervalSec=2s
+TriggerLimitBurst=16
+
+[Install]
+WantedBy=sockets.target

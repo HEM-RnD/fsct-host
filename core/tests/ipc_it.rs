@@ -31,20 +31,27 @@ fn test_endpoint() -> String {
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
     use anyhow::Context;
+    use fsct_core::{spawn_service, ServiceHandle};
     use super::*;
 
     // Common helper used by both connect helpers: spawns server and retries connection via provided connector
     async fn start_server_and_connect_common<T, C, Fut>(
         driver: Arc<dyn FsctDriver>,
         connector: C,
-    ) -> (T, tokio::task::JoinHandle<()>)
+    ) -> (T, ServiceHandle)
     where
         C: Fn(String) -> Fut,
-        Fut: std::future::Future<Output = Result<T, anyhow::Error>>,
+        Fut: std::future::Future<Output=Result<T, anyhow::Error>>,
     {
         let endpoint = super::test_endpoint();
-        let server = IpcServer::with_endpoint(driver, endpoint.clone());
-        let server_task = tokio::spawn(async move { let _ = server.serve().await; });
+        let mut server = IpcServer::with_socket_path(driver, endpoint.as_str());
+        let server_task = spawn_service(async move |mut s| -> () {
+            tokio::select! {
+                _ = server.serve() => (),
+                _ = s.signaled() => (),
+            }
+            server.shutdown().await;
+        });
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(5);
         let client = loop {
@@ -63,14 +70,14 @@ mod helpers {
     }
 
     // Unified helper to start server and connect client with retry
-    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, tokio::task::JoinHandle<()>) {
+    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, ServiceHandle) {
         start_server_and_connect_common(driver, |endpoint: String| async move {
             IpcDriver::connect_to_endpoint(endpoint).await
         }).await
     }
 
     // Unified helper to start server and connect a raw msgpack-rpc Client (for parsing error tests)
-    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, tokio::task::JoinHandle<()>) {
+    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, ServiceHandle) {
         use parity_tokio_ipc::Endpoint;
         use tokio_util::compat::TokioAsyncReadCompatExt;
         start_server_and_connect_common(driver, |endpoint: String| async move {
@@ -235,8 +242,7 @@ async fn ipc_register_and_unregister_player() -> anyhow::Result<()> {
         assert_eq!(calls[0], fixed_id.get());
     }
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -283,8 +289,7 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
     let queries = mock.last_assigned_query.lock().unwrap().clone();
     assert_eq!(queries.last().copied(), Some(q.get()));
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -355,8 +360,7 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
         assert_eq!(calls[0].1.texts.album, state.texts.album);
     }
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -393,8 +397,7 @@ async fn ipc_preferred_device_methods() -> anyhow::Result<()> {
     let got2 = client.get_preferred_player().await;
     assert_eq!(got2, None);
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -408,8 +411,7 @@ async fn ipc_get_protocol_version() -> anyhow::Result<()> {
     let ver = client.get_protocol_version().await?;
     assert_eq!(ver, fsct_core::FSCT_PROTOCOL_VERSION);
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -593,8 +595,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
     // shared: invalid player_id type (nil)
     assert!(client.request("update_player_status", &[Value::Nil, Value::from(1u64)]).await.is_err());
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -647,8 +648,7 @@ async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
     // 9) get_player_assigned_device should fail
     assert!(client.get_player_assigned_device(bad_pid).await.is_err());
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }
 
@@ -682,7 +682,6 @@ async fn ipc_auto_unregister_on_disconnect() -> anyhow::Result<()> {
     let calls = mock.unregister_calls.lock().unwrap().clone();
     assert_eq!(calls, vec![201]);
 
-    server_task.abort();
-    #[cfg(unix)] { let _ = std::fs::remove_file(endpoint); }
+    server_task.shutdown().await?;
     Ok(())
 }

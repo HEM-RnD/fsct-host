@@ -1,0 +1,31 @@
+#!/bin/sh
+set -e
+
+# Pre-removal script: stop services and sockets before removal or upgrade
+
+command -v systemctl >/dev/null 2>&1 || exit 0
+
+case "$1" in
+    remove|deconfigure|upgrade)
+        # Stop system units
+        systemctl stop fsct-driver.socket || true
+        systemctl stop fsct-driver.service || true
+
+        # Disable to avoid auto-start on upgrade glitches
+        systemctl disable fsct-driver.socket || true
+        systemctl disable fsct-driver.service || true
+
+        # Handle per-user service for all logged-in users
+        for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+            user=$(id -nu "$uid" 2>/dev/null || true)
+            [ -n "$user" ] || continue
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user stop fsct-driver.service" "$user" || true
+            su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid systemctl --user disable fsct-driver.service" "$user" || true
+        done
+        ;;
+    *)
+        # No action for other maintscript actions
+        ;;
+ esac
+
+exit 0
