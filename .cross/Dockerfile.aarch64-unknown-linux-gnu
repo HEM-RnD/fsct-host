@@ -1,3 +1,4 @@
+ARG OWNER
 FROM ghcr.io/${OWNER:-hem-rnd}/fsct-cross:base-buster
 
 LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
