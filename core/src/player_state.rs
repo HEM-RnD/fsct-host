@@ -71,7 +71,7 @@ impl TrackMetadata {
         }
     }
 
-    pub fn iter(&self) -> TrackMetadataIterator {
+    pub fn iter(&self) -> TrackMetadataIterator<'_> {
         TrackMetadataIterator {
             metadata: self,
             index: 0,
