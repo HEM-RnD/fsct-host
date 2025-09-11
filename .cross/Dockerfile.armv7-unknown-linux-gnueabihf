@@ -1,14 +1,12 @@
-FROM debian:buster-slim
+ARG OWNER
+FROM ghcr.io/${OWNER:-hem-rnd}/fsct-cross:base-buster
 
 LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
 
-RUN apt update && apt install --no-install-recommends -y curl ca-certificates gcc-arm-linux-gnueabihf libc6-dev-armhf-cross gcc g++  && rm \
-     -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-arm-linux-gnueabihf libc6-dev-armhf-cross \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -Sf https://sh.rustup.rs -o /tmp/rustup-init.sh && chmod +x /tmp/rustup-init.sh && \
-    /tmp/rustup-init.sh -y --default-toolchain 1.86.0 --profile minimal --target armv7-unknown-linux-gnueabihf && rm \
-    /tmp/rustup-init.sh
-
-RUN mkdir -p /.cargo
-RUN printf '[target.armv7-unknown-linux-gnueabihf] \n\
-          linker = "arm-linux-gnueabihf-gcc"' > /.cargo/config.toml
+RUN rustup target add armv7-unknown-linux-gnueabihf
+RUN mkdir -p /.cargo \
+ && printf '[target.armv7-unknown-linux-gnueabihf]\nlinker = "arm-linux-gnueabihf-gcc"\n' > /.cargo/config.toml

@@ -1,0 +1,10 @@
+ARG OWNER
+FROM ghcr.io/${OWNER:-hem-rnd}/fsct-cross:base-buster
+
+LABEL org.opencontainers.image.vendor="HEM Sp. z o.o."
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-multilib g++-multilib \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add i686-unknown-linux-gnu

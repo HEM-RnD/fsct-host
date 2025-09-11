@@ -50,9 +50,12 @@ missing=()
 need fpm || missing+=("fpm (gem install fpm)")
 need ruby || missing+=("ruby")
 need pkg-config || missing+=("pkg-config")
-need rustc || missing+=("rustc (via rustup preferred)")
-need cargo || missing+=("cargo (via rustup preferred)")
-need python3 || missing+=("python3 (for cargo metadata parsing)")
+# Rust toolchain is only required if we are going to build
+if [[ "$SKIP_BUILD" != true ]]; then
+  need rustc || missing+=("rustc (via rustup preferred)")
+  need cargo || missing+=("cargo (via rustup preferred)")
+fi
+# python3 is optional; we'll fallback to parsing Cargo.toml if unavailable
 
 # Optional: cargo-about for license aggregation (skip if --skip-licensing)
 if [[ "$SKIP_LICENSING" == true ]]; then
@@ -86,35 +89,74 @@ mkdir -p "${OUTPUT_DIR}"
 # Build Rust binaries (unless skipped)
 if [[ "$SKIP_BUILD" == true ]]; then
   echo "Skipping cargo build (per --skip-build)"
-  # Prefer release binary by default; fall back to debug
-  if [[ -f "${ROOT_DIR}/target/release/${CARGO_BIN_NAME}" ]]; then
-    BIN_PATH="${ROOT_DIR}/target/release/${CARGO_BIN_NAME}"
-  elif [[ -f "${ROOT_DIR}/target/debug/${CARGO_BIN_NAME}" ]]; then
-    BIN_PATH="${ROOT_DIR}/target/debug/${CARGO_BIN_NAME}"
-  else
-    echo "Error: --skip-build set, but no existing binary found in target/release or target/debug" >&2
-    exit 1
-  fi
 else
   echo "Building Rust binaries (release=${DEBUG_BUILD=false})..."
   if [[ "$DEBUG_BUILD" == true ]]; then
-    cargo build
-    BIN_PATH="${ROOT_DIR}/target/debug/${CARGO_BIN_NAME}"
+    if [[ -n "${FSCT_RUST_TARGET:-}" ]]; then
+      cargo build --target "${FSCT_RUST_TARGET}"
+    else
+      cargo build
+    fi
   else
-    cargo build --release
-    BIN_PATH="${ROOT_DIR}/target/release/${CARGO_BIN_NAME}"
+    if [[ -n "${FSCT_RUST_TARGET:-}" ]]; then
+      cargo build --release --target "${FSCT_RUST_TARGET}"
+    else
+      cargo build --release
+    fi
   fi
 fi
 
-if [[ ! -f "${BIN_PATH}" ]]; then
-  echo "Error: built binary not found at ${BIN_PATH}" >&2
+# Resolve BIN_PATH based on build or existing artifacts (robust search)
+resolve_bin() {
+  local candidates=()
+  if [[ -n "${FSCT_RUST_TARGET:-}" ]]; then
+    if [[ "$DEBUG_BUILD" == true ]]; then
+      candidates+=("${ROOT_DIR}/target/${FSCT_RUST_TARGET}/debug/${CARGO_BIN_NAME}")
+      candidates+=("${ROOT_DIR}/target/${FSCT_RUST_TARGET}/release/${CARGO_BIN_NAME}")
+    else
+      candidates+=("${ROOT_DIR}/target/${FSCT_RUST_TARGET}/release/${CARGO_BIN_NAME}")
+      candidates+=("${ROOT_DIR}/target/${FSCT_RUST_TARGET}/debug/${CARGO_BIN_NAME}")
+    fi
+  fi
+  if [[ "$DEBUG_BUILD" == true ]]; then
+    candidates+=("${ROOT_DIR}/target/debug/${CARGO_BIN_NAME}")
+    candidates+=("${ROOT_DIR}/target/release/${CARGO_BIN_NAME}")
+  else
+    candidates+=("${ROOT_DIR}/target/release/${CARGO_BIN_NAME}")
+    candidates+=("${ROOT_DIR}/target/debug/${CARGO_BIN_NAME}")
+  fi
+  for c in "${candidates[@]}"; do
+    if [[ -f "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if BIN_PATH="$(resolve_bin)"; then
+  :
+else
+  echo "Error: built binary not found in expected locations." >&2
+  echo "Tried (in order):" >&2
+  echo "  - target/{${FSCT_RUST_TARGET:-<none>}}/{release,debug}/${CARGO_BIN_NAME}" >&2
+  echo "  - target/{release,debug}/${CARGO_BIN_NAME}" >&2
   exit 1
 fi
 
-# Extract version using cargo metadata (same as macOS script)
-VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${CARGO_BIN_NAME}'),''))")
+# Extract version
+if [[ -n "${FSCT_VERSION:-}" ]]; then
+  VERSION="${FSCT_VERSION}"
+else
+  if command -v cargo >/dev/null 2>&1; then
+    VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${CARGO_BIN_NAME}'),''))")
+  else
+    # Fallback: parse from workspace Cargo.toml [workspace.package]
+    VERSION=$(grep -E '^version\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+"' "${ROOT_DIR}/Cargo.toml" | head -n1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)"/\1/')
+  fi
+fi
 if [[ -z "${VERSION}" ]]; then
-  echo "Error: Failed to extract version using cargo metadata" >&2
+  echo "Error: Failed to determine version" >&2
   exit 1
 fi
 echo "Using version: ${VERSION}"
@@ -145,35 +187,36 @@ elif [[ "$CARGO_ABOUT_AVAILABLE" == true ]]; then
 fi
 
 # Determine Debian architecture for output filename
-ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
+if [[ -n "${FSCT_DEB_ARCH:-}" ]]; then
+  ARCH="${FSCT_DEB_ARCH}"
+else
+  ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
+fi
 PACKAGE_FILE="${OUTPUT_DIR}/${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
 rm -f "${PACKAGE_FILE}" || true
 
-# Detect glibc (libc6) version and add dependency
+# Detect glibc (libc6) version required by the built binary (cross-safe)
 LIBC_DEP=""
-if command -v getconf >/dev/null 2>&1; then
-  # Prefer getconf GNU_LIBC_VERSION (e.g., "glibc 2.31")
-  glibc_line=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
-  if [[ -n "$glibc_line" && "$glibc_line" == glibc* ]]; then
-    libc_ver=${glibc_line#glibc }
-  fi
+libc_ver=""
+if command -v readelf >/dev/null 2>&1; then
+  libc_ver=$(readelf -V "${BIN_PATH}" 2>/dev/null | grep -o 'GLIBC_[0-9]\+\.[0-9]\\+\(\.[0-9]\+\)\?' | sort -uV | tail -1 | sed 's/^GLIBC_//') || true
 fi
-if [[ -z "${libc_ver:-}" ]]; then
-  # Fallback: ldd --version first line contains "ldd (GNU libc) 2.xx"
-  if command -v ldd >/dev/null 2>&1; then
-    ldd_ver=$(ldd --version 2>/dev/null | head -n1 | sed -E 's/.* ([0-9]+\.[0-9]+(\.[0-9]+)?).*$/\1/')
-    if [[ "$ldd_ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-      libc_ver=$ldd_ver
-    fi
-  fi
+# Fallback: try objdump if readelf not present or produced nothing
+if [[ -z "${libc_ver:-}" ]] && command -v objdump >/dev/null 2>&1; then
+  libc_ver=$(objdump -T "${BIN_PATH}" 2>/dev/null | grep -o 'GLIBC_[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?' | sort -uV | tail -1 | sed 's/^GLIBC_//') || true
 fi
 if [[ -n "${libc_ver:-}" ]]; then
-  # Debian/Ubuntu package providing glibc is libc6; add >= constraint
   LIBC_DEP="libc6 (>= ${libc_ver})"
-  echo "Detected glibc version: ${libc_ver}; adding dependency: ${LIBC_DEP}"
+  echo "Detected required GLIBC from binary: ${libc_ver}; adding dependency: ${LIBC_DEP}"
 else
-  echo "Error: Could not detect glibc version. Skipping automatic libc6 dependency." >&2
-  exit 1
+  # If the binary is statically linked or tools unavailable, decide based on flag
+  echo "Warning: Could not determine GLIBC version from binary (maybe static or tools missing)." >&2
+  if [[ "${ALLOW_MISSING_DEPS}" == true ]]; then
+    echo "Proceeding without explicit libc6 dependency due to --allow-missing-deps" >&2
+  else
+    echo "Error: GLIBC version detection failed. Install binutils (readelf) or use --allow-missing-deps." >&2
+    exit 1
+  fi
 fi
 
 FPM_ARGS=(
@@ -181,6 +224,7 @@ FPM_ARGS=(
   --package "${PACKAGE_FILE}"
   --depends "${LIBC_DEP}"
   --depends libgcc-s1
+  -a "${ARCH}"
   "${STAGE_DIR}/=/"
 )
 
