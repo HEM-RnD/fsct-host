@@ -496,13 +496,7 @@ impl PlayerSelectionParams {
 
 
 fn is_better_selection(player_params: &PlayerSelectionParams, current_selection: &Option<PlayerSelectionParams>) -> bool {
-    match (current_selection, player_params) {
-        (_, player) if player.assignment != Assignment::AssignedToOtherDevice => false, // ignore devices assigned to other devices
-        (None, _) => true, // any better than nothing
-        (Some(current), player) => {
-            let current_score = current.score();
-            let player_score = player.score();
-            player_score > current_score
-        }
-    }
+    let current_score = current_selection.map(|p| p.score()).unwrap_or(0);
+    let player_score = player_params.score();
+    player_score > current_score
 }

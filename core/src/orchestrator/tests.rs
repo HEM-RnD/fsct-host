@@ -295,17 +295,27 @@ async fn multiple_players_one_device_unassigned_and_assignment_switch() {
     assert!(calls.is_empty());
 
     // P2 updates -> becomes not selected; should not propagate to unassigned device d
-    let s2 = default_state_with_title("S2");
+    let mut s2 = default_state_with_title("S2");
     let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
     short_wait().await;
     calls = applier.take();
     // ensures S2 did not reach device d yet
     assert!(calls.is_empty());
 
-    // Now assign P2 to d -> should apply P2's latest state to d
+    // Now assign P2 to d -> still nothing has changed, since both player are not playing
     let _ = ptx.send(PlayerEvent::Assigned { player_id: p2, device_id: d });
     short_wait().await;
     calls = applier.take();
+
+    // ensures S2 did not reach device d yet
+    assert!(calls.is_empty());
+
+    // P2 updates -> becomes playing; should propagate to assigned device d
+    s2.status = FsctStatus::Playing;
+    let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+    short_wait().await;
+    calls = applier.take();
+
     // P2 has known state s2 and device connected, assignment applies s2 (at least once)
     assert!(calls.iter().any(|c| c.device == d && c.state == s2));
 
@@ -629,8 +639,8 @@ fn is_better_selection_four_players_permutation_and_sort() {
     // 1) playing assigned here, 2) playing user-selected, 3) idle user-selected, 4) playing assigned to other
     let p1 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
     let p2 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p4 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let p3 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let p4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
     let items = vec![p1, p2, p3, p4];
 
     // Winner must be p1 for all permutations
