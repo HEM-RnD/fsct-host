@@ -46,9 +46,6 @@ pub trait FsctDriver: Send + Sync {
 
     async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
 
-    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error>;
-    async fn get_preferred_player(&self) -> Option<ManagedPlayerId>;
-
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
 }
 
@@ -127,14 +124,6 @@ impl FsctDriver for LocalDriver {
 
     async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
         self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
-    }
-
-    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        self.player_manager.set_preferred_player(preferred)
-    }
-
-    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
-        self.player_manager.get_preferred_player()
     }
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {

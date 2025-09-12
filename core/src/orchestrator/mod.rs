@@ -62,8 +62,6 @@ pub struct Orchestrator<A: PlayerStateApplier> {
     players: HashMap<ManagedPlayerId, RegisteredPlayer>,
 
     connected_devices: HashMap<ManagedDeviceId, Mutex<ConnectedDevice>>,
-    // Selection memory
-    preferred_player: Option<ManagedPlayerId>, // user-preferred player for general group
 }
 
 impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
@@ -79,7 +77,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             applier,
             players: HashMap::new(),
             connected_devices: HashMap::new(),
-            preferred_player: None,
         }
     }
 }
@@ -162,9 +159,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             PlayerEvent::TextMetadataUpdated { player_id, metadata, text } => {
                 self.handle_player_text_metadata_updated(player_id, metadata, text).await;
             }
-            PlayerEvent::PreferredChanged { preferred } => {
-                self.handle_preferred_changed(preferred).await;
-            }
         }
     }
 
@@ -189,7 +183,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     async fn handle_player_unregistered(&mut self, player_id: ManagedPlayerId) {
         debug!("Player unregistered: {}", player_id);
         self.players.remove(&player_id);
-        if self.preferred_player == Some(player_id) { self.preferred_player = None; }
 
         self.update_selected_players_for_devices();
         self.apply_on_devices_requiring_update().await;
@@ -302,14 +295,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         // Do not trigger full apply
     }
 
-    async fn handle_preferred_changed(&mut self, preferred: Option<ManagedPlayerId>) {
-        debug!("PreferredChanged: {:?}", preferred);
-        self.preferred_player = preferred;
-
-        self.update_selected_players_for_devices();
-        self.apply_on_devices_requiring_update().await;
-    }
-
     // Dedicated handlers for DeviceEvent variants
     async fn handle_device_added(&mut self, device_id: ManagedDeviceId) {
         debug!("Device added: {}", device_id);
@@ -346,13 +331,11 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
                 Assignment::AssignedToThisDevice
             } else if player.is_assigned_device_attached {
                 Assignment::AssignedToOtherDevice
-            } else if Some(player_id) == self.preferred_player.as_ref() {
-                Assignment::UserSelected
             } else {
                 Assignment::Unassigned
             };
             let player_selection_params = PlayerSelectionParams {
-                is_playing: player.state.status == FsctStatus::Playing,
+                status: player.state.status.into(),
                 is_last_selected: last_selected.map(|id| id == *player_id).unwrap_or(false),
                 assignment: assignment_state,
             };
@@ -405,8 +388,6 @@ enum Assignment {
     AssignedToOtherDevice,
     /// Player is not assigned to any device nor preferred by OS/user
     Unassigned,
-    /// Player is not assigned to any device, but it is preferred by OS/user
-    UserSelected,
     /// Player is assigned to a processed device
     AssignedToThisDevice,
 }
@@ -416,68 +397,99 @@ impl Assignment {
         match self {
             Assignment::AssignedToOtherDevice => ASSIGNED_TO_OTHER_DEVICE_SCORE,
             Assignment::Unassigned => UNASSIGNED_SCORE,
-            Assignment::UserSelected => USER_SELECTED_SCORE,
             Assignment::AssignedToThisDevice => ASSIGNED_TO_THIS_DEVICE_SCORE,
         }
     }
 }
 
-const PLAYING_SCORE: isize = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackStatus {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+impl PlaybackStatus {
+    fn score(&self) -> isize {
+        match self {
+            Self::Playing => PLAYING_SCORE,
+            Self::Paused => PAUSED_SCORE,
+            Self::Stopped => STOPPED_SCORE,
+        }
+    }
+}
+
+impl From<FsctStatus> for PlaybackStatus {
+    fn from(status: FsctStatus) -> Self {
+        match status {
+            FsctStatus::Playing => Self::Playing,
+            FsctStatus::Paused => Self::Paused,
+            _ => Self::Stopped,
+        }
+    }
+}
+
+const PLAYING_SCORE: isize = 16;
+const PAUSED_SCORE: isize = 4;
+const STOPPED_SCORE: isize = 3;
+
 const ASSIGNED_TO_OTHER_DEVICE_SCORE: isize = 0;
-const UNASSIGNED_SCORE: isize = 100;
-const USER_SELECTED_SCORE: isize = 200;
-const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 160;
-const IS_LAST_SELECTED_SCORE: isize = 1;
+const UNASSIGNED_SCORE: isize = 4;
+// const USER_SELECTED_SCORE: isize = 2;
+const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 5;
+const IS_LAST_SELECTED_SCORE: isize = 9;
 
 //this is for reference and tests only:
-const PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS: [PlayerSelectionParams; 16] = [
-    // when assigned to other device: they are last, the rest is standard order
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false },
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true },
+const PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS: [PlayerSelectionParams; 18] = [
+    // when assigned to other device: they are not relevant at all, so we return 0
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false }, //0
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true }, //0
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false }, //0
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true }, //0
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false }, //0
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true }, //0
 
-    //  here is standard order
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false },
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: true },
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: false },
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: true },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: true },
+    // we should go here when there is no last selected player, so we are actually trying to find the best one
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false }, // 1 (unassigned - 1)
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false }, // 2 (assigned - 2)
+    // not sure if paused is better than assigned, but maybe it doesn't matter here
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false }, //3 (unassigned - 1, paused - 2)
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false }, //4 (assigned - 2, paused - 2)
 
-    // user selected are almost the best, in standard order
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected, is_last_selected: false },
-    PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected, is_last_selected: true },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false },
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: true },
+    // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player, order of other
+    // parameters doesn't matter
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true }, // 5 (unassigned - 1, is selected - 4)
+    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true }, // 6 (assigned - 2, is selected - 4
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
+    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true }, // 8 (assigned - 2, paused - 2, is selected - 4)
 
-    // playing assigned to this device are the best, like in standard order
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false }, // 12 // (playing - 4, assigned to this device - 8)
-    PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: true }, // 13 // (playing - 4, assigned to this device - 8, last selected 1)
+    // Playing are more prefered than not playing (if not assigned to another device)
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false }, // 9 (unassigned - 1, playing - 8)
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false }, // 11 (assigned - 2, playing - 8)
+    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true },  // 12 (assigned - 2, playing - 8, is selected - 1)
 ];
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PlayerSelectionParams {
-    // is_preferred: bool, // it means that player is prefered by user, even over playing player, but it only can be true
-    // when there is no other player assigned to this device, which means that assigned to this device has higher
-    // priority than is preferred, but only when preferred player is not playing.
-    is_playing: bool, // we prefer playing players than assigned to this device
-    // is_assigned_to_this_device: bool, // but we prefer players assigned to this device when playing
-    // is_assigned_to_connected_device: bool, // we don't prefer players assigned to other devices
+    status: PlaybackStatus,
     assignment: Assignment,
-    is_last_selected: bool, // we prefer last selected player over others, but only when other options are the same
+    is_last_selected: bool,
 }
 
 
 impl PlayerSelectionParams {
     fn score(&self) -> isize {
-        // PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter().position(|p| *p == *self).unwrap()
+        if self.assignment == Assignment::AssignedToOtherDevice {
+            // special case: when assigned to the other device, they are not relevant at all, so we return 0
+            return 0;
+        }
 
         let mut score = 0;
-        score += self.is_playing.then_some(PLAYING_SCORE).unwrap_or(0);
-        score += self.assignment.score();
+        score += self.status.score() * self.assignment.score();
         score += self.is_last_selected.then_some(IS_LAST_SELECTED_SCORE).unwrap_or(0);
-        score += (self.is_playing && self.assignment == Assignment::AssignedToThisDevice).then_some(PLAYING_SCORE).unwrap_or(0);
         score
     }
 }
@@ -485,7 +497,8 @@ impl PlayerSelectionParams {
 
 fn is_better_selection(player_params: &PlayerSelectionParams, current_selection: &Option<PlayerSelectionParams>) -> bool {
     match (current_selection, player_params) {
-        (None, _) => true, // no selection yet, so it's the best
+        (_, player) if player.assignment != Assignment::AssignedToOtherDevice => false, // ignore devices assigned to other devices
+        (None, _) => true, // any better than nothing
         (Some(current), player) => {
             let current_score = current.score();
             let player_score = player.score();

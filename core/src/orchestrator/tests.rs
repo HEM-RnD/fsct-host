@@ -6,14 +6,14 @@ use uuid::Uuid;
 use crate::definitions::FsctStatus;
 
 // ----------------- Helpers for selection testing -----------------
-fn fold_best(items: &[PlayerSelectionParams]) -> PlayerSelectionParams {
+fn fold_best(items: &[PlayerSelectionParams]) -> Option<PlayerSelectionParams> {
     let mut current: Option<PlayerSelectionParams> = None;
     for cand in items {
         if is_better_selection(cand, &current) {
             current = Some(*cand);
         }
     }
-    current.expect("fold_best requires at least one item")
+    current
 }
 
 fn permute_indices_rec(n: usize, current: &mut Vec<usize>, used: &mut Vec<bool>, out: &mut Vec<Vec<usize>>) {
@@ -40,7 +40,7 @@ fn permute_indices(n: usize) -> Vec<Vec<usize>> {
     out
 }
 
-fn selection_is_order_independent(items: &[PlayerSelectionParams]) -> (bool, PlayerSelectionParams) {
+fn selection_is_order_independent(items: &[PlayerSelectionParams]) -> (bool, Option<PlayerSelectionParams>) {
     let base = fold_best(items);
     for perm in permute_indices(items.len()) {
         let permuted: Vec<PlayerSelectionParams> = perm.iter().map(|&i| items[i]).collect();
@@ -337,8 +337,10 @@ async fn one_player_multiple_devices_unassigned_then_assign() {
     let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d1 });
     short_wait().await;
     calls = applier.take();
-    // S1 has not changed, so nothing has been applied
-    assert!(calls.is_empty());
+    // S1 has not changed, so nothing has been applied to d1
+    assert!(!calls.iter().any(|c| c.device == d1));
+    // But now d2 is not assigned to any player, so the default state should be applied to d2
+    assert!(calls.iter().any(|c| c.device == d2 && c.state == PlayerState::default()));
 
     // Update to S2 -> applies to assigned device d1
     let s2 = default_state_with_title("S2");
@@ -351,59 +353,7 @@ async fn one_player_multiple_devices_unassigned_then_assign() {
 }
 
 #[tokio::test]
-async fn preferred_change_does_not_apply() {
-    let applier = MockApplier::new();
-    let (orch, ptx, dtx) = build_orchestrator(applier.clone());
-    let handle = run_orchestrator(orch).await;
-    let p1 = pid(1);
-    let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
-    short_wait().await;
-    let d = make_ids(1)[0];
-    let _ = dtx.send(DeviceEvent::Added(d));
-    short_wait().await;
-    let _ = applier.take(); // clear any initial applies (e.g., Unknown)
-    let _ = ptx.send(PlayerEvent::PreferredChanged { preferred: Some(p1) });
-    short_wait().await;
-    // No state known, preferred change should not cause any additional apply
-    assert!(applier.take().is_empty());
-    let _ = handle.shutdown().await;
-}
-
-// New tests for advanced grouping and selection
-#[tokio::test]
-async fn preferred_player_drives_general_group() {
-    let applier = MockApplier::new();
-    let (orch, ptx, dtx) = build_orchestrator(applier.clone());
-    let handle = run_orchestrator(orch).await;
-    let p1 = pid(1);
-    let p2 = pid(2);
-    let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p1".into() });
-    let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p2".into() });
-    let mut s1 = default_state_with_title("S1");
-    s1.status = FsctStatus::Paused;
-    let mut s2 = default_state_with_title("S2");
-    s2.status = FsctStatus::Stopped;
-    let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
-    let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
-    // set preferred to p2
-    let _ = ptx.send(PlayerEvent::PreferredChanged { preferred: Some(p2) });
-    short_wait().await;
-    // connect two unassigned devices
-    let ids = make_ids(2);
-    let d1 = ids[0];
-    let d2 = ids[1];
-    let _ = dtx.send(DeviceEvent::Added(d1));
-    let _ = dtx.send(DeviceEvent::Added(d2));
-    short_wait().await;
-    let calls = applier.take();
-    // Both devices should have preferred p2 state at least once
-    assert!(calls.iter().any(|c| c.device == d1 && c.state == s2));
-    assert!(calls.iter().any(|c| c.device == d2 && c.state == s2));
-    let _ = handle.shutdown().await;
-}
-
-#[tokio::test]
-async fn general_group_picks_playing_if_no_preferred() {
+async fn general_group_picks_playing() {
     let applier = MockApplier::new();
     let (orch, ptx, dtx) = build_orchestrator(applier.clone());
     let handle = run_orchestrator(orch).await;
@@ -533,34 +483,34 @@ async fn general_does_not_pick_playing_assigned_to_other_device() {
 fn is_better_selection_order_independence_three_cases() {
     // Build three elements as requested:
     // 1) playing unassigned
-    // 2) non-playing user-selected
+    // 2) non-playing
     // 3) non-playing assigned to current device
     let a_playing_unassigned = PlayerSelectionParams {
-        is_playing: true,
+        status: PlaybackStatus::Playing,
         assignment: Assignment::Unassigned,
         is_last_selected: false,
     };
-    let b_non_playing_user_selected = PlayerSelectionParams {
-        is_playing: false,
-        assignment: Assignment::UserSelected,
-        is_last_selected: false,
+    let b_last_selected_and_playing = PlayerSelectionParams {
+        status: PlaybackStatus::Playing,
+        assignment: Assignment::Unassigned,
+        is_last_selected: true,
     };
     let c_non_playing_assigned_here = PlayerSelectionParams {
-        is_playing: false,
+        status: PlaybackStatus::Stopped,
         assignment: Assignment::AssignedToThisDevice,
         is_last_selected: false,
     };
 
     let items = vec![
         a_playing_unassigned,
-        b_non_playing_user_selected,
+        b_last_selected_and_playing,
         c_non_playing_assigned_here,
     ];
 
     // Use helper to verify order-independence and assert expected winner
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable, "Winner should be identical across all permutations");
-    assert_eq!(winner, b_non_playing_user_selected, "Non-playing user-selected should beat playing unassigned and idle assigned-here in this triad");
+    assert_eq!(winner, Some(b_last_selected_and_playing), "Last selected and playing should beat playing unassigned and idle assigned-here in this triad");
 
     // Additionally, verify sorting stability across all permutations using the helper sort
     let baseline_sorted = sort_by_preference(&items);
@@ -573,12 +523,12 @@ fn is_better_selection_order_independence_three_cases() {
 
 #[test]
 fn is_better_selection_order_independence_six_players_and_sort_stability() {
-    let p_a_playing_assigned_here = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p_b_user_selected_idle = PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected, is_last_selected: false };
-    let p_c_playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p_d_playing_assigned_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let p_e_idle_assigned_here = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p_f_idle_unassigned_last = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: true };
+    let p_a_playing_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let p_b_user_selected_idle = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false };
+    let p_c_playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
+    let p_d_playing_assigned_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let p_e_idle_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let p_f_idle_unassigned_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true };
 
     let items = vec![
         p_a_playing_assigned_here,
@@ -592,7 +542,7 @@ fn is_better_selection_order_independence_six_players_and_sort_stability() {
     // Check order independence of the winner
     let (stable, base_winner) = selection_is_order_independent(&items);
     assert!(stable, "Winner should be the same for all permutations");
-    assert_eq!(base_winner, p_a_playing_assigned_here, "Expected the strongest candidate to win");
+    assert_eq!(base_winner, Some(p_a_playing_assigned_here), "Expected the strongest candidate to win");
 
     // Check that the full sorting is stable across permutations (deterministic for this set)
     let baseline_sorted = sort_by_preference(&items);
@@ -606,85 +556,70 @@ fn is_better_selection_order_independence_six_players_and_sort_stability() {
 #[test]
 fn is_better_selection_tie_broken_by_last_selected() {
     // All identical except is_last_selected
-    let x1 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
-    let x2 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: true }; // should win
-    let x3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
-    let x4 = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+    let x1 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let x2 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true }; // should win
+    let x3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let x4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
     let items = vec![x1, x2, x3, x4];
 
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable, "Tie breaker by last selected must be order independent");
-    assert_eq!(winner, x2, "The one flagged as last selected should be preferred among equals");
+    assert_eq!(winner, Some(x2), "The one flagged as last selected should be preferred among equals");
 }
 
 #[test]
 fn is_better_selection_penalizes_assigned_to_other_device() {
     // Playing but assigned elsewhere should lose to an idle unassigned
-    let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_unassigned = PlayerSelectionParams { is_playing: false, assignment: Assignment::Unassigned, is_last_selected: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let idle_unassigned = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
     let items = vec![playing_other, idle_unassigned];
 
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, idle_unassigned, "Idle unassigned should be preferred over playing assigned to other device");
+    assert_eq!(winner, Some(idle_unassigned), "Idle unassigned should be preferred over playing assigned to other device");
 }
 
 #[test]
 fn is_better_selection_both_playing_assignment_order() {
     // Verify assignment precedence when both are playing:
     // AssignedToThisDevice > UserSelected > Unassigned > AssignedToOtherDevice
-    let playing_here = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let playing_user = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
-    let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
-    let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let playing_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
 
     // Pairwise checks via order-independence helper
     let cases = vec![
-        (vec![playing_here, playing_user], playing_here),
         (vec![playing_here, playing_unassigned], playing_here),
         (vec![playing_here, playing_other], playing_here),
-        (vec![playing_user, playing_unassigned], playing_user),
-        (vec![playing_user, playing_other], playing_user),
         (vec![playing_unassigned, playing_other], playing_unassigned),
     ];
     for (items, expected) in cases {
         let (stable, winner) = selection_is_order_independent(&items);
         assert!(stable, "Winner should be order independent for pairwise playing comparison");
-        assert_eq!(winner, expected);
+        assert_eq!(winner, Some(expected));
     }
 }
 
 #[test]
 fn is_better_selection_playing_unassigned_beats_idle_assigned_here() {
     // No special-case should override generic rule that playing beats non-playing
-    let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
-    let idle_here = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
+    let idle_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
     let items = vec![idle_here, playing_unassigned];
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, playing_unassigned, "Playing unassigned should beat idle assigned-here");
-}
-
-#[test]
-fn is_better_selection_playing_user_selected_beats_playing_unassigned() {
-    // When both are playing, assignment decides and UserSelected > Unassigned
-    let playing_user = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
-    let playing_unassigned = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
-    let items = vec![playing_user, playing_unassigned];
-    let (stable, winner) = selection_is_order_independent(&items);
-    assert!(stable);
-    assert_eq!(winner, playing_user);
+    assert_eq!(winner, Some(playing_unassigned), "Playing unassigned should beat idle assigned-here");
 }
 
 #[test]
 fn is_better_selection_last_selected_breaks_tie_when_both_playing_same_assignment() {
     // Identical state except last_selected, both playing and unassigned
-    let a = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: false };
-    let b = PlayerSelectionParams { is_playing: true, assignment: Assignment::Unassigned, is_last_selected: true };
+    let a = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
+    let b = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true };
     let items = vec![a, b];
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, b, "Last selected should win among identical playing candidates");
+    assert_eq!(winner, Some(b), "Last selected should win among identical playing candidates");
 }
 
 #[test]
@@ -692,16 +627,16 @@ fn is_better_selection_four_players_permutation_and_sort() {
     // A nuanced set to test full permutation stability and deterministic sorting
     // Compose so that final order (best to worst) should be:
     // 1) playing assigned here, 2) playing user-selected, 3) idle user-selected, 4) playing assigned to other
-    let p1 = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p2 = PlayerSelectionParams { is_playing: true, assignment: Assignment::UserSelected, is_last_selected: false };
-    let p3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::UserSelected, is_last_selected: false };
-    let p4 = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let p1 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let p2 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
+    let p3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let p4 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
     let items = vec![p1, p2, p3, p4];
 
     // Winner must be p1 for all permutations
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, p1);
+    assert_eq!(winner, Some(p1));
 
     // Sorting stability across all permutations
     let baseline_sorted = sort_by_preference(&items);
@@ -720,20 +655,17 @@ fn is_better_selection_four_players_permutation_and_sort() {
 }
 
 #[test]
-fn is_better_selection_all_assigned_to_other_device_picks_playing() {
+fn is_better_selection_all_assigned_to_other_device_picks_nothing() {
     // All candidates are AssignedToOtherDevice; playing should win even if an idle one was last selected
-    let playing_other = PlayerSelectionParams { is_playing: true, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_other_1 = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_other_2_last = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true };
-    let idle_other_3 = PlayerSelectionParams { is_playing: false, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let idle_other_1 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let idle_other_2_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true };
+    let idle_other_3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
     let items = vec![idle_other_1, playing_other, idle_other_2_last, idle_other_3];
 
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, playing_other, "Among candidates all assigned to other devices, the playing one should win");
-
-    let sorted = sort_by_preference(&items);
-    assert_eq!(sorted[0], playing_other);
+    assert_eq!(winner, None, "Among candidates all assigned to other devices, none should win");
 }
 
 #[tokio::test]
@@ -851,7 +783,7 @@ fn scoring_order_test()
     for player_selection_params in super::PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter() {
         let score = player_selection_params.score();
         println!("SCORE: {:2} | {:?}", score, player_selection_params);
-        assert!(score > last_score, "Scores should be increasing");
+        assert!(score > last_score || (score == 0 && last_score == 0), "Scores should be increasing, or zero in the begining");
         last_score = score;
     }
 }
