@@ -589,12 +589,6 @@ impl FsctRpcService {
         )
     }
 
-    fn parse_optional_player_id(&self, v: &Value) -> Result<Option<NonZeroU32>, anyhow::Error> {
-        if v.is_nil() { return Ok(None); }
-        let pid = parse_player_id(v)?;
-        Ok(Some(pid))
-    }
-
     fn req_get_player_assigned_device(&self, params: &[Value]) -> RequestFut {
         self.handle_function(
             params,
