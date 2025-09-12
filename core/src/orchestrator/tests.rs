@@ -499,16 +499,19 @@ fn is_better_selection_order_independence_three_cases() {
         status: PlaybackStatus::Playing,
         assignment: Assignment::Unassigned,
         is_last_selected: false,
+        has_metadata: false,
     };
     let b_last_selected_and_playing = PlayerSelectionParams {
         status: PlaybackStatus::Playing,
         assignment: Assignment::Unassigned,
         is_last_selected: true,
+        has_metadata: false,
     };
     let c_non_playing_assigned_here = PlayerSelectionParams {
         status: PlaybackStatus::Stopped,
         assignment: Assignment::AssignedToThisDevice,
         is_last_selected: false,
+        has_metadata: false,
     };
 
     let items = vec![
@@ -533,12 +536,12 @@ fn is_better_selection_order_independence_three_cases() {
 
 #[test]
 fn is_better_selection_order_independence_six_players_and_sort_stability() {
-    let p_a_playing_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p_b_user_selected_idle = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p_c_playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p_d_playing_assigned_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let p_e_idle_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p_f_idle_unassigned_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true };
+    let p_a_playing_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p_b_user_selected_idle = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let p_c_playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let p_d_playing_assigned_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
+    let p_e_idle_assigned_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p_f_idle_unassigned_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false };
 
     let items = vec![
         p_a_playing_assigned_here,
@@ -566,10 +569,10 @@ fn is_better_selection_order_independence_six_players_and_sort_stability() {
 #[test]
 fn is_better_selection_tie_broken_by_last_selected() {
     // All identical except is_last_selected
-    let x1 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
-    let x2 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true }; // should win
-    let x3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
-    let x4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let x1 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let x2 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }; // should win
+    let x3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let x4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let items = vec![x1, x2, x3, x4];
 
     let (stable, winner) = selection_is_order_independent(&items);
@@ -580,8 +583,8 @@ fn is_better_selection_tie_broken_by_last_selected() {
 #[test]
 fn is_better_selection_penalizes_assigned_to_other_device() {
     // Playing but assigned elsewhere should lose to an idle unassigned
-    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_unassigned = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
+    let idle_unassigned = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let items = vec![playing_other, idle_unassigned];
 
     let (stable, winner) = selection_is_order_independent(&items);
@@ -593,9 +596,9 @@ fn is_better_selection_penalizes_assigned_to_other_device() {
 fn is_better_selection_both_playing_assignment_order() {
     // Verify assignment precedence when both are playing:
     // AssignedToThisDevice > UserSelected > Unassigned > AssignedToOtherDevice
-    let playing_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let playing_here = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
 
     // Pairwise checks via order-independence helper
     let cases = vec![
@@ -613,8 +616,8 @@ fn is_better_selection_both_playing_assignment_order() {
 #[test]
 fn is_better_selection_playing_unassigned_beats_idle_assigned_here() {
     // No special-case should override generic rule that playing beats non-playing
-    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let idle_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
+    let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let idle_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
     let items = vec![idle_here, playing_unassigned];
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
@@ -624,8 +627,8 @@ fn is_better_selection_playing_unassigned_beats_idle_assigned_here() {
 #[test]
 fn is_better_selection_last_selected_breaks_tie_when_both_playing_same_assignment() {
     // Identical state except last_selected, both playing and unassigned
-    let a = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let b = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true };
+    let a = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let b = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false };
     let items = vec![a, b];
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
@@ -637,10 +640,10 @@ fn is_better_selection_four_players_permutation_and_sort() {
     // A nuanced set to test full permutation stability and deterministic sorting
     // Compose so that final order (best to worst) should be:
     // 1) playing assigned here, 2) playing user-selected, 3) idle user-selected, 4) playing assigned to other
-    let p1 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p2 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false };
-    let p3 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false };
-    let p4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false };
+    let p1 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p2 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let p3 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let items = vec![p1, p2, p3, p4];
 
     // Winner must be p1 for all permutations
@@ -667,10 +670,10 @@ fn is_better_selection_four_players_permutation_and_sort() {
 #[test]
 fn is_better_selection_all_assigned_to_other_device_picks_nothing() {
     // All candidates are AssignedToOtherDevice; playing should win even if an idle one was last selected
-    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_other_1 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
-    let idle_other_2_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true };
-    let idle_other_3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
+    let idle_other_1 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
+    let idle_other_2_last = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false };
+    let idle_other_3 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
     let items = vec![idle_other_1, playing_other, idle_other_2_last, idle_other_3];
 
     let (stable, winner) = selection_is_order_independent(&items);
@@ -792,8 +795,18 @@ fn scoring_order_test()
     let mut last_score = -1;
     for player_selection_params in super::PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter() {
         let score = player_selection_params.score();
+        if score <= last_score && score != 0 {
+            // print escape code for red:
+            print!("\x1b[31m");
+        }
         println!("SCORE: {:2} | {:?}", score, player_selection_params);
         assert!(score > last_score || (score == 0 && last_score == 0), "Scores should be increasing, or zero in the begining");
-        last_score = score;
+        if score <= last_score && score != 0 {
+            // print escape code to return to normal:
+            print!("\x1b[0m");
+        }
+        if score > last_score {
+            last_score = score;
+        }
     }
 }
