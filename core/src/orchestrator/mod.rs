@@ -422,12 +422,11 @@ impl Assignment {
     }
 }
 
-
-const PLAYING_SCORE: isize = 8;
+const PLAYING_SCORE: isize = 80;
 const ASSIGNED_TO_OTHER_DEVICE_SCORE: isize = 0;
-const UNASSIGNED_SCORE: isize = 10;
-const USER_SELECTED_SCORE: isize = 20;
-const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 16;
+const UNASSIGNED_SCORE: isize = 100;
+const USER_SELECTED_SCORE: isize = 200;
+const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 160;
 const IS_LAST_SELECTED_SCORE: isize = 1;
 
 //this is for reference and tests only:
@@ -478,7 +477,7 @@ impl PlayerSelectionParams {
         score += self.is_playing.then_some(PLAYING_SCORE).unwrap_or(0);
         score += self.assignment.score();
         score += self.is_last_selected.then_some(IS_LAST_SELECTED_SCORE).unwrap_or(0);
-        score += (self.is_playing && self.assignment == Assignment::AssignedToThisDevice).then_some(16).unwrap_or(0);
+        score += (self.is_playing && self.assignment == Assignment::AssignedToThisDevice).then_some(PLAYING_SCORE).unwrap_or(0);
         score
     }
 }
