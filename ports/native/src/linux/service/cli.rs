@@ -33,4 +33,7 @@ pub struct Cli {
     /// Run in user mode (OS watcher talks to IPC driver)
     #[arg(long, short, conflicts_with = "driver")]
     pub user: bool,
+
+    #[arg(long, short)]
+    pub socket: Option<String>,
 }
