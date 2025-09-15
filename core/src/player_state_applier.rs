@@ -34,19 +34,22 @@ use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 pub trait PlayerStateApplier: Send + Sync {
     /// Apply the given player state to a specific device.
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+                           -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>>;
 
     /// Apply only status independently.
     fn apply_status<'a>(&'a self, device_id: ManagedDeviceId, status: FsctStatus)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+                        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>>;
 
     /// Apply only timeline/progress independently.
     fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<TimelineInfo>)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+                          -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>>;
 
     /// Apply a single text field independently.
     fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&'a str>)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+                      -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>>;
+
+    /// Clean cache for device. Intended to use on device removal
+    fn clean_cache_for_device(&self, device_id: ManagedDeviceId);
 }
 
 /// Direct implementation that wraps a DeviceControl provider.
@@ -67,10 +70,10 @@ impl<T: DeviceControl + Send + Sync + 'static> DirectDeviceControlApplier<T> {
 
 impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDeviceControlApplier<T> {
     fn apply_to_device<'a>(&'a self, device_id: ManagedDeviceId, state: &'a PlayerState)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+                           -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // todo consider better error handling
-            
+
             // in multitasking, this could be a race condition if the device is set to a different state in the meantime
             // but then it would be better to implement queue-based applier instead
             // then applying task would be only one that changes the state
@@ -149,7 +152,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
     }
 
     fn apply_status<'a>(&'a self, device_id: ManagedDeviceId, status: FsctStatus)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+                        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // Snapshot previous status (no await while locked)
             let unchanged = {
@@ -164,7 +167,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
             };
 
             if unchanged {
-                return Ok(())
+                return Ok(());
             }
 
             // Apply
@@ -185,7 +188,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
     }
 
     fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<TimelineInfo>)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+                          -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // Snapshot previous timeline
             let unchanged = {
@@ -223,7 +226,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
     }
 
     fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&'a str>)
-        -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+                      -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // Snapshot previous text
             let unchanged: bool = {
@@ -234,7 +237,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
                 let player_state = guard
                     .get(&device_id)
                     .ok_or_else(|| anyhow::anyhow!("PlayerStateApplier: device not found"))?;
-                player_state.texts.get_text(text_id).as_ref().map(|s|s.as_str()) == text
+                player_state.texts.get_text(text_id).as_ref().map(|s| s.as_str()) == text
             };
 
             if unchanged {
@@ -257,6 +260,10 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
             *target = text.map(|s| s.to_string());
             Ok(())
         })
+    }
+
+    fn clean_cache_for_device(&self, device_id: ManagedDeviceId) {
+        self.last_applied.lock().unwrap().remove(&device_id);
     }
 }
 

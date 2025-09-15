@@ -243,29 +243,6 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        let param = match preferred {
-            Some(pid) => encode_player_id(pid),
-            None => Value::Nil
-        };
-        let _response: Value = self
-            .client
-            .request("set_preferred_player", &[param])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
-        Ok(())
-    }
-
-    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
-        match self.client.request("get_preferred_player", &[]).await.ok()? {
-            Value::Nil => None,
-            v => {
-                let id = v.as_u64()? as u32;
-                std::num::NonZeroU32::new(id)
-            }
-        }
-    }
-
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         let resp: Value = self
             .client

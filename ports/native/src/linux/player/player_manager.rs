@@ -16,6 +16,7 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::sync::Arc;
+use log::{debug, error};
 use fsct_core::FsctDriver;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio::select;
@@ -48,8 +49,15 @@ impl PlayerRegistrationManager {
         tokio::spawn(async move {
             let player_handler = PlayerHandler::new(player, id, driver.clone());
             select! {
-                _ = cancel_token.cancelled() => {},
-                _ = player_handler.handle_player_task() => {}
+                _ = cancel_token.cancelled() => {
+                    debug!("Player {} handler cancelled by parent", id);
+                },
+                res = player_handler.handle_player_task() => {
+                    debug!("Player {} was disconnected", id);
+                    if let Err(e) = res {
+                        error!("Error handling player {}: {}", id, e);
+                    }
+                },
             }
             let _ = driver.unregister_player(id).await;
         });

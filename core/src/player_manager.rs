@@ -34,7 +34,8 @@ pub type ManagedPlayerId = NonZeroU32;
 #[allow(dead_code)]
 /// Represents a registered player with its state and device assignments
 pub struct RegisteredPlayer {
-    pub self_id: String, /// Player's self identifier
+    pub self_id: String,
+    /// Player's self identifier
     pub state: Arc<Mutex<PlayerState>>,
     pub assigned_device: Option<ManagedDeviceId>,
 }
@@ -44,7 +45,6 @@ pub struct PlayerManager {
     players: Arc<Mutex<HashMap<ManagedPlayerId, RegisteredPlayer>>>,
     events_tx: broadcast::Sender<PlayerEvent>,
     next_player_id: AtomicU32,
-    preferred_player_id: AtomicU32, // 0 = None, NonZeroU32 = Some
 }
 
 impl PlayerManager {
@@ -55,7 +55,6 @@ impl PlayerManager {
             players: Arc::new(Mutex::new(HashMap::new())),
             events_tx,
             next_player_id: AtomicU32::new(1), // Start from 1
-            preferred_player_id: AtomicU32::new(0), // None by default
         }
     }
 
@@ -110,12 +109,6 @@ impl PlayerManager {
             info!("Player {} unassigned from device {}", player_id, device_id);
         }
 
-        // If this player was preferred, clear preference and notify
-        let current_pref = self.preferred_player_id.load(Ordering::SeqCst);
-        if current_pref == player_id.get() {
-            let _ = self.preferred_player_id.compare_exchange(player_id.get(), 0, Ordering::SeqCst, Ordering::SeqCst);
-            let _ = self.events_tx.send(PlayerEvent::PreferredChanged { preferred: None });
-        }
         // Notify listeners
         let _ = self.events_tx.send(PlayerEvent::Unregistered { player_id });
 
@@ -244,28 +237,5 @@ impl PlayerManager {
         }
         let _ = self.events_tx.send(PlayerEvent::TextMetadataUpdated { player_id, metadata: metadata_id, text: new_text });
         Ok(())
-    }
-
-    /// Sets the preferred player to Some(id) or clears it with None.
-    /// Emits a single PreferredChanged event if the value changed.
-    pub fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        // Validate existence if Some
-        if let Some(pid) = preferred {
-            let players = self.players.lock().unwrap();
-            if !players.contains_key(&pid) {
-                return Err(anyhow::anyhow!("Player not found"));
-            }
-        }
-        let new_val = preferred.map(ManagedPlayerId::get).unwrap_or(0);
-        let old_val = self.preferred_player_id.swap(new_val, Ordering::SeqCst);
-        if old_val != new_val {
-            let _ = self.events_tx.send(PlayerEvent::PreferredChanged { preferred });
-        }
-        Ok(())
-    }
-
-    /// Returns the currently preferred player, if any.
-    pub fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
-        NonZeroU32::new(self.preferred_player_id.load(Ordering::SeqCst))
     }
 }
