@@ -317,6 +317,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             }
         }
         // Players previously assigned to this device may now fall back to general group if no other connected device
+        self.applier.clean_cache_for_device(device_id);
         self.update_selected_players_for_devices();
         self.apply_on_devices_requiring_update().await;
     }
