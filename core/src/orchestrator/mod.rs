@@ -17,14 +17,15 @@
 
 #[cfg(test)]
 mod tests;
+mod scoring;
 
-use std::cmp::{PartialOrd};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::broadcast;
+use scoring::{Assignment, PlayerSelectionParams};
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
 use crate::device_manager::DeviceControl;
@@ -32,13 +33,37 @@ use crate::player_events::PlayerEvent;
 use crate::player_manager::ManagedPlayerId;
 use crate::player_state::PlayerState;
 use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
-use crate::service::{ServiceHandle, spawn_service};
+use crate::service::{spawn_service, ServiceHandle};
 
 #[derive(Debug, Clone, Default)]
 struct RegisteredPlayer {
     assigned_device: Option<ManagedDeviceId>,
     state: PlayerState,
     is_assigned_device_attached: bool,
+}
+
+impl RegisteredPlayer {
+    fn has_metadata(&self) -> bool {
+        self.state.texts.iter().any(|(_, text)| text.as_ref().map(|t| !t.is_empty()).unwrap_or(false))
+    }
+
+
+    fn score_for_player_and_device(&self, device_id: &ManagedDeviceId, is_last_selected: bool) -> isize {
+        let assignment_state = if self.assigned_device.as_ref() == Some(device_id) {
+            Assignment::AssignedToThisDevice
+        } else if self.is_assigned_device_attached {
+            Assignment::AssignedToOtherDevice
+        } else {
+            Assignment::Unassigned
+        };
+        let player_selection_params = PlayerSelectionParams {
+            status: self.state.status.into(),
+            is_last_selected,
+            assignment: assignment_state,
+            has_metadata: self.has_metadata(),
+        };
+        player_selection_params.score()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -227,13 +252,17 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         if status_changed {
             self.update_selected_players_for_devices();
         }
+        self.mark_devices_require_update_by_player(player_id);
+        self.apply_on_devices_requiring_update().await;
+    }
+
+    fn mark_devices_require_update_by_player(&mut self, player_id: ManagedPlayerId) {
         for device in self.connected_devices.values() {
             let mut device = device.lock().unwrap();
             if device.player_id == Some(player_id) {
                 device.requires_update = true;
             }
         }
-        self.apply_on_devices_requiring_update().await;
     }
 
     async fn handle_player_status_updated(&mut self, player_id: ManagedPlayerId, status: FsctStatus) {
@@ -244,12 +273,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         // Status change can affect selection
         self.update_selected_players_for_devices();
         // Mark devices currently showing this player for update
-        for device in self.connected_devices.values() {
-            let mut device = device.lock().unwrap();
-            if device.player_id == Some(player_id) {
-                device.requires_update = true;
-            }
-        }
+        self.mark_devices_require_update_by_player(player_id);
         self.apply_on_devices_requiring_update().await;
     }
 
@@ -276,23 +300,33 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     async fn handle_player_text_metadata_updated(&mut self, player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: Option<String>) {
         debug!("TextMetadataUpdated: player {} {:?}", player_id, metadata);
         // Convert Option<String> to Option<&str> for apply_text
-        let text_ref = text.as_deref();
-        // Directly apply only the specific text to devices currently showing this player
-        for (device_id, device) in self.connected_devices.iter() {
-            let is_selected = {
-                let device = device.lock().unwrap();
-                device.player_id == Some(player_id)
-            };
-            if is_selected {
-                self.applier.apply_text(device_id.clone(), metadata, text_ref).await.ok();
+        let has_metadata_changed = if let Some(player) = self.players.get_mut(&player_id) {
+            let had_metadata = player.has_metadata();
+            *player.state.texts.get_mut_text(metadata) = text.clone();
+            let has_metadata = player.has_metadata();
+            has_metadata != had_metadata
+        } else {
+            return;
+        };
+
+        if has_metadata_changed {
+            self.update_selected_players_for_devices(); // selection may change if metadata is now present or absent
+            self.mark_devices_require_update_by_player(player_id);
+            self.apply_on_devices_requiring_update().await;
+        } else {
+            // Directly apply only the text metadata to devices currently showing this player
+            for (device_id, device) in self.connected_devices.iter() {
+                let is_selected = {
+                    let device = device.lock().unwrap();
+                    device.player_id == Some(player_id)
+                };
+                if is_selected {
+                    // best-effort; ignore errors here like other handlers
+                    let text_ref = text.as_deref();
+                    self.applier.apply_text(*device_id, metadata, text_ref).await.ok();
+                }
             }
         }
-        // Update local state after applies
-        if let Some(player) = self.players.get_mut(&player_id) {
-            let slot = player.state.texts.get_mut_text(metadata);
-            *slot = text;
-        }
-        // Do not trigger full apply
     }
 
     // Dedicated handlers for DeviceEvent variants
@@ -323,38 +357,28 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     }
 
     // Selection helpers
-    fn find_player_for_device(&self, device_id: &ManagedDeviceId) -> Option<ManagedPlayerId> {
-        let mut selected = None;
-        let mut selected_params = None;
+    fn find_player_for_device(&self, device_id: &ManagedDeviceId) -> Option<(ManagedPlayerId, isize)> {
+        let mut selected: Option<(ManagedPlayerId, isize)> = None;
         let last_selected = self.connected_devices.get(device_id)?.lock().unwrap().player_id.clone();
         for (player_id, player) in self.players.iter() {
-            let assignment_state = if player.assigned_device.as_ref() == Some(device_id) {
-                Assignment::AssignedToThisDevice
-            } else if player.is_assigned_device_attached {
-                Assignment::AssignedToOtherDevice
-            } else {
-                Assignment::Unassigned
-            };
-            let player_selection_params = PlayerSelectionParams {
-                status: player.state.status.into(),
-                is_last_selected: last_selected.map(|id| id == *player_id).unwrap_or(false),
-                assignment: assignment_state,
-                has_metadata: player.state.texts.iter().any(|(_, text)| text.as_ref().map(|t| !t.is_empty()).unwrap_or(false)),
-            };
-            if is_better_selection(&player_selection_params, &selected_params) {
-                selected = Some(*player_id);
-                selected_params = Some(player_selection_params);
+            let is_last_selected = last_selected.as_ref().map(|id| *id == *player_id).unwrap_or(false);
+            let player_score = player.score_for_player_and_device(device_id, is_last_selected);
+            if scoring::is_better_selection(player_score, selected.map(|s| s.1).unwrap_or(0)) {
+                selected = Some((*player_id, player_score));
             }
         }
         selected
     }
 
+
     fn update_selected_players_for_devices(&self) {
         for (device_id, device) in self.connected_devices.iter() {
             let selected = self.find_player_for_device(device_id);
             let mut device = device.lock().unwrap();
-            if device.player_id != selected {
-                device.player_id = selected;
+            if device.player_id != selected.map(|s| s.0) {
+                let score = selected.map(|s| s.1).unwrap_or(0);
+                debug!("Selected player for device {} changed from {:?} to {:?}. New score: {}", device_id, device.player_id, selected, score);
+                device.player_id = selected.map(|s| s.0);
                 device.requires_update = true;
             }
         }
@@ -383,157 +407,3 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     }
 }
 
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd)]
-enum Assignment {
-    /// Player is assigned to a connected device, but it is not this device
-    AssignedToOtherDevice,
-    /// Player is not assigned to any device nor preferred by OS/user
-    Unassigned,
-    /// Player is assigned to a processed device
-    AssignedToThisDevice,
-}
-
-impl Assignment {
-    fn score(&self) -> isize {
-        match self {
-            Assignment::AssignedToOtherDevice => ASSIGNED_TO_OTHER_DEVICE_SCORE,
-            Assignment::Unassigned => UNASSIGNED_SCORE,
-            Assignment::AssignedToThisDevice => ASSIGNED_TO_THIS_DEVICE_SCORE,
-        }
-    }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlaybackStatus {
-    Playing,
-    Paused,
-    Stopped,
-}
-
-impl PlaybackStatus {
-    fn score(&self) -> isize {
-        match self {
-            Self::Playing => PLAYING_SCORE,
-            Self::Paused => PAUSED_SCORE,
-            Self::Stopped => STOPPED_SCORE,
-        }
-    }
-}
-
-impl From<FsctStatus> for PlaybackStatus {
-    fn from(status: FsctStatus) -> Self {
-        match status {
-            FsctStatus::Playing => Self::Playing,
-            FsctStatus::Paused => Self::Paused,
-            _ => Self::Stopped,
-        }
-    }
-}
-
-const PLAYING_SCORE: isize = 30;
-const PAUSED_SCORE: isize = 11;
-const STOPPED_SCORE: isize = 9;
-
-const ASSIGNED_TO_OTHER_DEVICE_SCORE: isize = 0;
-const UNASSIGNED_SCORE: isize = 14;
-const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 15;
-const IS_LAST_SELECTED_SCORE: isize = 15;
-const HAS_METADATA_SCORE: isize = 8;
-
-const PLAYING_ASSIGNMENT_SCOPE_SCALER: isize = 1000;
-const PLAYING_IS_LAST_SELECTED_SCORE: isize = 9;
-const PLAYING_HAS_METADATA_SCORE: isize = 130;
-
-//this is for reference and tests only:
-const PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS: [PlayerSelectionParams; 36] = [
-    // when assigned to other device: they are not relevant at all, so we return 0
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
-
-    // we should go here when there is no last selected player, so we are actually trying to find the best one
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 1 (unassigned - 1)
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 2 (assigned - 2)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, //3 (unassigned - 1, paused - 2)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, //4 (assigned - 2, paused - 2)
-
-    // metadata is more important than playback status or assignment when there is no last selected player - we just want to show something
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 1 (unassigned - 1)
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 2 (assigned - 2)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, //3 (unassigned - 1, paused - 2)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, //4 (assigned - 2, paused - 2)
-
-    // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player,
-    // so the order of other parameters doesn't matter
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 5 (unassigned - 1, is selected - 4)
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 6 (assigned - 2, is selected - 4
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 8 (assigned - 2, paused - 2, is selected - 4)
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 5 (unassigned - 1, is selected - 4)
-    PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 6 (assigned - 2, is selected - 4
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-    PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 8 (assigned - 2, paused - 2, is selected - 4)
-
-    // Playing are more prefered than not playing (if not assigned to another device)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
-
-    // prefer assignment over playback status, as well as last selected over metadata
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 11 (assigned - 2, playing - 8)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 11 (assigned - 2, playing - 8)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false },  // 12 (assigned - 2, playing - 8, is selected - 1)
-    PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true },  // 12 (assigned - 2, playing - 8, is selected - 1)
-];
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PlayerSelectionParams {
-    status: PlaybackStatus,
-    assignment: Assignment,
-    is_last_selected: bool,
-    has_metadata: bool,
-}
-
-
-impl PlayerSelectionParams {
-    fn score(&self) -> isize {
-        if self.assignment == Assignment::AssignedToOtherDevice {
-            // special case: when assigned to the other device, they are not relevant at all, so we return 0
-            return 0;
-        }
-
-        let mut score = 0;
-        let status_score = self.status.score();
-        score += self.assignment.score() * status_score;
-        if self.status != PlaybackStatus::Playing {
-            score += self.is_last_selected.then_some(IS_LAST_SELECTED_SCORE).unwrap_or(0) * status_score;
-            score += self.has_metadata.then_some(HAS_METADATA_SCORE).unwrap_or(0) * status_score;
-        } else {
-            score += self.assignment.score() * PLAYING_ASSIGNMENT_SCOPE_SCALER;
-            score += self.is_last_selected.then_some(PLAYING_IS_LAST_SELECTED_SCORE).unwrap_or(0) * self.assignment.score();
-            score += self.has_metadata.then_some(PLAYING_HAS_METADATA_SCORE).unwrap_or(0);
-        }
-
-        score
-    }
-}
-
-
-fn is_better_selection(player_params: &PlayerSelectionParams, current_selection: &Option<PlayerSelectionParams>) -> bool {
-    let current_score = current_selection.map(|p| p.score()).unwrap_or(0);
-    let player_score = player_params.score();
-    player_score > current_score
-}

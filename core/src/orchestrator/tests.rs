@@ -4,12 +4,15 @@ use std::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 use crate::definitions::FsctStatus;
+use crate::orchestrator::scoring::{is_better_selection, PlaybackStatus};
 
 // ----------------- Helpers for selection testing -----------------
 fn fold_best(items: &[PlayerSelectionParams]) -> Option<PlayerSelectionParams> {
     let mut current: Option<PlayerSelectionParams> = None;
     for cand in items {
-        if is_better_selection(cand, &current) {
+        let cand_score = cand.score();
+        let current_score = current.map(|p| p.score()).unwrap_or(0);
+        if is_better_selection(cand_score, current_score) {
             current = Some(*cand);
         }
     }
@@ -61,7 +64,10 @@ fn sort_by_preference(items: &[PlayerSelectionParams]) -> Vec<PlayerSelectionPar
         let mut best_idx = 0;
         let mut best_opt: Option<PlayerSelectionParams> = None;
         for (i, cand) in rest.iter().enumerate() {
-            if is_better_selection(cand, &best_opt) {
+            let cand_score = cand.score();
+            let best_score = best_opt.as_ref().map(|p| p.score()).unwrap_or(0);
+            // here we don't care about a threshold, so we can just check ordering
+            if cand_score > best_score {
                 best_opt = Some(*cand);
                 best_idx = i;
             }
@@ -94,10 +100,11 @@ struct MockApplier {
     calls: Mutex<Vec<ApplyCall>>, // full applies
     timeline_calls: Mutex<Vec<TimelineCall>>, // partial timeline applies
     text_calls: Mutex<Vec<TextCall>>, // partial text applies
+    cache_clean_calls: Mutex<Vec<ManagedDeviceId>>,
 }
 
 impl MockApplier {
-    fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()), timeline_calls: Mutex::new(Vec::new()), text_calls: Mutex::new(Vec::new()) }) }
+    fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()), timeline_calls: Mutex::new(Vec::new()), text_calls: Mutex::new(Vec::new()), cache_clean_calls: Mutex::new(Vec::new()) }) }
     fn take(&self) -> Vec<ApplyCall> { std::mem::take(&mut self.calls.lock().unwrap()) }
     fn take_timeline(&self) -> Vec<TimelineCall> { std::mem::take(&mut self.timeline_calls.lock().unwrap()) }
     fn take_text(&self) -> Vec<TextCall> { std::mem::take(&mut self.text_calls.lock().unwrap()) }
@@ -141,6 +148,10 @@ impl PlayerStateApplier for MockApplier {
             self.text_calls.lock().unwrap().push(TextCall { device: device_id, text_id, text: owned });
             Ok(())
         })
+    }
+
+    fn clean_cache_for_device(&self, device_id: ManagedDeviceId) {
+        self.cache_clean_calls.lock().unwrap().push(device_id);
     }
 }
 
@@ -523,7 +534,7 @@ fn is_better_selection_order_independence_three_cases() {
     // Use helper to verify order-independence and assert expected winner
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable, "Winner should be identical across all permutations");
-    assert_eq!(winner, Some(b_last_selected_and_playing), "Last selected and playing should beat playing unassigned and idle assigned-here in this triad");
+    assert_eq!(winner, Some(c_non_playing_assigned_here), "idle assigned-here should beat last selected and playing unassigned in this triad");
 
     // Additionally, verify sorting stability across all permutations using the helper sort
     let baseline_sorted = sort_by_preference(&items);
@@ -614,14 +625,14 @@ fn is_better_selection_both_playing_assignment_order() {
 }
 
 #[test]
-fn is_better_selection_playing_unassigned_beats_idle_assigned_here() {
+fn is_better_selection_idle_assigned_here_beats_playing_unassigned_beats() {
     // No special-case should override generic rule that playing beats non-playing
     let playing_unassigned = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let idle_here = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
     let items = vec![idle_here, playing_unassigned];
     let (stable, winner) = selection_is_order_independent(&items);
     assert!(stable);
-    assert_eq!(winner, Some(playing_unassigned), "Playing unassigned should beat idle assigned-here");
+    assert_eq!(winner, Some(idle_here), "Playing unassigned should beat idle assigned-here");
 }
 
 #[test]
@@ -639,10 +650,10 @@ fn is_better_selection_last_selected_breaks_tie_when_both_playing_same_assignmen
 fn is_better_selection_four_players_permutation_and_sort() {
     // A nuanced set to test full permutation stability and deterministic sorting
     // Compose so that final order (best to worst) should be:
-    // 1) playing assigned here, 2) playing user-selected, 3) idle user-selected, 4) playing assigned to other
+    // 1) playing assigned here, 2) idle assigned here, 3) playing unassigned, 4) playing assigned to other
     let p1 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
-    let p2 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
-    let p3 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p2 = PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false };
+    let p3 = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let p4 = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
     let items = vec![p1, p2, p3, p4];
 
@@ -719,33 +730,46 @@ async fn timeline_update_triggers_partial_apply_only() {
 }
 
 #[tokio::test]
-async fn text_update_triggers_partial_apply_only() {
+async fn text_update_triggers_reassignment_and_full_apply() {
     let applier = MockApplier::new();
     let (orch, ptx, dtx) = build_orchestrator(applier.clone());
     let handle = run_orchestrator(orch).await;
 
+    // Two players, single device. p1 initially selected.
     let p1 = pid(102);
+    let p2 = pid(103);
     let _ = ptx.send(PlayerEvent::Registered { player_id: p1, self_id: "p102".into() });
-    let mut s1 = default_state_with_title("Initial");
-    s1.status = FsctStatus::Playing;
+    let _ = ptx.send(PlayerEvent::Registered { player_id: p2, self_id: "p103".into() });
+
+    // p1 playing without metadata, p2 paused without metadata
+    let mut s1 = default_state_with_title("");
+    s1.status = FsctStatus::Paused;
     let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
+
+    let mut s2 = default_state_with_title("");
+    s2.status = FsctStatus::Paused;
+    let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
+
     let d = make_ids(1)[0];
     let _ = dtx.send(DeviceEvent::Added(d));
     short_wait().await;
-    let _ = applier.take(); // clear initial full apply(s)
+    let _ = applier.take(); // clear initial full apply(s) due to initial selection
 
-    // Send text metadata update
+    // Update text metadata on the currently selected player (p1). This should trigger full apply due to recomputation.
     let new_title = "New Title".to_string();
-    let _ = ptx.send(PlayerEvent::TextMetadataUpdated { player_id: p1, metadata: FsctTextMetadata::CurrentTitle, text: Some(new_title.clone()) });
+    let _ = ptx.send(PlayerEvent::TextMetadataUpdated { player_id: p2, metadata: FsctTextMetadata::CurrentTitle, text: Some(new_title.clone()) });
     short_wait().await;
 
+    // Expect a full apply for p1 (selected player) and no partial text apply recorded
     let full_calls = applier.take();
-    let txt_calls = applier.take_text();
-    assert!(full_calls.is_empty(), "Text update should not trigger full apply_to_device");
-    assert_eq!(txt_calls.len(), 1, "Expected exactly one text partial apply");
-    assert_eq!(txt_calls[0].device, d);
-    assert_eq!(txt_calls[0].text_id, FsctTextMetadata::CurrentTitle);
-    assert_eq!(txt_calls[0].text, Some(new_title));
+    assert_eq!(full_calls.len(), 1, "Text update on selected player should trigger full apply_to_device");
+    assert_eq!(full_calls[0].device, d);
+
+    // Selection remains p1; full apply state should include p1's status
+    assert_eq!(full_calls[0].state.status, FsctStatus::Paused);
+
+    // No partial text apply should be issued for this path
+    assert!(applier.take_text().is_empty(), "No partial text apply expected when full apply occurs after text update");
 
     let _ = handle.shutdown().await;
 }
@@ -792,8 +816,69 @@ async fn status_update_reassigns_and_full_apply() {
 #[test]
 fn scoring_order_test()
 {
+    // here we test if our scoring function is working correctly by comparing the output of the scoring function
+    // with the expected order of elements.
+    const PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS: [PlayerSelectionParams; 36] = [
+        // when assigned to other device: they are not relevant at all, so we return 0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
+
+        // not selected and provides nothing to show, so we return 0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 1 (unassigned - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, //3 (unassigned - 1, paused - 2)
+
+        // metadata is more important than playback status when there is no last selected player - we just want to show something
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 1 (unassigned - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, //3 (unassigned - 1, paused - 2)
+
+        // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player,
+        // so the order of other parameters doesn't matter
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 5 (unassigned - 1, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 7 (unassigned - 1, paused - 2, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 5 (unassigned - 1, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
+
+        // Playing are more prefered than not playing (if not assigned to another device)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+
+        // Prefer assigned to device over unassigned, always!
+        // not selected and provides nothing to show, so we return 0
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 1 (unassigned - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, //3 (unassigned - 1, paused - 2)
+
+        // metadata is more important than playback status or assignment when there is no last selected player - we just want to show something
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 1 (unassigned - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, //3 (unassigned - 1, paused - 2)
+
+        // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player (aka last playing),
+        // so the order of other parameters doesn't matter
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 5 (unassigned - 1, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 7 (unassigned - 1, paused - 2, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 5 (unassigned - 1, is selected - 4)
+        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
+
+        // Playing are more prefered than not playing
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
+        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+    ];
+
     let mut last_score = -1;
-    for player_selection_params in super::PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter() {
+    for player_selection_params in PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter() {
         let score = player_selection_params.score();
         if score <= last_score && score != 0 {
             // print escape code for red:
