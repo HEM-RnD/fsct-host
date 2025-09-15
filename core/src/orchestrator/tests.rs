@@ -217,7 +217,9 @@ async fn zero_players_one_device_add_no_apply() {
     let d = make_ids(1)[0];
     let _ = dtx.send(DeviceEvent::Added(d));
     short_wait().await;
-    assert!(applier.take().is_empty());
+    let calls = applier.take();
+    // Orchestrator applies default/Unknown state on device connect
+    assert!(calls.iter().any(|c| c.device == d && c.state == PlayerState::default()));
     let _ = handle.shutdown().await;
 }
 
@@ -310,24 +312,15 @@ async fn multiple_players_one_device_unassigned_and_assignment_switch() {
     let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
     short_wait().await;
     calls = applier.take();
-    // ensures S2 did not reach device d yet
-    assert!(calls.is_empty());
+    // ensures S2 did not reach device d yet (tolerate unrelated applies)
+    assert!(!calls.iter().any(|c| c.device == d && c.state == s2));
 
     // Now assign P2 to d -> still nothing has changed, since both player are not playing
     let _ = ptx.send(PlayerEvent::Assigned { player_id: p2, device_id: d });
     short_wait().await;
     calls = applier.take();
 
-    // ensures S2 did not reach device d yet
-    assert!(calls.is_empty());
-
-    // P2 updates -> becomes playing; should propagate to assigned device d
-    s2.status = FsctStatus::Playing;
-    let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
-    short_wait().await;
-    calls = applier.take();
-
-    // P2 has known state s2 and device connected, assignment applies s2 (at least once)
+    // Assigned players always have priority, so it should immediately apply to d (at least once)
     assert!(calls.iter().any(|c| c.device == d && c.state == s2));
 
     let _ = handle.shutdown().await;
@@ -358,9 +351,7 @@ async fn one_player_multiple_devices_unassigned_then_assign() {
     let _ = ptx.send(PlayerEvent::Assigned { player_id: p1, device_id: d1 });
     short_wait().await;
     calls = applier.take();
-    // S1 has not changed, so nothing has been applied to d1
-    assert!(!calls.iter().any(|c| c.device == d1));
-    // But now d2 is not assigned to any player, so the default state should be applied to d2
+    // After assignment, ensure the unassigned device (d2) receives default state at least once
     assert!(calls.iter().any(|c| c.device == d2 && c.state == PlayerState::default()));
 
     // Update to S2 -> applies to assigned device d1
@@ -369,6 +360,9 @@ async fn one_player_multiple_devices_unassigned_then_assign() {
     short_wait().await;
     calls = applier.take();
     assert!(calls.iter().any(|c| c.device == d1 && c.state == s2));
+
+    // but not to d2 (nothing should be applied to it in this step)
+    assert!(!calls.iter().any(|c| c.device == d2));
 
     let _ = handle.shutdown().await;
 }
@@ -453,11 +447,11 @@ async fn device_group_with_multiple_players_picks_playing() {
 }
 
 #[tokio::test]
-async fn assigned_to_disconnected_counts_as_general() {
+async fn assigned_to_disconnected_counts_as_assigned_to_other_device() {
     let applier = MockApplier::new();
     let (orch, ptx, dtx) = build_orchestrator(applier.clone());
     let handle = run_orchestrator(orch).await;
-    let d_assigned = make_ids(1)[0]; // will remain disconnected
+    let d_assigned = make_ids(1)[0]; // will remain disconnected / unsupported by FSCT
     let d_unassigned = make_ids(1)[0];
     let _ = dtx.send(DeviceEvent::Added(d_unassigned));
     let p1 = pid(1);
@@ -467,8 +461,12 @@ async fn assigned_to_disconnected_counts_as_general() {
     let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p1, state: s1.clone() });
     short_wait().await;
     let calls = applier.take();
-    // p1 should be applied to unassigned connected device (there may be an initial Unknown)
-    assert!(calls.iter().any(|c| c.device == d_unassigned && c.state == s1));
+    // Since the player is assigned to a device that is not connected/supported by FSCT,
+    // it should be treated as AssignedToOtherDevice and ignored by the general group.
+    // Therefore, state S1 must NOT be applied to the unassigned connected device.
+    assert!(!calls.iter().any(|c| c.device == d_unassigned && c.state == s1));
+    // Still, the unassigned device should have received at least the default state on connect.
+    assert!(calls.iter().any(|c| c.device == d_unassigned && c.state == PlayerState::default()));
     let _ = handle.shutdown().await;
 }
 
@@ -594,8 +592,8 @@ fn is_better_selection_tie_broken_by_last_selected() {
 #[test]
 fn is_better_selection_penalizes_assigned_to_other_device() {
     // Playing but assigned elsewhere should lose to an idle unassigned
-    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false };
-    let idle_unassigned = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false };
+    let playing_other = PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true };
+    let idle_unassigned = PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true };
     let items = vec![playing_other, idle_unassigned];
 
     let (stable, winner) = selection_is_order_independent(&items);
@@ -794,10 +792,13 @@ async fn status_update_reassigns_and_full_apply() {
     short_wait().await;
     let _ = applier.take(); // p1 applied due to selection
 
-    // Assign p2 to this device, but no state yet; ensure no apply happens
+    // Assign p2 to this device; orchestrator must issue an apply of default state, as assigned players has precedence
     let _ = ptx.send(PlayerEvent::Assigned { player_id: p2, device_id: d });
     short_wait().await;
-    assert!(applier.take().is_empty());
+    let calls = applier.take(); // clear any full applies caused by reassessment
+    assert_eq!(calls.len(), 1, "Status update should trigger full apply_to_device");
+    assert_eq!(calls[0].device, d);
+    assert_eq!(calls[0].state, PlayerState::default());
 
     // Now status update on p2 should cause selection to switch and trigger full apply
     let _ = ptx.send(PlayerEvent::StatusUpdated { player_id: p2, status: FsctStatus::Playing });

@@ -237,15 +237,19 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         debug!("StateUpdated: player {}", player_id);
 
         let mut status_changed = false;
+        let mut metadata_changed = false;
 
         if let Some(player) = self.players.get_mut(&player_id) {
+            let had_metadata = player.has_metadata();
             if player.state.status != state.status {
                 status_changed = true;
             }
             player.state = state;
+            let has_metadata_now = player.has_metadata();
+            metadata_changed = had_metadata != has_metadata_now;
         }
 
-        if status_changed {
+        if status_changed || metadata_changed {
             self.update_selected_players_for_devices();
         }
         self.mark_devices_require_update_by_player(player_id);
