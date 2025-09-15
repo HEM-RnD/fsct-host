@@ -820,72 +820,63 @@ fn scoring_order_test()
     // here we test if our scoring function is working correctly by comparing the output of the scoring function
     // with the expected order of elements.
     const PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS: [PlayerSelectionParams; 36] = [
-        // when assigned to other device: they are not relevant at all, so we return 0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false }, //0
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true }, //0
+        // when assigned to other device, they are not relevant at all and they will be ignored, so order does not matter
+        /*  0 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false },
+        /*  1 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false },
+        /*  2 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true },
+        /*  3 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false },
+        /*  4 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true },
+        /*  5 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false },
+        /*  6 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true },
+        /*  7 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true },
+        /*  8 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: false },
+        /*  9 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: false, has_metadata: true },
+        /* 10 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: false },
+        /* 11 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToOtherDevice, is_last_selected: true, has_metadata: true },
 
-        // not selected and provides nothing to show, so we return 0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 1 (unassigned - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, //3 (unassigned - 1, paused - 2)
+        // not selected and provides nothing to show, so it is irrevelant and will be ignored, so order does not matter
+        /* 12 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 0
+        /* 13 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 3 -> paused = 3
+        // now stopped with metadata
+        /* 14 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 4 -> has_metadata = 4
+        // this one is stopped, but last selected, so it is relevant and will be considered - but actually we have nothing to show
+        /* 15 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 6 - is_last_selected = 6
+        // ok, we prefer paused with metadata over stopped with last selected. Last selected stopped without metadata seems to be irrelevant
+        /* 16 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 7 -> 4 (metadata) + 3(paused) = 7
+        // last selected is generally better
+        /* 17 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 8 -> 3 (paused) + 6 (last selected) = 8
+        /* 18 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 10 -> 6 (last selected) + 4 (metadata) = 9
+        /* 19 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 13 -> 6 (last selected) + 4 (metadata) + 3 (paused) = 13
 
-        // metadata is more important than playback status when there is no last selected player - we just want to show something
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 1 (unassigned - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, //3 (unassigned - 1, paused - 2)
+        // Playing are more prefered than not playing (if not assigned to another device). Here the order may be slightly different if needed
+        /* 20 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 16 -> playing = 16
+        /* 21 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 20 -> 16 (playing) + 4 (metadata) = 20
+        /* 22 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 22 -> 16 (playing) + 6 (last selected) = 22
+        /* 23 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 26 -> 16 (playing) + 6 (last selected) + 4 (metadata) = 26
 
-        // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player,
-        // so the order of other parameters doesn't matter
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 5 (unassigned - 1, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 5 (unassigned - 1, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-
-        // Playing are more prefered than not playing (if not assigned to another device)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: false, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::Unassigned, is_last_selected: true, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
-
-        // Prefer assigned to device over unassigned, always!
-        // not selected and provides nothing to show, so we return 0
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 1 (unassigned - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, //3 (unassigned - 1, paused - 2)
-
-        // metadata is more important than playback status or assignment when there is no last selected player - we just want to show something
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 1 (unassigned - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, //3 (unassigned - 1, paused - 2)
-
-        // when paused or stopped, we prefer last selected player over others assuming that there is only one last selected player (aka last playing),
-        // so the order of other parameters doesn't matter
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 5 (unassigned - 1, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 5 (unassigned - 1, is selected - 4)
-        PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 7 (unassigned - 1, paused - 2, is selected - 4)
-
-        // Playing are more prefered than not playing
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false }, // 9 (unassigned - 1, playing - 8)
-        PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true }, // 10 (unassigned - 1, playing - 8, is selected - 1)
+        // Prefer assigned to device over unassigned, always! Rest parameters give us a stable order in the group, and it is the same as above
+        /* 24 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false },
+        /* 25 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false },
+        /* 26 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true },
+        /* 27 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false },
+        /* 28 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true },
+        /* 29 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false },
+        /* 30 */ PlayerSelectionParams { status: PlaybackStatus::Stopped, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true },
+        /* 31 */ PlayerSelectionParams { status: PlaybackStatus::Paused, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true },
+        /* 32 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: false },
+        /* 33 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: false, has_metadata: true },
+        /* 34 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: false },
+        /* 35 */ PlayerSelectionParams { status: PlaybackStatus::Playing, assignment: Assignment::AssignedToThisDevice, is_last_selected: true, has_metadata: true },
     ];
 
     let mut last_score = -1;
-    for player_selection_params in PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter() {
+    for (i, player_selection_params) in PLAYER_SELECTION_PARAMS_ALL_COMBINATIONS.iter().enumerate() {
         let score = player_selection_params.score();
         if score <= last_score && score != 0 {
             // print escape code for red:
             print!("\x1b[31m");
         }
-        println!("SCORE: {:2} | {:?}", score, player_selection_params);
+        println!("[{:2}] SCORE: {:2} | {:?}", i, score, player_selection_params);
         assert!(score > last_score || (score == 0 && last_score == 0), "Scores should be increasing, or zero in the begining");
         if score <= last_score && score != 0 {
             // print escape code to return to normal:

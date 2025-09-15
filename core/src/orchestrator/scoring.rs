@@ -37,24 +37,27 @@ pub struct PlayerSelectionParams {
 
 
 // so the importance is that:
-// * assignment
-// * playing status
-// * last selected
-// * metadata
-// * other statuses (pause/stop)
+// * assignment - has precedence overall
+// * playing status - has precedence over other statuses
+// * last selected, metadata & other statuses (pause/stop):
+//   * generally we prefer last-selected players, but
+//   * when they not provide metadata and they are stopped,
+//   * we use the paused one with metadata
+//   * we also prefer stopped with metadata over paused without metadata
+//   * because we want to show something.
 
 
 const ASSIGNED_TO_OTHER_DEVICE_SCORE: isize = 0;
-const UNASSIGNED_SCORE: isize = 16;
-const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 32;
-const PLAYING_SCORE: isize = 8;
-const HAS_METADATA_SCORE: isize = 2;
-const IS_LAST_SELECTED_SCORE: isize = 4;
-const PAUSED_SCORE: isize = 1;
+const UNASSIGNED_SCORE: isize = 32;
+const ASSIGNED_TO_THIS_DEVICE_SCORE: isize = 64;
+const PLAYING_SCORE: isize = 16;
+const HAS_METADATA_SCORE: isize = 4;
+const IS_LAST_SELECTED_SCORE: isize = 6;
+const PAUSED_SCORE: isize = 3;
 const STOPPED_SCORE: isize = 0;
 /// Constant telling us below which score player shouldn't be taken into consideration as a candidate
 /// for being selected.
-const IGNORE_PLAYER_THRESHOLD: isize = 18;
+const IGNORE_PLAYER_THRESHOLD: isize = 36;
 
 impl PlaybackStatus {
     fn score(&self) -> isize {
