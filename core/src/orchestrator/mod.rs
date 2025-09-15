@@ -39,7 +39,6 @@ use crate::service::{spawn_service, ServiceHandle};
 struct RegisteredPlayer {
     assigned_device: Option<ManagedDeviceId>,
     state: PlayerState,
-    is_assigned_device_attached: bool,
 }
 
 impl RegisteredPlayer {
@@ -49,13 +48,12 @@ impl RegisteredPlayer {
 
 
     fn score_for_player_and_device(&self, device_id: &ManagedDeviceId, is_last_selected: bool) -> isize {
-        let assignment_state = if self.assigned_device.as_ref() == Some(device_id) {
-            Assignment::AssignedToThisDevice
-        } else if self.is_assigned_device_attached {
-            Assignment::AssignedToOtherDevice
-        } else {
-            Assignment::Unassigned
+        let assignment_state = match self.assigned_device.as_ref() {
+            Some(id) if *id == *device_id => Assignment::AssignedToThisDevice,
+            Some(_) => Assignment::AssignedToOtherDevice,
+            None => Assignment::Unassigned,
         };
+
         let player_selection_params = PlayerSelectionParams {
             status: self.state.status.into(),
             is_last_selected,
@@ -217,7 +215,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         debug!("Assigned: player {} -> device {}", player_id, device_id);
         if let Some(player) = self.players.get_mut(&player_id) {
             player.assigned_device = Some(device_id);
-            player.is_assigned_device_attached = self.connected_devices.contains_key(&device_id);
         }
 
         self.update_selected_players_for_devices();
@@ -229,7 +226,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
 
         if let Some(player) = self.players.get_mut(&player_id) {
             player.assigned_device = None;
-            player.is_assigned_device_attached = false;
         }
 
         self.update_selected_players_for_devices();
@@ -333,33 +329,22 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     async fn handle_device_added(&mut self, device_id: ManagedDeviceId) {
         debug!("Device added: {}", device_id);
         self.connected_devices.insert(device_id, Mutex::new(ConnectedDevice::default()));
-        for player in self.players.values_mut() {
-            if player.assigned_device == Some(device_id) {
-                player.is_assigned_device_attached = true;
-            }
-        }
-        self.update_selected_players_for_devices();
-        self.apply_on_devices_requiring_update().await;
+        let device = self.connected_devices.get(&device_id).unwrap();
+        self.update_selected_player_for_device(&device_id, &device);
+        let state = self.get_state_for_device(&device.lock().unwrap());
+        self.applier.apply_to_device(device_id, &state).await.ok();
     }
 
     async fn handle_device_removed(&mut self, device_id: ManagedDeviceId) {
         debug!("Device removed: {}", device_id);
         self.connected_devices.remove(&device_id);
-        for player in self.players.values_mut() {
-            if player.assigned_device == Some(device_id) {
-                player.is_assigned_device_attached = false;
-            }
-        }
-        // Players previously assigned to this device may now fall back to general group if no other connected device
         self.applier.clean_cache_for_device(device_id);
-        self.update_selected_players_for_devices();
-        self.apply_on_devices_requiring_update().await;
     }
 
     // Selection helpers
-    fn find_player_for_device(&self, device_id: &ManagedDeviceId) -> Option<(ManagedPlayerId, isize)> {
+    fn find_player_for_device(&self, device_id: &ManagedDeviceId, device: &Mutex<ConnectedDevice>) -> Option<(ManagedPlayerId, isize)> {
         let mut selected: Option<(ManagedPlayerId, isize)> = None;
-        let last_selected = self.connected_devices.get(device_id)?.lock().unwrap().player_id.clone();
+        let last_selected = device.lock().unwrap().player_id.clone();
         for (player_id, player) in self.players.iter() {
             let is_last_selected = last_selected.as_ref().map(|id| *id == *player_id).unwrap_or(false);
             let player_score = player.score_for_player_and_device(device_id, is_last_selected);
@@ -373,14 +358,18 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
 
     fn update_selected_players_for_devices(&self) {
         for (device_id, device) in self.connected_devices.iter() {
-            let selected = self.find_player_for_device(device_id);
-            let mut device = device.lock().unwrap();
-            if device.player_id != selected.map(|s| s.0) {
-                let score = selected.map(|s| s.1).unwrap_or(0);
-                debug!("Selected player for device {} changed from {:?} to {:?}. New score: {}", device_id, device.player_id, selected, score);
-                device.player_id = selected.map(|s| s.0);
-                device.requires_update = true;
-            }
+            self.update_selected_player_for_device(device_id, device);
+        }
+    }
+
+    fn update_selected_player_for_device(&self, device_id: &ManagedDeviceId, device: &Mutex<ConnectedDevice>) {
+        let selected = self.find_player_for_device(device_id, device);
+        let mut device = device.lock().unwrap();
+        if device.player_id != selected.map(|s| s.0) {
+            let score = selected.map(|s| s.1).unwrap_or(0);
+            debug!("Selected player for device {} changed from {:?} to {:?}. New score: {}", device_id, device.player_id, selected, score);
+            device.player_id = selected.map(|s| s.0);
+            device.requires_update = true;
         }
     }
 
@@ -389,11 +378,7 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             let state = {
                 let mut device = device.lock().unwrap();
                 if device.requires_update {
-                    let state = device.player_id.as_ref()
-                        .map(|id| self.players.get(id))
-                        .flatten()
-                        .map(|p| p.state.clone())
-                        .unwrap_or_default();
+                    let state = self.get_state_for_device(&device);
                     device.requires_update = false;
                     Some(state)
                 } else {
@@ -404,6 +389,15 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
                 self.applier.apply_to_device(device_id.clone(), &state).await.ok();
             }
         }
+    }
+
+    fn get_state_for_device(&self, device: &ConnectedDevice) -> PlayerState {
+        let state = device.player_id.as_ref()
+            .map(|id| self.players.get(id))
+            .flatten()
+            .map(|p| p.state.clone())
+            .unwrap_or_default();
+        state
     }
 }
 
