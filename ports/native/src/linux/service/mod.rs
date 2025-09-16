@@ -26,7 +26,7 @@ mod cli;
 use cli::Cli;
 use clap::Parser;
 use log::{info, warn};
-use crate::linux::linux_local_socket_path;
+use crate::linux::socket_path;
 
 /// Linux service entrypoint with CLI to choose mode (standalone/driver/user).
 #[tokio::main(flavor = "current_thread")]
@@ -41,7 +41,7 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     env_logger::init_from_env(env);
     let mut services = MultiServiceHandle::new();
 
-    let endpoint = args.socket.clone().unwrap_or_else(|| linux_local_socket_path().to_string());
+    let endpoint = args.socket.clone().unwrap_or_else(|| socket_path().to_string());
 
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver
