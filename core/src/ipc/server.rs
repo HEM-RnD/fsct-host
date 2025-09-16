@@ -91,9 +91,12 @@ impl IpcServer {
                 }
                 Some(Err(e)) => {
                     error!("IPC accept failed: {}", e);
-                    break;
+                    return Err(anyhow::anyhow!("IPC accept failed: {}", e));
                 }
-                None => break,
+                None => {
+                    info!("IPC accept loop terminated");
+                    break
+                },
             }
         }
 

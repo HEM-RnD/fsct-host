@@ -16,6 +16,7 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 use std::time::Duration;
 use log::{debug, error, warn};
 use windows::{
@@ -33,11 +34,14 @@ use fsct_core::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum PlayerError {
+    #[error("Can't access player")]
     PermissionDenied,
+    #[error("Player not found")]
     PlayerNotFound,
-    Other(AnyError),
+    #[error("Other error: {0}")]
+    Other(#[from] AnyError),
 }
 
 fn get_timeline_info(playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,

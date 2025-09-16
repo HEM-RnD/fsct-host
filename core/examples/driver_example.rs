@@ -37,9 +37,6 @@ async fn main() -> Result<()> {
 
     driver.update_player_state(player_id, state).await?;
 
-    // Preferred player can be set via driver as well
-    driver.set_preferred_player(Some(player_id)).await?;
-
     info!("Driver example is running. Press Ctrl+C to shut down.");
 
     // Wait for Ctrl+C signal

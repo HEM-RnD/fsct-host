@@ -1,3 +1,21 @@
+// Copyright 2025 HEM Sp. z o.o.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// This file is part of an implementation of Ferrum Streaming Control Technology™,
+// which is subject to additional terms found in the LICENSE-FSCT.md file.
+
+
 // Example: LoggingDriver that prints all driver interactions to stdout/stderr
 // Run with:
 //   cargo run --package fsct_driver_service --example logging_driver
@@ -22,12 +40,11 @@ use fsct_driver_service::run_os_watcher;
 #[derive(Default)]
 struct LoggingDriver {
     players: Mutex<HashMap<ManagedPlayerId, String>>, // id -> name
-    preferred: Mutex<Option<ManagedPlayerId>>,
     next_id: Mutex<u32>,
 }
 
 impl LoggingDriver {
-    fn new() -> Self { Self { players: Mutex::new(HashMap::new()), preferred: Mutex::new(None), next_id: Mutex::new(1) } }
+    fn new() -> Self { Self { players: Mutex::new(HashMap::new()), next_id: Mutex::new(1) } }
     fn alloc_id(&self) -> ManagedPlayerId {
         let mut n = self.next_id.lock().unwrap();
         let id = *n;
@@ -83,18 +100,6 @@ impl FsctDriver for LoggingDriver {
         let name = self.players.lock().unwrap().get(&player_id).cloned().unwrap_or_else(|| "<unknown>".into());
         println!("[LoggingDriver] update_player_metadata: id={:?} ({}), meta={:?} => {:?}", player_id, name, metadata_id, new_text);
         Ok(())
-    }
-
-    async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> Result<(), Error> {
-        *self.preferred.lock().unwrap() = preferred;
-        println!("[LoggingDriver] set_preferred_player: {:?}", preferred);
-        Ok(())
-    }
-
-    async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
-        let v = *self.preferred.lock().unwrap();
-        println!("[LoggingDriver] get_preferred_player => {:?}", v);
-        v
     }
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {

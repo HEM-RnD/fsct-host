@@ -1,3 +1,20 @@
+// Copyright 2025 HEM Sp. z o.o.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// This file is part of an implementation of Ferrum Streaming Control Technology™,
+// which is subject to additional terms found in the LICENSE-FSCT.md file.
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -36,8 +53,6 @@ impl FsctDriver for TestDriver {
     async fn update_player_status(&self, _player_id: fsct_core::ManagedPlayerId, _new_status: fsct_core::definitions::FsctStatus) -> Result<(), anyhow::Error> { Ok(()) }
     async fn update_player_timeline(&self, _player_id: fsct_core::ManagedPlayerId, _new_timeline: Option<fsct_core::definitions::TimelineInfo>) -> Result<(), anyhow::Error> { Ok(()) }
     async fn update_player_metadata(&self, _player_id: fsct_core::ManagedPlayerId, _metadata_id: fsct_core::definitions::FsctTextMetadata, _new_text: Option<String>) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn set_preferred_player(&self, _preferred: Option<fsct_core::ManagedPlayerId>) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn get_preferred_player(&self) -> Option<fsct_core::ManagedPlayerId> { None }
     async fn get_player_assigned_device(&self, _player_id: fsct_core::ManagedPlayerId) -> Result<Option<fsct_core::ManagedDeviceId>, anyhow::Error> { Ok(None) }
 }
 

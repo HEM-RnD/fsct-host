@@ -1,3 +1,20 @@
+// Copyright 2025 HEM Sp. z o.o.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// This file is part of an implementation of Ferrum Streaming Control Technology™,
+// which is subject to additional terms found in the LICENSE-FSCT.md file.
+
 // Consolidated happy-path IPC integration tests
 // Covers: register/unregister, assign/unassign, updates, preferred player and assigned device
 
@@ -47,7 +64,7 @@ mod helpers {
         let mut server = IpcServer::with_socket_path(driver, endpoint.as_str());
         let server_task = spawn_service(async move |mut s| -> () {
             tokio::select! {
-                _ = server.serve() => (),
+                res = server.serve() => res.unwrap(),
                 _ = s.signaled() => (),
             }
             server.shutdown().await;
@@ -57,7 +74,8 @@ mod helpers {
         let client = loop {
             match connector(endpoint.clone()).await {
                 Ok(c) => break c,
-                Err(_) => {
+                Err(e) => {
+                    log::error!("Failed to connect to IPC server: {}", e);
                     if start.elapsed() > timeout {
                         server_task.abort();
                         panic!("Failed to connect to IPC server in time");
@@ -95,8 +113,6 @@ mod helpers {
         pub enable_update_status: bool,
         pub enable_update_timeline: bool,
         pub enable_update_metadata: bool,
-        pub enable_set_preferred: bool,
-        pub enable_get_preferred: bool,
         pub enable_get_assigned_device: bool,
 
         // register/unregister captures
@@ -115,10 +131,6 @@ mod helpers {
         pub status_calls: Mutex<Vec<(u32, FsctStatus)>>,
         pub timeline_calls: Mutex<Vec<(u32, Option<TimelineInfo>)>>,
         pub metadata_calls: Mutex<Vec<(u32, FsctTextMetadata, Option<String>)>>,
-
-        // preferred captures/state
-        pub set_calls: Mutex<Vec<Option<u32>>>,
-        pub current_preferred: Mutex<Option<ManagedPlayerId>>,
     }
 
     impl FsctDriverMock {
@@ -132,8 +144,6 @@ mod helpers {
                 enable_update_status: false,
                 enable_update_timeline: false,
                 enable_update_metadata: false,
-                enable_set_preferred: false,
-                enable_get_preferred: false,
                 enable_get_assigned_device: false,
                 register_calls: Mutex::new(Vec::new()),
                 unregister_calls: Mutex::new(Vec::new()),
@@ -146,8 +156,6 @@ mod helpers {
                 status_calls: Mutex::new(Vec::new()),
                 timeline_calls: Mutex::new(Vec::new()),
                 metadata_calls: Mutex::new(Vec::new()),
-                set_calls: Mutex::new(Vec::new()),
-                current_preferred: Mutex::new(None),
             }
         }
     }
@@ -193,16 +201,6 @@ mod helpers {
             if !self.enable_update_metadata { return Err(anyhow::anyhow!("not used")); }
             self.metadata_calls.lock().unwrap().push((player_id.get(), metadata_id, new_text));
             Ok(())
-        }
-        async fn set_preferred_player(&self, preferred: Option<ManagedPlayerId>) -> anyhow::Result<(), anyhow::Error> {
-            if !self.enable_set_preferred { return Err(anyhow::anyhow!("not used")); }
-            self.set_calls.lock().unwrap().push(preferred.map(|p| p.get()));
-            *self.current_preferred.lock().unwrap() = preferred;
-            Ok(())
-        }
-        async fn get_preferred_player(&self) -> Option<ManagedPlayerId> {
-            if !self.enable_get_preferred { return None; }
-            *self.current_preferred.lock().unwrap()
         }
         async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> {
             if !self.enable_get_assigned_device { return Err(anyhow::anyhow!("not used")); }
@@ -359,43 +357,6 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
         assert_eq!(calls[0].1.texts.title, state.texts.title);
         assert_eq!(calls[0].1.texts.album, state.texts.album);
     }
-
-    server_task.shutdown().await?;
-    Ok(())
-}
-
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ipc_preferred_device_methods() -> anyhow::Result<()> {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let mut um = helpers::FsctDriverMock::new();
-    um.enable_set_preferred = true;
-    um.enable_get_preferred = true;
-    um.enable_register = true;
-    um.fixed_id = std::num::NonZeroU32::new(101).unwrap();
-    let mock = Arc::new(um);
-    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
-
-    let p1 = client.register_player("p101".to_string()).await?;
-
-    // set/get preferred
-    client.set_preferred_player(Some(p1)).await?;
-    {
-        let calls = mock.set_calls.lock().unwrap().clone();
-        assert_eq!(calls, vec![Some(p1.get())]);
-    }
-    let got = client.get_preferred_player().await;
-    assert_eq!(got, Some(p1));
-
-    client.set_preferred_player(None).await?;
-    {
-        let calls = mock.set_calls.lock().unwrap().clone();
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[1], None);
-    }
-    let got2 = client.get_preferred_player().await;
-    assert_eq!(got2, None);
 
     server_task.shutdown().await?;
     Ok(())
@@ -642,10 +603,7 @@ async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
     st.status = FsctStatus::Paused;
     assert!(client.update_player_state(bad_pid, st).await.is_err());
 
-    // 8) set_preferred_player(Some(bad_pid)) should fail
-    assert!(client.set_preferred_player(Some(bad_pid)).await.is_err());
-
-    // 9) get_player_assigned_device should fail
+    // 8) get_player_assigned_device should fail
     assert!(client.get_player_assigned_device(bad_pid).await.is_err());
 
     server_task.shutdown().await?;
