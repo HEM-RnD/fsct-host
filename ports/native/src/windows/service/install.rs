@@ -25,8 +25,9 @@ use windows_service::{
     },
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
-use crate::windows::service::cli::LogLevel;
-use crate::windows::service::constants::{SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_DESCRIPTION};
+use crate::cli::LogLevel;
+use crate::windows::service::constants::{DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION, USER_SERVICE_DISPLAY_NAME, USER_SERVICE_DESCRIPTION};
+use crate::windows::service::get_service_name;
 
 fn get_service_type(user_service: bool) -> ServiceType
 {
@@ -76,11 +77,14 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
     };
     launch_arguments.extend_from_slice(&[OsString::from("service"), OsString::from("run")]);
 
+    let service_name = get_service_name(user_service);
+    let service_display_name = if user_service { USER_SERVICE_DISPLAY_NAME } else { DRIVER_SERVICE_DISPLAY_NAME };
+
     // Create the service info
     debug!("Creating service info");
     let service_info = ServiceInfo {
-        name: OsString::from(SERVICE_NAME),
-        display_name: OsString::from(SERVICE_DISPLAY_NAME),
+        name: OsString::from(service_name),
+        display_name: OsString::from(service_display_name),
         service_type: get_service_type(user_service),
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
@@ -103,7 +107,8 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
 
     // Set the service description
     debug!("Setting service description");
-    if let Err(e) = service.set_description(SERVICE_DESCRIPTION) {
+    let service_description = if user_service { USER_SERVICE_DESCRIPTION } else { DRIVER_SERVICE_DESCRIPTION };
+    if let Err(e) = service.set_description(service_description) {
         error!("Failed to set service description: {}", e);
         return Err(e.into());
     }
@@ -113,8 +118,10 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
     Ok(())
 }
 
-pub fn uninstall_service() -> Result<()> {
+pub fn uninstall_service(user_service: bool) -> Result<()> {
     debug!("Starting service uninstallation");
+
+    let service_name = get_service_name(user_service);
 
     debug!("Connecting to service manager");
     let manager_access = ServiceManagerAccess::CONNECT;
@@ -126,9 +133,9 @@ pub fn uninstall_service() -> Result<()> {
         }
     };
 
-    debug!("Opening service: {}", SERVICE_NAME);
+    debug!("Opening service: {}", service_name);
     let service_access = ServiceAccess::DELETE;
-    let service = match service_manager.open_service(SERVICE_NAME, service_access) {
+    let service = match service_manager.open_service(service_name, service_access) {
         Ok(service) => service,
         Err(e) => {
             error!("Failed to open service: {}", e);

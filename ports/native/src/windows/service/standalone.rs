@@ -20,7 +20,7 @@ use tokio::runtime::Runtime;
 use std::sync::Arc;
 use fsct_core::LocalDriver;
 
-use crate::windows::service::cli::LogLevel;
+use crate::cli::LogLevel;
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
 use crate::run_os_watcher;
@@ -68,6 +68,8 @@ async fn standalone_task() -> anyhow::Result<()> {
 
 // Function to run the service in standalone mode (for debugging)
 pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
+    // todo support driver and user here
+    
     // Initialize logger for standalone mode
     if let Err(e) = init_standalone_logger(log_level) {
         eprintln!("Failed to initialize logger: {}", e);

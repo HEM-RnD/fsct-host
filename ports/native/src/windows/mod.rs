@@ -17,3 +17,5 @@
 
 pub mod service;
 pub mod player;
+
+pub fn socket_path() -> &'static str { "\\\\.\\pipe\\fsct_driver"}

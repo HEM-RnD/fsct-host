@@ -29,6 +29,7 @@ use macos::*;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+mod cli;
 
 #[cfg(target_os = "linux")]
 use linux::*;

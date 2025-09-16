@@ -18,12 +18,11 @@
 use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver, MultiServiceHandle, FsctDriver};
+use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
 use std::sync::Arc;
 use crate::run_os_watcher;
 
-mod cli;
-use cli::Cli;
+use crate::cli::Cli;
 use clap::Parser;
 use log::{info, warn};
 use crate::linux::socket_path;

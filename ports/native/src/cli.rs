@@ -16,9 +16,9 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::str::FromStr;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Subcommand, ValueEnum};
 use log::LevelFilter;
-
+pub use clap::Parser;
 // Define log levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum LogLevel {
@@ -68,18 +68,31 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Set the log level
     #[arg(short, long, value_enum, default_value_t = LogLevel::Info)]
     pub log_level: LogLevel,
 
+    #[cfg(target_os = "windows")]
     #[command(subcommand)]
     pub command: Option<Commands>,
+
+    /// Run in driver mode (expose LocalDriver over IPC)
+    #[arg(long, short, conflicts_with = "user")]
+    pub driver: bool,
+
+    /// Run in user mode (OS watcher talks to IPC driver)
+    #[arg(long, short, conflicts_with = "driver")]
+    pub user: bool,
+
+    /// Path to the Unix Domain Socket or Windows Named Pipe used by FSCT IPC.
+    #[arg(long, short)]
+    pub endpoint: Option<String>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Service management commands
     Service {
@@ -88,7 +101,7 @@ pub enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum ServiceCommands {
     /// Install the service
     Install {
@@ -99,10 +112,6 @@ pub enum ServiceCommands {
         /// Service log level
         #[arg(short, long, value_enum)]
         service_log_level: Option<LogLevel>,
-
-        /// Should be a user (per-session) service
-        #[arg(short, long)]
-        user_service: bool,
     },
 
     /// Uninstall the service

@@ -16,7 +16,6 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 // Re-export modules
-pub mod cli;
 pub mod constants;
 pub mod install;
 pub mod logger;
@@ -24,8 +23,8 @@ pub mod runtime;
 pub mod standalone;
 
 // Re-export commonly used items
-pub use cli::{Cli, Commands, ServiceCommands, LogLevel};
-pub use constants::{SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_DESCRIPTION};
+pub use crate::cli::*;
+pub use constants::{DRIVER_SERVICE_NAME, DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION};
 pub use install::{install_service, uninstall_service};
 pub use logger::{init_service_logger, init_install_logger, init_standalone_logger};
 pub use runtime::service_main;
@@ -33,7 +32,15 @@ pub use standalone::run_standalone;
 
 use anyhow::bail;
 use log::{info, error, debug};
-use clap::Parser;
+
+fn get_service_name(user_service: bool) -> &'static str {
+    if user_service {
+        DRIVER_SERVICE_NAME
+    } else {
+        DRIVER_SERVICE_NAME
+    }
+}
+
 
 pub fn fsct_main() -> anyhow::Result<()> {
     // Parse command line arguments using clap
@@ -44,8 +51,13 @@ pub fn fsct_main() -> anyhow::Result<()> {
     if let Some(command) = cli.command {
         match command {
             Commands::Service { command } => {
+                if !cli.user && !cli.driver {
+                    eprintln!("Service command must be used in user or driver mode");
+                    bail!("Service command must be used in user or driver mode");
+                }
+                let user_service = cli.user;
                 match command {
-                    ServiceCommands::Install { verbose, service_log_level,  user_service} => {
+                    ServiceCommands::Install { verbose, service_log_level } => {
                         // Initialize logger for install command
                         if let Err(e) = init_install_logger(verbose, log_level) {
                             eprintln!("Failed to initialize logger: {}", e);
@@ -58,7 +70,7 @@ pub fn fsct_main() -> anyhow::Result<()> {
                         } else {
                             info!("Service installed successfully");
                         }
-                        return result;
+                        result
                     }
                     ServiceCommands::Uninstall { verbose } => {
                         // Initialize logger for uninstall command
@@ -67,13 +79,13 @@ pub fn fsct_main() -> anyhow::Result<()> {
                             bail!("Failed to initialize logger: {}", e);
                         }
                         debug!("Uninstalling service with log level: {}", log_level);
-                        let result = uninstall_service();
+                        let result = uninstall_service(user_service);
                         if let Err(ref e) = result {
                             error!("Failed to uninstall service: {}", e);
                         } else {
                             info!("Service uninstalled successfully");
                         }
-                        return result;
+                        result
                     }
                     ServiceCommands::Run => {
                         // Initialize the logger first thing
@@ -84,13 +96,13 @@ pub fn fsct_main() -> anyhow::Result<()> {
                         }
                         // Run as a service
                         info!("Service starting with log level: {}", log_level);
-                        return runtime::start_service();
+                        runtime::start_service(user_service)
                     }
                 }
             }
         }
+    } else {
+        // If no arguments provided, run in standalone mode
+        run_standalone(log_level)
     }
-
-    // If no arguments provided, run in standalone mode
-    run_standalone(log_level)
 }

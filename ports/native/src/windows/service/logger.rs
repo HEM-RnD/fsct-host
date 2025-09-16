@@ -22,7 +22,7 @@ use log4rs::{
     config::{Appender, Config, Root},
     encode::pattern::PatternEncoder,
 };
-use crate::windows::service::cli::LogLevel;
+use crate::cli::LogLevel;
 use crate::windows::service::runtime::get_current_session_id;
 
 pub fn get_log_dir() -> anyhow::Result<PathBuf> {
