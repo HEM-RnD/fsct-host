@@ -16,6 +16,11 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 // Service constants
-pub const SERVICE_NAME: &str = "FsctDriverService";
-pub const SERVICE_DISPLAY_NAME: &str = "Ferrum Streaming Control Technology Driver Service";
-pub const SERVICE_DESCRIPTION: &str = "This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver.";
+pub const DRIVER_SERVICE_NAME: &str = "FsctDriverService";
+pub const DRIVER_SERVICE_DISPLAY_NAME: &str = "Ferrum Streaming Control Technology Driver Service";
+pub const DRIVER_SERVICE_DESCRIPTION: &str = "This service provides support for Ferrum Streaming Control Technology with compatible devices. It acts as user space driver and uses WINUSB as kernel space driver.";
+
+pub const USER_SERVICE_NAME: &str = "FsctUserService";
+pub const USER_SERVICE_DISPLAY_NAME: &str = "Ferrum Streaming Control Technology User Service";
+pub const USER_SERVICE_DESCRIPTION: &str = "This service gets track metadata from players registered in user \
+session and send them into FSCT driver via local pipe.";

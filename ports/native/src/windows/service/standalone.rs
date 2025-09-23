@@ -15,15 +15,17 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use fsct_core::LocalDriver;
+use anyhow::anyhow;
+use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
 
-use crate::windows::service::cli::LogLevel;
+use crate::cli::{Cli, LogLevel};
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
 use crate::run_os_watcher;
+use crate::windows::socket_path;
 
 async fn shutdown_signal() {
     debug!("Press Ctrl+C or close the console window to exit");
@@ -41,33 +43,58 @@ async fn shutdown_signal() {
     }
 }
 
-async fn standalone_task() -> anyhow::Result<()> {
-    debug!("Creating LocalDriver and starting services");
-    let driver = Arc::new(LocalDriver::with_new_managers());
+async fn standalone_task(args: Cli) -> anyhow::Result<()> {
+    let endpoint = args.endpoint.clone().unwrap_or_else(|| socket_path().to_string());
 
-    debug!("Starting orchestrator + USB watch via LocalDriver::run()");
-    let mut services = driver.run().await
-                             .inspect(|_| debug!("Orchestrator + USB watch started successfully"))
-                             .map_err(|e| anyhow::anyhow!("Failed to start orchestrator + USB watch: {}", e))?;
+    let mut services = MultiServiceHandle::new();
+
+    let driver: Arc<dyn FsctDriver> = if args.user {
+        // In user mode, connect to IPC driver
+        info!("Connecting to IPC driver at {}", endpoint);
+        Arc::new(fsct_core::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
+    } else {
+        // in driver and standalone mode use in-process driver
+        info!("Starting in-process driver and orchestrator");
+        let driver = Arc::new(LocalDriver::with_new_managers());
+        services = driver.run().await.map_err(|e| anyhow!(e))?;
+        driver
+    };
 
 
-    debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
+    let ok  = if args.driver {
+        info!("Starting IPC server at {}", endpoint);
+        let ipc = fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone());
+    services.add(ipc);
+        true
+    } else {
+        // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
+        debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
+        if let Ok(watcher) = run_os_watcher(driver.clone()).await {
+            services.add(watcher);
+            true
+        } else {
+            warn!("Failed to start OS watcher");
+            false
+        }
+    };
 
-    let result = run_os_watcher(driver.clone()).await
-                                               .map(|w| services.add(w))
-                                               .inspect_err(|e| error!("Failed to start OS watcher: {:?}", e));
-
-    if result.is_ok() {
+    if ok {
         shutdown_signal().await;
     }
 
     debug!("Shutting down services");
-    services.shutdown().await.map_err(|e| anyhow::anyhow!("Failed to shutdown services: {}", e))?;
+
+    let shutdown_res = services.shutdown().await
+                               .inspect_err(|e| log::error!("Shutdown error: {}", e));
+
+    shutdown_res?;
     Ok(())
 }
 
 // Function to run the service in standalone mode (for debugging)
-pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
+pub fn run_standalone(log_level: LogLevel, args: Cli) -> anyhow::Result<()> {
+    // todo support driver and user here
+    
     // Initialize logger for standalone mode
     if let Err(e) = init_standalone_logger(log_level) {
         eprintln!("Failed to initialize logger: {}", e);
@@ -81,7 +108,7 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        standalone_task().await
+        standalone_task(args).await
                          .map_err(|e| error!("Failed with error: {}", e))
                          .ok();
     });

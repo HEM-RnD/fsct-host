@@ -20,6 +20,6 @@ pub mod player;
 
 /// Returns the default path of the Unix Domain Socket used by FSCT IPC on Linux.
 /// It prefers XDG_RUNTIME_DIR and falls back to /tmp when unavailable.
-pub fn linux_local_socket_path() -> &'static str {
+pub fn socket_path() -> &'static str {
     "/run/fsct/fsct.sock"
 }

@@ -15,11 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
+use clap::Parser;
 use log::{info, error, debug};
+use tokio::select;
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows_service::{
     service::{
@@ -31,15 +33,17 @@ use windows_service::{
     define_windows_service,
 };
 use windows_service::service::ServiceType;
-use crate::windows::service::constants::SERVICE_NAME;
-use fsct_core::LocalDriver;
+use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
+use fsct_core::ipc::client::IpcDriver;
 use crate::run_os_watcher;
+use crate::cli::Cli;
+use crate::windows::service::get_service_name;
+use crate::windows::socket_path;
 
 // Define service events
 #[derive(Clone)]
 pub enum ServiceEvent {
     Shutdown,
-    SessionChange(windows_service::service::SessionChangeParam),
 }
 
 pub fn get_current_session_id() -> Option<u32> {
@@ -54,8 +58,9 @@ pub fn get_current_session_id() -> Option<u32> {
 define_windows_service!(ffi_service_main, service_main);
 
 // Public function to start the service
-pub fn start_service() -> Result<()> {
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
+pub fn start_service(user_service: bool) -> Result<()> {
+    let service_name = get_service_name(user_service);
+    service_dispatcher::start(service_name, ffi_service_main)?;
     Ok(())
 }
 
@@ -65,22 +70,34 @@ pub fn service_main(arguments: Vec<OsString>) {
     }
 }
 
-fn get_service_type_from_manager() -> anyhow::Result<ServiceType> {
+fn get_service_type_from_manager(name: impl AsRef<OsStr>) -> anyhow::Result<ServiceType> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let service = manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_CONFIG)?;
+    let service = manager.open_service(name, ServiceAccess::QUERY_CONFIG)?;
     let config = service.query_config()?;
     Ok(config.service_type)
 }
 
+fn get_socket_name(cli: &Cli) -> String {
+    if let Some(endpoint) = &cli.endpoint {
+        endpoint.clone()
+    } else {
+        socket_path().to_string()
+    }
+}
+
 pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
-    // Create a Tokio runtime for async operations
+    let cli = Cli::parse();
+    debug!("Parsed arguments: {:?}", cli);
+
+    let service_name = get_service_name(cli.user);
+
     debug!("Creating Tokio runtime");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
     // Create a broadcast channel for events that can be used from both sync and async contexts
-    let (event_tx, _) = tokio::sync::broadcast::channel::<ServiceEvent>(10);
+    let (event_tx, _) = tokio::sync::broadcast::channel::<ServiceEvent>(2);
 
     // Clone the sender for use in the service control handler
     let event_tx_clone = event_tx.clone();
@@ -95,22 +112,16 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            ServiceControl::SessionChange(param) => {
-                debug!("Received session change event: {:?}, session ID: {}", param.reason, param.notification.session_id);
-                let _ = event_tx_clone.send(ServiceEvent::SessionChange(param));
-                ServiceControlHandlerResult::NoError
-            }
             _ => {
                 debug!("Received unsupported control event: {:?}", control_event);
                 ServiceControlHandlerResult::NotImplemented
             }
         }
     };
-    let service_type = get_service_type_from_manager()?;
-    let is_user_service = service_type.contains(ServiceType::USER_OWN_PROCESS);
+    let service_type = get_service_type_from_manager(service_name)?;
 
     debug!("Registering service control handler");
-    let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
+    let status_handle = service_control_handler::register(service_name, event_handler)?;
 
     // Tell the system that the service is starting
     debug!("Setting service status to StartPending");
@@ -124,59 +135,71 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         process_id: None,
     })?;
 
+    let endpoint_name = get_socket_name(&cli);
+
     // Run the service in the Tokio runtime
     rt.block_on(async {
-        // Create a service state to manage the service tasks
-        let mut service_state;
-
-        // Get the current active console session ID
-        // This is the session ID of the user who is currently logged on to the physical console
-        let current_session_id = get_current_session_id();
-        info!("Assigned session ID: {:?}", current_session_id);
-
-        // Note: The assigned session ID is the session ID of the user who is currently logged on to the physical console
-        // when the service starts. This is the session that the service is assigned to and should run for.
-        // We only start service tasks for this session and stop them for all other sessions.
 
         // Run driver
         debug!("Initializing driver");
-        let driver = Arc::new(LocalDriver::with_new_managers());
-        let mut driver_handle = match driver.clone().run().await
-        {
-            Ok(driver_handle) => driver_handle,
-            Err(e) => {
-                error!("Failed to run driver: {}", e);
-                return;
-            }
+
+        let (driver, mut service_handle) = if cli.driver {
+            let driver = Arc::new(LocalDriver::with_new_managers());
+            let mut service_handle = match driver.clone().run().await
+            {
+                Ok(driver_handle) => driver_handle,
+                Err(e) => {
+                    error!("Failed to run driver: {}", e);
+                    return;
+                }
+            };
+            let ipc_server_handle = fsct_core::ipc::server::run_ipc_server_with_endpoint_path(
+                driver.clone(),
+                endpoint_name.clone());
+            service_handle.add(ipc_server_handle);
+            (driver as Arc<dyn FsctDriver>, service_handle)
+        } else {
+            let ipc_driver = match IpcDriver::connect_to_endpoint(endpoint_name.clone()).await {
+                Ok(driver) => driver,
+                Err(e) => {
+                    error!("Failed init IPC driver: {}", e);
+                    return;
+                }
+            };
+            (Arc::new(ipc_driver) as Arc<dyn FsctDriver>, MultiServiceHandle::new())
         };
 
         // Initialize the player
-        debug!("Initializing native platform player");
-        let mut retries = 0;
-        let os_watcher_handle = loop {
-            match run_os_watcher(driver.clone()).await {
-                Ok(player) => break player,
-                Err(e) => {
-                    retries += 1;
-                    if retries >= 10 {
-                        error!("Failed to initialize player after 10 retries: {:?}", e);
-                        return;
+        let success = if cli.user {
+            debug!("Initializing native platform player");
+            let mut retries = 0;
+            loop {
+                match run_os_watcher(driver.clone()).await {
+                    Ok(player) => {
+                        service_handle.add(player);
+                        break true
+                    },
+                    Err(e) => {
+                        retries += 1;
+                        if retries >= 10 {
+                            error!("Failed to initialize player after 10 retries: {:?}", e);
+                            break false
+                        }
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        debug!("Retrying initialization, attempt {}/10", retries + 1);
                     }
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    debug!("Retrying initialization, attempt {}/10", retries + 1);
                 }
             }
+        } else {
+            true
         };
-
-        driver_handle.add(os_watcher_handle);
-        service_state = Some(driver_handle);
 
         // Tell the system that the service is running
         debug!("Setting service status to Running");
         let result = status_handle.set_service_status(ServiceStatus {
             service_type,
             current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SESSION_CHANGE,
+            controls_accepted: ServiceControlAccept::STOP,
             exit_code: ServiceExitCode::Win32(0),
             checkpoint: 0,
             wait_hint: Duration::default(),
@@ -199,111 +222,19 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             }
         });
 
-        // Wait for events
-        debug!("Waiting for service events");
-        loop {
-            match event_rx.recv().await {
-                Ok(event) => {
-                    match event {
-                        ServiceEvent::Shutdown => {
-                            info!("Received shutdown event, stopping...");
-                            break;
-                        },
-                        ServiceEvent::SessionChange(param) => {
-                            let session_id = param.notification.session_id;
-                            debug!("Processing session change event: {:?}, session ID: {}", param.reason, session_id);
-
-                            if !is_user_service {
-                                debug!("This is not a user service, ignoring session change event");
-                                continue;
-                            }
-
-                            // Handle session change based on both the reason and session ID
-                            // We only care about events for the session assigned to this process (assigned_session_id)
-
-                            // First, check if this event is for our assigned session
-                            if current_session_id != Some(session_id) {
-                                debug!("Event for session {} doesn't match assigned session {:?}, ignoring",
-                                      session_id, current_session_id);
-                                continue;
-                            }
-
-                            // Now handle events for our assigned session
-                            match param.reason {
-                                // For console connect, remote connect, and session logon events
-                                // These events indicate our session is becoming active
-                                windows_service::service::SessionChangeReason::ConsoleConnect |
-                                windows_service::service::SessionChangeReason::RemoteConnect |
-                                windows_service::service::SessionChangeReason::SessionLogon => {
-                                    if service_state.is_none() {
-                                        info!("This session ({}) is becoming active, starting service tasks", session_id);
-                                        // Initialize the player
-                                        debug!("Initializing native platform player");
-                                        let mut driver_handle = match driver.clone().run().await
-                                        {
-                                            Ok(driver_handle) => driver_handle,
-                                            Err(e) => {
-                                                error!("Failed to run driver: {}", e);
-                                                continue;
-                                            }
-                                        };
-
-                                        // Initialize the player
-                                        debug!("Initializing native platform player");
-                                        let os_watcher_handle = match run_os_watcher(driver.clone()).await {
-                                            Ok(watcher_handle) => watcher_handle,
-                                            Err(e) => {
-                                                    error!("Failed to initialize player: {:?}", e);
-                                                    continue;
-                                                }
-                                        };
-
-                                        driver_handle.add(os_watcher_handle);
-                                        service_state = Some(driver_handle);
-                                    } else {
-                                        info!("This session ({}) is becoming active, but service has been already
-                                        started, ignoring...", session_id);
-                                    }
-                                },
-                                // For session logoff events, we need to stop our service
-                                windows_service::service::SessionChangeReason::SessionLogoff => {
-                                    if let Some(service_state) = service_state.take() {
-                                        info!("This session ({}) is logging off, stopping service tasks", session_id);
-                                        service_state.shutdown().await
-                                            .inspect_err(|e| error!("Failed to stop service tasks: {}", e)).ok();
-                                    } else {
-                                        debug!("This session ({}) is logging off, but service is not started, can't \
-                                        stop it, ignoring...", session_id)
-                                    }
-                                },
-                                // For console disconnect events, we should stop our service
-                                windows_service::service::SessionChangeReason::ConsoleDisconnect |
-                                windows_service::service::SessionChangeReason::RemoteDisconnect => {
-                                    if let Some(service_state) = service_state.take() {
-                                        info!("This session ({}) is disconnecting, stopping service tasks", session_id);
-                                        service_state.shutdown().await
-                                                     .inspect_err(|e| error!("Failed to stop service tasks: {}", e))
-                                            .ok();
-                                        debug!("This session ({}) is disconnecting, but service is not started, can't \
-                                        stop it, ignoring...",
-                                            session_id)
-                                    }
-                                },
-                                // For other events, just log and continue
-                                _ => {
-                                    debug!("Received event {:?} for this session ({}), no action needed", param.reason,
-                                        session_id);
-                                    continue;
-                                }
-                            }
-                        }
-                    }
+        // Wait for events if initialized successfully
+        if success {
+            select! {
+                res = event_rx.recv() => {
+                    res
+                    .inspect_err(|e| log::error!("Failed to receive event: {}", e))
+                    .inspect(|_| info!("Received shutdown event, stopping...")).ok();
                 },
-                Err(e) => {
-                    error!("Failed to receive event: {}", e);
+                res = service_handle.wait_for_any_to_finish() => {
+                    res.inspect_err(|e| log::error!("Service error: {}", e)).ok();
                 }
             }
-        }
+        };
 
         // Tell the system that the service has stopped
         debug!("Setting service status to Stopped");
@@ -319,11 +250,9 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
         // Stop the service tasks
         debug!("Stopping service tasks");
-        if let Some(service_state) = service_state {
-            if let Err(e) = service_state.shutdown().await
-            {
-                error!("Failed to stop service tasks: {}", e);
-            }
+        if let Err(e) = service_handle.shutdown().await
+        {
+            error!("Failed to stop service tasks: {}", e);
         }
 
         info!("Exiting service");
