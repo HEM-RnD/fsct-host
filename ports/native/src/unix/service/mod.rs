@@ -25,7 +25,7 @@ use crate::run_os_watcher;
 use crate::cli::Cli;
 use clap::Parser;
 use log::{info, warn};
-use crate::linux::socket_path;
+use crate::socket_path;
 
 /// Linux service entrypoint with CLI to choose mode (standalone/driver/user).
 #[tokio::main(flavor = "current_thread")]
@@ -53,25 +53,23 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         driver
     };
 
-    let mut systemd_socket_activated = false;
+    let socket_activation_fd = crate::get_socket_activation_fd();
+
+    let mut clean_socket = false;
+    let mut ok = true;
 
     if args.driver {
-        systemd_socket_activated = is_systemd_triggered_by_socket_activated();
         // In driver mode, expose IPC driver over IPC and do not start OS watcher
-
-        let ipc = if systemd_socket_activated {
-            info!("systemd socket activation detected, using fd 3");
+        let ipc = if let Some(fd) = socket_activation_fd {
             if args.endpoint.is_some() {
                 warn!("Ignoring --socket argument because systemd socket activation is detected");
             }
-            // If systemd socket activation is used, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
-            // 3 is the only fd that systemd/socket-activation helper will pass to the process,
-            // and it has to be valid fd for the process to be able to use it.
-            fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), unsafe { OwnedFd::from_raw_fd(3) })
+            fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
         } else {
-            info!("systemd socket activation not detected, using {}", endpoint);
-            // If not using systemd socket activation (LISTEN_FDS==0), remove a potential stale socket file.
-            if let Err(e) = std::fs::remove_file(endpoint.as_str()) { let _ = e; /* ignore if not present */ }
+            // remove potential stale socket, ignore if not present
+            std::fs::remove_file(endpoint.as_str()).ok();
+            // set socket to be removed in the end of the function
+            clean_socket = true;
             fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
         };
         services.add(ipc);
@@ -79,26 +77,32 @@ pub async fn fsct_main() -> anyhow::Result<()> {
         // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
         if let Ok(watcher) = run_os_watcher(driver.clone()).await {
             services.add(watcher);
+        } else {
+            warn!("Failed to start OS watcher");
+            ok = false;
         }
     }
 
-    let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let service_res = tokio::select! {
-        _ = tokio::signal::ctrl_c() => {Ok(())},
-        _ = terminate_signal.recv() => {Ok(())},
-        res = services.wait_for_any_to_finish() => {
-            res.inspect_err(|e| log::error!("Service error: {}", e))
-        },
+    // wait for finish only if everything started successfully, otherwise jump directly to shutdown
+    let service_res = if ok {
+        let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {Ok(())},
+            _ = terminate_signal.recv() => {Ok(())},
+            res = services.wait_for_any_to_finish() => {
+                res.inspect_err(|e| log::error!("Service error: {}", e))
+            },
+        }
+    } else {
+        Ok(())
     };
+
     let shutdown_res = services.shutdown().await
         .inspect_err(|e| log::error!("Shutdown error: {}", e));
 
-    if args.driver {
-        // Only attempt to remove the socket file if we created it ourselves (no socket activation)
-        if systemd_socket_activated == false {
-            if let Err(r) = std::fs::remove_file(endpoint) {
-                log::warn!("Failed to remove IPC socket file: {}", r);
-            }
+    if clean_socket == false {
+        if let Err(r) = std::fs::remove_file(endpoint) {
+            log::warn!("Failed to remove IPC socket file: {}", r);
         }
     }
 
@@ -107,10 +111,3 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn is_systemd_triggered_by_socket_activated() -> bool {
-    let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    let listen_pid = std::env::var("LISTEN_PID").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    let this_process_pid = std::process::id();
-    // Be sure that FDs are assigned to the correct (this) process; otherwise systemd will not pass them to us.
-    listen_fds > 0 && listen_pid == this_process_pid
-}

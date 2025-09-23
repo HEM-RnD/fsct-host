@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 // Integration test: simulate systemd socket activation without external helpers.
 // The test itself creates a UDS listener at a random /tmp path, hands it to the
 // cargo-built fsct_driver_service via fd=3 and LISTEN_FDS=1, and verifies that a
@@ -10,7 +11,6 @@
 // - Unix-only and #[ignore] by default.
 // - We do not assert server logs, only that a connection is possible.
 
-#![cfg(unix)]
 use std::os::fd::IntoRawFd as _;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
