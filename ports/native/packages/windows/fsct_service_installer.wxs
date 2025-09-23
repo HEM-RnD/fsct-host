@@ -44,12 +44,30 @@
                 Interactive="no"
                 Type="ownProcess"
                 ErrorControl="normal"
-                Arguments="service run"
+                Arguments="--driver service run"
+                Vital="yes" />
+        <ServiceInstall
+                Id="FsctUserService"
+                Name="FsctUserService"
+                DisplayName="Ferrum Streaming Control Technology User Service"
+                Description="This service gets track metadata from players registered in user session and send them into FSCT driver via local pipe."
+                Start="auto"
+                Interactive="no"
+                Type="ownProcess"
+                ErrorControl="normal"
+                Arguments="--user service run"
                 Vital="yes" />
 
         <ServiceControl
                 Id="StartFsctDriverService"
                 Name="FsctDriverService"
+                Remove="both"
+                Stop="both"
+                Start="install"/>
+
+        <ServiceControl
+                Id="StartFsctUserService"
+                Name="FsctUserService"
                 Remove="both"
                 Stop="both" />
 
@@ -60,7 +78,7 @@
             0x40 - SERVICE_USER_SERVICE: Service instance runs per user session
         -->
         <RegistryValue Root="HKLM"
-                       Key="SYSTEM\CurrentControlSet\Services\FsctDriverService"
+                       Key="SYSTEM\CurrentControlSet\Services\FsctUserService"
                        Name="Type"
                        Type="integer"
                        Value="80"
@@ -70,7 +88,7 @@
           - UserServiceFlags=3: Enables starting user service
         -->
         <RegistryValue Root="HKLM"
-                       Key="SYSTEM\CurrentControlSet\Services\FsctDriverService"
+                       Key="SYSTEM\CurrentControlSet\Services\FsctUserService"
                        Name="UserServiceFlags"
                        Type="integer"
                        Value="3"
