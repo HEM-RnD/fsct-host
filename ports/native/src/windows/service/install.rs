@@ -75,7 +75,11 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
     if let Some(log_level) = log_level {
         launch_arguments.extend_from_slice(&[OsString::from("--log-level"), OsString::from(log_level.to_string())])
     };
-    launch_arguments.extend_from_slice(&[OsString::from("service"), OsString::from("run")]);
+    launch_arguments.extend_from_slice(&[
+        OsString::from(if user_service {"--user"} else {"--driver"}),
+        OsString::from("service"),
+        OsString::from("run"),
+    ]);
 
     let service_name = get_service_name(user_service);
     let service_display_name = if user_service { USER_SERVICE_DISPLAY_NAME } else { DRIVER_SERVICE_DISPLAY_NAME };

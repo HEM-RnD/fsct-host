@@ -88,11 +88,15 @@ pub fn init_logger_common(log_file_name: &str, log_level: LogLevel, include_cons
     Ok(())
 }
 
-pub fn init_service_logger(log_level: LogLevel) -> anyhow::Result<()> {
-    let session_id = get_current_session_id();
-    let log_file_name = session_id
-        .map(|session_id| format!("fsct_service_session_{}.log", session_id))
-        .unwrap_or_else(|| "fsct_service.log".to_string());
+pub fn init_service_logger(log_level: LogLevel, user_service: bool) -> anyhow::Result<()> {
+    let log_file_name = if user_service {
+        let session_id = get_current_session_id();
+        session_id
+            .map(|session_id| format!("fsct_service_session_{}.log", session_id))
+            .unwrap_or_else(|| "fsct_service.log".to_string())
+    } else {
+        "fsct_driver_service.log".to_string()
+    };
 
     init_logger_common(&log_file_name, log_level, false)
 }

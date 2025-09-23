@@ -86,9 +86,8 @@ fn get_socket_name(cli: &Cli) -> String {
 }
 
 pub fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
-    // Create a Tokio runtime for async operations
-
-    let cli = Cli::parse_from(arguments);
+    let cli = Cli::parse();
+    debug!("Parsed arguments: {:?}", cli);
 
     let service_name = get_service_name(cli.user);
 
@@ -163,7 +162,7 @@ pub fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
             let ipc_driver = match IpcDriver::connect_to_endpoint(endpoint_name.clone()).await {
                 Ok(driver) => driver,
                 Err(e) => {
-                    error!("Failed to run driver: {}", e);
+                    error!("Failed init IPC driver: {}", e);
                     return;
                 }
             };

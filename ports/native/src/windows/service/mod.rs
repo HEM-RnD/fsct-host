@@ -32,10 +32,11 @@ pub use standalone::run_standalone;
 
 use anyhow::bail;
 use log::{info, error, debug};
+use crate::windows::service::constants::USER_SERVICE_NAME;
 
 fn get_service_name(user_service: bool) -> &'static str {
     if user_service {
-        DRIVER_SERVICE_NAME
+        USER_SERVICE_NAME
     } else {
         DRIVER_SERVICE_NAME
     }
@@ -89,7 +90,7 @@ pub fn fsct_main() -> anyhow::Result<()> {
                     }
                     ServiceCommands::Run => {
                         // Initialize the logger first thing
-                        if let Err(e) = init_service_logger(log_level) {
+                        if let Err(e) = init_service_logger(log_level, user_service) {
                             // Can't log this error since the logger failed to initialize
                             eprintln!("Failed to initialize logger: {}", e);
                             bail!("Failed to initialize logger: {}", e);
