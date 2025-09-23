@@ -104,6 +104,6 @@ pub fn fsct_main() -> anyhow::Result<()> {
         }
     } else {
         // If no arguments provided, run in standalone mode
-        run_standalone(log_level)
+        run_standalone(log_level, cli)
     }
 }

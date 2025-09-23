@@ -85,7 +85,7 @@ fn get_socket_name(cli: &Cli) -> String {
     }
 }
 
-pub fn run_service_main(arguments: Vec<OsString>) -> anyhow::Result<()> {
+pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     let cli = Cli::parse();
     debug!("Parsed arguments: {:?}", cli);
 
