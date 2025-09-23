@@ -40,7 +40,7 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     env_logger::init_from_env(env);
     let mut services = MultiServiceHandle::new();
 
-    let endpoint = args.socket.clone().unwrap_or_else(|| socket_path().to_string());
+    let endpoint = args.endpoint.clone().unwrap_or_else(|| socket_path().to_string());
 
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver
@@ -61,7 +61,7 @@ pub async fn fsct_main() -> anyhow::Result<()> {
 
         let ipc = if systemd_socket_activated {
             info!("systemd socket activation detected, using fd 3");
-            if args.socket.is_some() {
+            if args.endpoint.is_some() {
                 warn!("Ignoring --socket argument because systemd socket activation is detected");
             }
             // If systemd socket activation is used, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
