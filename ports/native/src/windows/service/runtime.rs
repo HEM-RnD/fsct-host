@@ -123,7 +123,9 @@ impl WindowsServiceStateNotifier {
     fn on_service_stopped(&self, exit_code: u32) -> anyhow::Result<()> {
         debug!("Setting service status to Stopped");
         let mut status = self.get_service_status(ServiceState::Stopped);
-        status.exit_code = ServiceExitCode::ServiceSpecific(exit_code);
+        if exit_code != 0 {
+            status.exit_code = ServiceExitCode::ServiceSpecific(exit_code);
+        }
         self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
     }
 }
