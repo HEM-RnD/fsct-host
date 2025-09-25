@@ -25,6 +25,6 @@ pub fn socket_path() -> &'static str {
 }
 
 pub fn get_socket_activation_fd() -> Option<OwnedFd> {
-    // There is no socket activation on Windows.
+    // Socket activation is not implemented on macOS yet.
     None
 }
