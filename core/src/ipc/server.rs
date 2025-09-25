@@ -192,13 +192,14 @@ pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: 
 }
 
 /// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
+#[cfg(unix)]
 pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
-    #[cfg(unix)]
-    {
         let server = IpcServer::with_socket_fd(driver, fd);
         return run_ipc_server(server);
-    }
-    #[cfg(not(unix))]
+}
+
+#[cfg(not(unix))]
+pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: i32) -> ServiceHandle {
     panic!("IPC running from file descriptor not supported on this platform");
 }
 
