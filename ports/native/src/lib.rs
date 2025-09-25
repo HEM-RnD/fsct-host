@@ -16,29 +16,32 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 #[cfg(target_os = "windows")]
-pub mod windows;
+mod windows;
 
 #[cfg(target_os = "windows")]
 use windows::*;
 
 #[cfg(unix)]
-pub mod unix;
+mod unix;
 
 #[cfg(unix)]
 use unix::*;
 
 #[cfg(target_os = "macos")]
-pub mod macos;
+mod macos;
 
 #[cfg(target_os = "macos")]
 use macos::*;
 
 #[cfg(target_os = "linux")]
-pub mod linux;
+mod linux;
 mod cli;
+mod async_main;
 
 #[cfg(target_os = "linux")]
 use linux::*;
+
+pub use async_main::StopSignal;
 
 pub use service::fsct_main;
 pub use player::run_os_watcher;

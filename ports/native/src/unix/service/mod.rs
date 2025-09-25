@@ -15,99 +15,36 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
-use std::sync::Arc;
-use crate::run_os_watcher;
+use crate::async_main;
 
-use crate::cli::Cli;
-use clap::Parser;
-use log::{info, warn};
-use crate::socket_path;
+pub struct UnixStopSignal {}
+impl UnixStopSignal {
+    fn new() -> Self {
+        Self {}
+    }
+}
+impl async_main::StopSignal for UnixStopSignal{
+    async fn wait(&self) -> anyhow::Result<()> {
+        let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            res = tokio::signal::ctrl_c() => res.map_err(|e| e.into()),
+            res = terminate_signal.recv() => res.ok_or_else(|| anyhow!("Terminate signal receiving failed")),
+        }
+    }
+}
 
 /// Linux service entrypoint with CLI to choose mode (standalone/driver/user).
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
-    // Parse CLI
-    let args = Cli::parse();
-
     // Initialize logging via env_logger (FSCT_LOG, FSCT_LOG_STYLE)
     let env = Env::default()
         .filter_or("FSCT_LOG", "info")
         .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
-    let mut services = MultiServiceHandle::new();
 
-    let endpoint = args.endpoint.clone().unwrap_or_else(|| socket_path().to_string());
-
-    let driver: Arc<dyn FsctDriver> = if args.user {
-        // In user mode, connect to IPC driver
-        info!("Connecting to IPC driver at {}", endpoint);
-        Arc::new(fsct_core::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
-    } else {
-        // in driver and standalone mode use in-process driver
-        let driver = Arc::new(LocalDriver::with_new_managers());
-        services = driver.run().await.map_err(|e| anyhow!(e))?;
-        driver
-    };
-
-    let socket_activation_fd = crate::get_socket_activation_fd();
-
-    let mut clean_socket = false;
-    let mut ok = true;
-
-    if args.driver {
-        // In driver mode, expose IPC driver over IPC and do not start OS watcher
-        let ipc = if let Some(fd) = socket_activation_fd {
-            if args.endpoint.is_some() {
-                warn!("Ignoring --socket argument because systemd socket activation is detected");
-            }
-            fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
-        } else {
-            // remove potential stale socket, ignore if not present
-            std::fs::remove_file(endpoint.as_str()).ok();
-            // set socket to be removed in the end of the function
-            clean_socket = true;
-            fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
-        };
-        services.add(ipc);
-    } else {
-        // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
-        if let Ok(watcher) = run_os_watcher(driver.clone()).await {
-            services.add(watcher);
-        } else {
-            warn!("Failed to start OS watcher");
-            ok = false;
-        }
-    }
-
-    // wait for finish only if everything started successfully, otherwise jump directly to shutdown
-    let service_res = if ok {
-        let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {Ok(())},
-            _ = terminate_signal.recv() => {Ok(())},
-            res = services.wait_for_any_to_finish() => {
-                res.inspect_err(|e| log::error!("Service error: {}", e))
-            },
-        }
-    } else {
-        Ok(())
-    };
-
-    let shutdown_res = services.shutdown().await
-        .inspect_err(|e| log::error!("Shutdown error: {}", e));
-
-    if clean_socket == false {
-        if let Err(r) = std::fs::remove_file(endpoint) {
-            log::warn!("Failed to remove IPC socket file: {}", r);
-        }
-    }
-
-    service_res?;
-    shutdown_res?;
-    Ok(())
+    let stop_signal = UnixStopSignal::new();
+    async_main::async_main(stop_signal).await
 }
 

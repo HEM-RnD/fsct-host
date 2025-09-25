@@ -199,7 +199,7 @@ pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> Servi
 }
 
 #[cfg(not(unix))]
-pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: i32) -> ServiceHandle {
+pub fn run_ipc_server_with_fd(_driver: Arc<dyn FsctDriver>, _fd: i32) -> ServiceHandle {
     panic!("IPC running from file descriptor not supported on this platform");
 }
 
