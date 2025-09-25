@@ -1,16 +1,33 @@
 use std::sync::Arc;
+use std::time::Duration;
 use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
-use log::{info, warn};
+use log::{debug, error, info, warn};
 use anyhow::anyhow;
 use crate::cli::{Cli, Parser};
 use crate::socket_path;
 use crate::run_os_watcher;
 
 pub trait StopSignal {
-    async fn wait(&self) -> anyhow::Result<()>;
+    fn wait(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
-pub async fn async_main(stop_signal: impl StopSignal) -> anyhow::Result<()> {
+pub trait ServiceStateListener {
+    fn on_service_started(&self) -> anyhow::Result<()>;
+    fn on_service_stopping(&self) -> anyhow::Result<()>;
+}
+
+pub struct ServiceStateNullListener;
+
+impl ServiceStateListener for ServiceStateNullListener {
+    fn on_service_started(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn on_service_stopping(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl ServiceStateListener) -> anyhow::Result<()> {
     // Parse CLI
     let args = Cli::parse();
 
@@ -32,9 +49,8 @@ pub async fn async_main(stop_signal: impl StopSignal) -> anyhow::Result<()> {
     let socket_activation_fd = crate::get_socket_activation_fd();
 
     let mut clean_socket = false;
-    let mut ok = true;
 
-    if args.driver {
+    let success = if args.driver {
         // In driver mode, expose IPC driver over IPC and do not start OS watcher
         let ipc = if let Some(fd) = socket_activation_fd {
             if args.endpoint.is_some() {
@@ -49,27 +65,49 @@ pub async fn async_main(stop_signal: impl StopSignal) -> anyhow::Result<()> {
             fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
         };
         services.add(ipc);
+        true
     } else {
         // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
-        if let Ok(watcher) = run_os_watcher(driver.clone()).await {
-            services.add(watcher);
-        } else {
-            warn!("Failed to start OS watcher");
-            ok = false;
+        debug!("Initializing native platform player");
+        let mut retries = 0;
+        loop {
+            match run_os_watcher(driver.clone()).await {
+                Ok(player) => {
+                    services.add(player);
+                    break true;
+                }
+                Err(e) => {
+                    retries += 1;
+                    if retries >= 10 {
+                        error!("Failed to initialize player after 10 retries: {:?}", e);
+                        break false;
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    debug!("Retrying initialization, attempt {}/10", retries + 1);
+                }
+            }
         }
-    }
+    };
 
     // wait for finish only if everything started successfully, otherwise jump directly to shutdown
-    let service_res = if ok {
-        tokio::select! {
-            _ = stop_signal.wait() => {Ok(())},
-            res = services.wait_for_any_to_finish() => {
-                res.inspect_err(|e| log::error!("Service error: {}", e))
-            },
+    let service_res = if success {
+        if let Err(e) = listener.on_service_started() {
+            error!("Error during notifying service started: {:?}", e);
+            Err(anyhow!(e))
+        } else {
+            tokio::select! {
+                _ = stop_signal.wait() => {Ok(())},
+                res = services.wait_for_any_to_finish() => {
+                    res.inspect_err(|e| log::error!("Service error: {}", e))
+                },
+            }.map_err(|e|anyhow!(e))
         }
     } else {
         Ok(())
     };
+    if let Err(e) = listener.on_service_stopping() {
+        error!("Failed to notify service stopping: {}", e);
+    }
 
     let shutdown_res = services.shutdown().await
                                .inspect_err(|e| log::error!("Shutdown error: {}", e));

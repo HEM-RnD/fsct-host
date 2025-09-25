@@ -42,6 +42,8 @@ mod async_main;
 use linux::*;
 
 pub use async_main::StopSignal;
+pub use async_main::ServiceStateListener;
+pub use async_main::ServiceStateNullListener;
 
 pub use service::fsct_main;
 pub use player::run_os_watcher;

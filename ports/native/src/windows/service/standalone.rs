@@ -23,6 +23,8 @@ use crate::cli::{LogLevel};
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
 use crate::async_main::{async_main, StopSignal};
+use crate::ServiceStateNullListener;
+
 struct WindowsStandaloneStopSignal;
 
 impl WindowsStandaloneStopSignal {
@@ -30,7 +32,7 @@ impl WindowsStandaloneStopSignal {
 }
 
 impl StopSignal for WindowsStandaloneStopSignal {
-    async fn wait(&self) -> anyhow::Result<()> {
+    async fn wait(&mut self) -> anyhow::Result<()> {
         debug!("Press Ctrl+C or close the console window to exit");
 
         // Create the ctrl_close handler
@@ -70,6 +72,6 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
 
     // Run the service in the Tokio runtime
     rt.block_on(async move {
-        async_main(stop_signal).await
+        async_main(stop_signal, ServiceStateNullListener).await
     })
 }

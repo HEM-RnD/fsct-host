@@ -16,12 +16,10 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::ffi::{OsStr, OsString};
-use std::sync::Arc;
 use std::time::Duration;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use log::{info, error, debug};
-use tokio::select;
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows_service::{
     service::{
@@ -33,12 +31,11 @@ use windows_service::{
     define_windows_service,
 };
 use windows_service::service::ServiceType;
-use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
-use fsct_core::ipc::client::IpcDriver;
-use crate::run_os_watcher;
+use windows_service::service_control_handler::ServiceStatusHandle;
+use crate::{ServiceStateListener, StopSignal};
+use crate::async_main::async_main;
 use crate::cli::Cli;
 use crate::windows::service::get_service_name;
-use crate::windows::socket_path;
 
 // Define service events
 #[derive(Clone)]
@@ -76,12 +73,73 @@ fn get_service_type_from_manager(name: impl AsRef<OsStr>) -> anyhow::Result<Serv
     let config = service.query_config()?;
     Ok(config.service_type)
 }
+struct WindowsServiceStopSignal {
+    event_rx: tokio::sync::broadcast::Receiver<ServiceEvent>,
+}
 
-fn get_socket_name(cli: &Cli) -> String {
-    if let Some(endpoint) = &cli.endpoint {
-        endpoint.clone()
-    } else {
-        socket_path().to_string()
+impl WindowsServiceStopSignal {
+    pub fn new(event_rx: tokio::sync::broadcast::Receiver<ServiceEvent>) -> Self {
+        Self { event_rx }
+    }
+}
+
+impl StopSignal for WindowsServiceStopSignal {
+    async fn wait(&mut self) -> anyhow::Result<()> {
+        self.event_rx.recv().await
+            .map(|_event| ())
+            .map_err(|_e| anyhow!("Error in listening for service stop event"))
+    }
+}
+
+#[derive(Clone)]
+struct WindowsServiceStateNotifier {
+    status_handle: ServiceStatusHandle,
+    service_type: ServiceType,
+}
+
+impl WindowsServiceStateNotifier {
+    pub fn new(status_handle: ServiceStatusHandle, service_type: ServiceType) -> Self {
+        Self { status_handle, service_type }
+    }
+
+    fn get_service_status(&self, state: ServiceState) -> ServiceStatus {
+        ServiceStatus {
+            service_type: self.service_type,
+            current_state: state,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        }
+    }
+
+    fn on_service_start_pending(&self) -> anyhow::Result<()> {
+        debug!("Setting service status to StartPending");
+        let status = self.get_service_status(ServiceState::StartPending);
+        self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
+    }
+
+    fn on_service_stopped(&self, exit_code: u32) -> anyhow::Result<()> {
+        debug!("Setting service status to Stopped");
+        let mut status = self.get_service_status(ServiceState::Stopped);
+        status.exit_code = ServiceExitCode::ServiceSpecific(exit_code);
+        self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
+    }
+}
+
+impl ServiceStateListener for WindowsServiceStateNotifier {
+    fn on_service_started(&self) -> anyhow::Result<()> {
+        debug!("Setting service status to Running");
+        let mut status = self.get_service_status(ServiceState::Running);
+        status.controls_accepted = ServiceControlAccept::STOP;
+        self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
+
+    }
+    fn on_service_stopping(&self) -> anyhow::Result<()> {
+        debug!("Setting service status to StopPending");
+        let status = self.get_service_status(ServiceState::StopPending);
+        self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
     }
 }
 
@@ -123,139 +181,20 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     debug!("Registering service control handler");
     let status_handle = service_control_handler::register(service_name, event_handler)?;
 
+    let service_status_notifier = WindowsServiceStateNotifier::new(status_handle, service_type);
+
     // Tell the system that the service is starting
     debug!("Setting service status to StartPending");
-    status_handle.set_service_status(ServiceStatus {
-        service_type,
-        current_state: ServiceState::StartPending,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })?;
 
-    let endpoint_name = get_socket_name(&cli);
 
+    service_status_notifier.on_service_start_pending()?;
+
+    let stop_signal = WindowsServiceStopSignal::new(event_tx.subscribe());
+
+    let listener = service_status_notifier.clone();
     // Run the service in the Tokio runtime
-    rt.block_on(async {
-
-        // Run driver
-        debug!("Initializing driver");
-
-        let (driver, mut service_handle) = if cli.driver {
-            let driver = Arc::new(LocalDriver::with_new_managers());
-            let mut service_handle = match driver.clone().run().await
-            {
-                Ok(driver_handle) => driver_handle,
-                Err(e) => {
-                    error!("Failed to run driver: {}", e);
-                    return;
-                }
-            };
-            let ipc_server_handle = fsct_core::ipc::server::run_ipc_server_with_endpoint_path(
-                driver.clone(),
-                endpoint_name.clone());
-            service_handle.add(ipc_server_handle);
-            (driver as Arc<dyn FsctDriver>, service_handle)
-        } else {
-            let ipc_driver = match IpcDriver::connect_to_endpoint(endpoint_name.clone()).await {
-                Ok(driver) => driver,
-                Err(e) => {
-                    error!("Failed init IPC driver: {}", e);
-                    return;
-                }
-            };
-            (Arc::new(ipc_driver) as Arc<dyn FsctDriver>, MultiServiceHandle::new())
-        };
-
-        // Initialize the player
-        let success = if cli.user {
-            debug!("Initializing native platform player");
-            let mut retries = 0;
-            loop {
-                match run_os_watcher(driver.clone()).await {
-                    Ok(player) => {
-                        service_handle.add(player);
-                        break true
-                    },
-                    Err(e) => {
-                        retries += 1;
-                        if retries >= 10 {
-                            error!("Failed to initialize player after 10 retries: {:?}", e);
-                            break false
-                        }
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        debug!("Retrying initialization, attempt {}/10", retries + 1);
-                    }
-                }
-            }
-        } else {
-            true
-        };
-
-        // Tell the system that the service is running
-        debug!("Setting service status to Running");
-        let result = status_handle.set_service_status(ServiceStatus {
-            service_type,
-            current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        });
-        if let Err(e) = result {
-            error!("Failed to set service status: {}", e);
-            return;
-        }
-
-        // Create a receiver for the broadcast channel
-        let mut event_rx = event_tx.subscribe();
-
-        // Also listen for Ctrl+C
-        let event_tx_ctrl_c = event_tx.clone();
-        tokio::spawn(async move {
-            if let Ok(_) = tokio::signal::ctrl_c().await {
-                debug!("Received Ctrl+C signal");
-                let _ = event_tx_ctrl_c.send(ServiceEvent::Shutdown);
-            }
-        });
-
-        // Wait for events if initialized successfully
-        if success {
-            select! {
-                res = event_rx.recv() => {
-                    res
-                    .inspect_err(|e| log::error!("Failed to receive event: {}", e))
-                    .inspect(|_| info!("Received shutdown event, stopping...")).ok();
-                },
-                res = service_handle.wait_for_any_to_finish() => {
-                    res.inspect_err(|e| log::error!("Service error: {}", e)).ok();
-                }
-            }
-        };
-
-        // Tell the system that the service has stopped
-        debug!("Setting service status to Stopped");
-        status_handle.set_service_status(ServiceStatus {
-            service_type,
-            current_state: ServiceState::StopPending,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        }).ok();
-
-        // Stop the service tasks
-        debug!("Stopping service tasks");
-        if let Err(e) = service_handle.shutdown().await
-        {
-            error!("Failed to stop service tasks: {}", e);
-        }
-
-        info!("Exiting service");
+    let res = rt.block_on(async move {
+        async_main(stop_signal, listener).await
     });
 
     rt.shutdown_timeout(Duration::from_secs(10));
@@ -263,16 +202,10 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
 
     // Tell the system that the service has stopped
     debug!("Setting service status to Stopped");
-    status_handle.set_service_status(ServiceStatus {
-        service_type,
-        current_state: ServiceState::Stopped,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })?;
+    let status = if res.is_ok() { 0u32 } else { 1u32 };
+    service_status_notifier.on_service_stopped(status)?;
 
-    info!("Service stopped successfully");
-    Ok(())
+    res
+        .inspect(|_|info!("Service stopped successfully"))
+        .inspect_err(|e|error!("Service stopped, because it's failed: {}", e))
 }
