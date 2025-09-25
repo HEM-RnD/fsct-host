@@ -36,7 +36,6 @@ fn is_triggered_by_systemd_socket_activation() -> bool {
 
 pub fn get_socket_activation_fd() -> Option<OwnedFd> {
     let systemd_socket_activated = is_triggered_by_systemd_socket_activation();
-    // In driver mode, expose IPC driver over IPC and do not start OS watcher
 
     if systemd_socket_activated {
         info!("systemd socket activation detected, using fd 3");
