@@ -48,8 +48,6 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
 
     let socket_activation_fd = crate::get_socket_activation_fd();
 
-    let mut clean_socket = false;
-
     let success = if args.driver {
         // In driver mode, expose IPC driver over IPC and do not start OS watcher
         let ipc = if let Some(fd) = socket_activation_fd {
@@ -58,10 +56,6 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
             }
             fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
         } else {
-            // remove potential stale socket, ignore if not present
-            std::fs::remove_file(endpoint.as_str()).ok();
-            // set socket to be removed in the end of the function
-            clean_socket = true;
             fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
         };
         services.add(ipc);
@@ -111,12 +105,6 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
 
     let shutdown_res = services.shutdown().await
                                .inspect_err(|e| log::error!("Shutdown error: {}", e));
-
-    if clean_socket == false {
-        if let Err(r) = std::fs::remove_file(endpoint) {
-            log::warn!("Failed to remove IPC socket file: {}", r);
-        }
-    }
 
     service_res?;
     shutdown_res?;
