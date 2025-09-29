@@ -9,6 +9,8 @@
             <string>/usr/local/bin/fsctd</string>
             <string>--driver</string>
         </array>
+        <key>OnDemand</key>
+        <true/>
         <key>RunAtLoad</key>
         <true/>
         <key>KeepAlive</key>
@@ -18,12 +20,14 @@
         </dict>
         <key>Sockets</key>
         <dict>
-            <key>Listener</key>
+            <key>fsct-socket</key>
             <dict>
                 <key>SockPathName</key>
                 <string>/var/run/fsct/fsct.sock</string>
                 <key>SockPathMode</key>
                 <integer>438</integer>
+                <key>SockFamily</key>
+                <string>Unix</string>
             </dict>
         </dict>
         <key>StandardOutPath</key>

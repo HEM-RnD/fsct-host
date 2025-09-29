@@ -3,7 +3,7 @@
 # Configuration
 LOG_FILE="/tmp/fsct_installer.log"
 USER_AGENT_PLIST="/Library/LaunchAgents/com.hem-e.fsct-driver-user.plist"
-USER_AGENT_LABEL="com.hem-e.fsctdriverservice.user"
+USER_AGENT_LABEL="com.hem-e.fsct-driver-user"
 
 # Logging function
 log_message() {
@@ -32,8 +32,9 @@ chmod 755 /usr/local/bin/fsctd || true
 chmod 644 /Library/LaunchDaemons/com.hem-e.fsct-driver.plist || true
 chmod 644 "$USER_AGENT_PLIST" || true
 
-# Load system daemon
-launchctl load -w /Library/LaunchDaemons/com.hem-e.fsct-driver.plist 2>> $LOG_FILE || true
+# Load (bootstrap) system daemon with modern launchctl and enable it (do not start immediately)
+launchctl bootstrap system /Library/LaunchDaemons/com.hem-e.fsct-driver.plist 2>> $LOG_FILE || true
+launchctl enable system/com.hem-e.fsct-driver 2>> $LOG_FILE || true
 
 # Bootstrap and start user agents for all active users
 for uid in $(active_user_uids); do

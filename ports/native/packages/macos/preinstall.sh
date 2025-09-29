@@ -45,8 +45,8 @@ remove_service() {
         # Stop the daemon service if it's running
         if [ -f "$plist_path" ]; then
             log_message "Stopping existing $service_display_name..."
-            launchctl stop "$plist_path" 2>> $LOG_FILE || true
-            launchctl unload "$plist_path" 2>> $LOG_FILE || true
+            launchctl bootout system/com.hem-e.${service_name} 2>> $LOG_FILE || true
+            launchctl bootout system "$plist_path" 2>> $LOG_FILE || true
         fi
 
         # Remove service files
@@ -70,7 +70,7 @@ done
 # Stop and remove old daemon services if running
 remove_service "fsct_service" "fsctservice" "prerelease fsct service"
 remove_service "fsct_driver_service" "fsctdriverservice" "legacy fsct driver service"
-remove_service "fsctd" "fsctd" "previous fsct driver service"
+remove_service "fsctd" "fsct-driver" "previous fsct driver service"
 
 log_message "Preinstall finished"
 
