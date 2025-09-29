@@ -6,8 +6,8 @@ ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
 CARGO_BIN_NAME="fsct_driver_service"                      # Name of the binary target for Cargo
-APP_NAME="fsct_driver_service"                                # Application name (final binary name)
-IDENTIFIER="com.hem-e.fsctdriverservice"                     # Unique package identifier
+APP_NAME="fsctd"                                # Application name (final binary name)
+IDENTIFIER="com.hem-e.fsct-driver"                     # Unique package identifier
 BUILD_DIR="${ROOT_DIR}/target"                          # Directory where build will be performed
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
@@ -156,9 +156,13 @@ if [ ! -d "${INSTALLER_FILES_DIR}" ]; then
     exit 1
 fi
 
-# Check for plist file
+# Check for plist files
 if [ ! -f "${INSTALLER_FILES_DIR}/$IDENTIFIER.xml" ]; then
     echo "File $IDENTIFIER.xml not found in ${INSTALLER_FILES_DIR}!"
+    exit 1
+fi
+if [ ! -f "${INSTALLER_FILES_DIR}/${IDENTIFIER}-user.xml" ]; then
+    echo "File ${IDENTIFIER}.user.xml not found in ${INSTALLER_FILES_DIR}!"
     exit 1
 fi
 
@@ -182,7 +186,12 @@ fi
 
 # Copy the prepared files
 echo "Copying prepared files..."
+# Daemon plist
 cp "${INSTALLER_FILES_DIR}/$IDENTIFIER.xml" "${DAEMON_ROOT}${DAEMON_DIR}/$IDENTIFIER.plist"
+# User agent plist
+mkdir -p "${DAEMON_ROOT}/Library/LaunchAgents"
+cp "${INSTALLER_FILES_DIR}/${IDENTIFIER}-user.xml" "${DAEMON_ROOT}/Library/LaunchAgents/${IDENTIFIER}-user.plist"
+# Scripts
 cp "${INSTALLER_FILES_DIR}/postinstall.sh" "${SCRIPTS_DIR}/postinstall"
 chmod +x "${SCRIPTS_DIR}/postinstall"
 

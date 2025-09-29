@@ -2,6 +2,8 @@
 
 # Configuration
 LOG_FILE="/tmp/fsct_installer.log"
+USER_AGENT_PLIST="/Library/LaunchAgents/com.hem-e.fsct-driver-user.plist"
+USER_AGENT_LABEL="com.hem-e.fsct-driver-user"
 
 rm -f $LOG_FILE || true
 
@@ -11,26 +13,33 @@ log_message() {
     logger -s "$message" 2>> $LOG_FILE
 }
 
+# Helper: iterate active GUI user UIDs (unique)
+active_user_uids() {
+    who | awk '{print $1}' | sort -u | while read -r user; do
+        if [ -n "$user" ] && [ "$user" != "root" ]; then
+            id -u "$user" 2>/dev/null || true
+        fi
+    done | sort -u
+}
+
 # Initialize log file
 log_message "Preinstall started"
 
 # Function to remove a service
 remove_service() {
-    local service_name=$1
-    local service_display_name=$2
+    local binary_name=$1
+    local service_name=$2
+    local service_display_name=$3
 
-    # Derive plist path by removing underscores from service name
-    local plist_name=$(echo "${service_name}" | sed 's/\_//g')
-    local plist_path="/Library/LaunchDaemons/com.hem-e.${plist_name}.plist"
-
-    # Binary name is already with underscores
-    local binary_path="/usr/local/bin/${service_name}"
+    # Use explicit names for plist and binary; do not transform underscores
+    local plist_path="/Library/LaunchDaemons/com.hem-e.${service_name}.plist"
+    local binary_path="/usr/local/bin/${binary_name}"
 
     if [ -f "$plist_path" ] || [ -f "$binary_path" ]; then
         log_message "Detected $service_display_name, removing..."
 
         # Kill any running instances of the application
-        log_message "Killing any running instances of $service_name"
+        log_message "Killing any running instances of $binary_name"
         pkill -SIGINT -f "$binary_path" 2>> $LOG_FILE || true
 
         # Stop the daemon service if it's running
@@ -50,9 +59,18 @@ remove_service() {
     fi
 }
 
+# Stop user LaunchAgents for all active users (to allow upgrade)
+for uid in $(active_user_uids); do
+    log_message "Booting out user agent for UID $uid"
+    launchctl bootout gui/$uid/$USER_AGENT_LABEL 2>> $LOG_FILE || true
+    # Also try by path for safety (older states)
+    launchctl bootout gui/$uid "$USER_AGENT_PLIST" 2>> $LOG_FILE || true
+done
+
 # Stop and remove old daemon services if running
-remove_service "fsct_service" "prerelease fsct service"
-remove_service "fsct_driver_service" "previous fsct driver service"
+remove_service "fsct_service" "fsctservice" "prerelease fsct service"
+remove_service "fsct_driver_service" "fsctdriverservice" "legacy fsct driver service"
+remove_service "fsctd" "fsctd" "previous fsct driver service"
 
 log_message "Preinstall finished"
 

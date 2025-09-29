@@ -3,10 +3,11 @@
 <plist version="1.0">
     <dict>
         <key>Label</key>
-        <string>com.hem-e.fsctdriverservice</string>
+        <string>com.hem-e.fsct-driver</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/usr/local/bin/fsct_driver_service</string>
+            <string>/usr/local/bin/fsctd</string>
+            <string>--driver</string>
         </array>
         <key>RunAtLoad</key>
         <true/>
@@ -14,6 +15,16 @@
         <dict>
             <key>SuccessfulExit</key>
             <false/>
+        </dict>
+        <key>Sockets</key>
+        <dict>
+            <key>Listener</key>
+            <dict>
+                <key>SockPathName</key>
+                <string>/var/run/fsct/fsct.sock</string>
+                <key>SockPathMode</key>
+                <integer>438</integer>
+            </dict>
         </dict>
         <key>StandardOutPath</key>
         <string>/tmp/fsct_driver_service.log</string>
