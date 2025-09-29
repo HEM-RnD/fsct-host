@@ -24,15 +24,13 @@ pub mod standalone;
 
 // Re-export commonly used items
 pub use crate::cli::*;
-pub use constants::{DRIVER_SERVICE_NAME, DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION};
+pub use constants::{DRIVER_SERVICE_NAME, USER_SERVICE_NAME};
 pub use install::{install_service, uninstall_service};
-pub use logger::{init_service_logger, init_install_logger, init_standalone_logger};
-pub use runtime::service_main;
+pub use logger::{init_service_logger, init_install_logger};
 pub use standalone::run_standalone;
 
 use anyhow::bail;
 use log::{info, error, debug};
-use crate::windows::service::constants::USER_SERVICE_NAME;
 
 fn get_service_name(user_service: bool) -> &'static str {
     if user_service {
@@ -104,6 +102,6 @@ pub fn fsct_main() -> anyhow::Result<()> {
         }
     } else {
         // If no arguments provided, run in standalone mode
-        run_standalone(log_level, cli)
+        run_standalone(log_level)
     }
 }

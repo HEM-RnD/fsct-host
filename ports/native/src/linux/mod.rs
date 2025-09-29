@@ -15,11 +15,38 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-pub mod service;
+use std::os::fd::{FromRawFd, OwnedFd};
+use log::{info, warn};
+
 pub mod player;
 
 /// Returns the default path of the Unix Domain Socket used by FSCT IPC on Linux.
 /// It prefers XDG_RUNTIME_DIR and falls back to /tmp when unavailable.
 pub fn socket_path() -> &'static str {
     "/run/fsct/fsct.sock"
+}
+
+fn is_triggered_by_systemd_socket_activation() -> bool {
+    let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let listen_pid = std::env::var("LISTEN_PID").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let this_process_pid = std::process::id();
+    // Be sure that FDs are assigned to the correct (this) process; otherwise systemd will not pass them to us.
+    listen_fds > 0 && listen_pid == this_process_pid
+}
+
+pub fn get_socket_activation_fd() -> Option<OwnedFd> {
+    let systemd_socket_activated = is_triggered_by_systemd_socket_activation();
+    // In driver mode, expose IPC driver over IPC and do not start OS watcher
+
+    if systemd_socket_activated {
+        info!("systemd socket activation detected, using fd 3");
+        // If systemd socket activation is used, use the pre-opened listening socket (fd=3) passed by systemd/socket-activation helper.
+        // 3 is the only fd that systemd/socket-activation helper will pass to the process,
+        // and it has to be valid fd for the process to be able to use it.
+        let fd = unsafe { OwnedFd::from_raw_fd(3) };
+        Some(fd)
+    } else {
+        info!("systemd socket activation not detected, using {}", socket_path());
+        None
+    }
 }

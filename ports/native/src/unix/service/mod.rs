@@ -17,36 +17,34 @@
 
 use anyhow::anyhow;
 use env_logger::Env;
-use fsct_core::{LocalDriver};
-use std::sync::Arc;
-use crate::run_os_watcher;
+use crate::{async_main, ServiceStateNullListener};
 
+pub struct UnixStopSignal {}
+impl UnixStopSignal {
+    fn new() -> Self {
+        Self {}
+    }
+}
+impl async_main::StopSignal for UnixStopSignal{
+    async fn wait(&mut self) -> anyhow::Result<()> {
+        let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            res = tokio::signal::ctrl_c() => res.map_err(|e| e.into()),
+            res = terminate_signal.recv() => res.ok_or_else(|| anyhow!("Terminate signal receiving failed")),
+        }
+    }
+}
+
+/// Linux service entrypoint with CLI to choose mode (standalone/driver/user).
 #[tokio::main(flavor = "current_thread")]
 pub async fn fsct_main() -> anyhow::Result<()> {
+    // Initialize logging via env_logger (FSCT_LOG, FSCT_LOG_STYLE)
     let env = Env::default()
         .filter_or("FSCT_LOG", "info")
         .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
 
-    // Initialize local driver and run background services (orchestrator + USB watch)
-    let driver = Arc::new(LocalDriver::with_new_managers());
-    let mut handle = driver.run().await.map_err(|e| anyhow!(e))?;
-
-    // Start macOS Now Playing watcher, registering a player and streaming state via the driver
-    let watcher = run_os_watcher(driver.clone()).await?;
-
-    handle.add(watcher);
-
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C signal");
-    println!("Stopping service.");
-
-    let res = handle.shutdown().await;
-    if let Err(e) = res {
-        println!("Error while stopping service: {}", e);
-        return Err(e.into());
-    }
-    println!("Exit.");
-    Ok(())
+    let stop_signal = UnixStopSignal::new();
+    async_main::async_main(stop_signal, ServiceStateNullListener).await
 }
+

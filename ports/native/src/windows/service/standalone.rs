@@ -15,86 +15,48 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use log::{info, error, debug, warn};
+use log::{info, debug};
 use tokio::runtime::Runtime;
-use std::sync::Arc;
 use anyhow::anyhow;
-use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
 
-use crate::cli::{Cli, LogLevel};
+use crate::cli::{LogLevel};
 use crate::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
-use crate::run_os_watcher;
-use crate::windows::socket_path;
+use crate::async_main::{async_main, StopSignal};
+use crate::ServiceStateNullListener;
 
-async fn shutdown_signal() {
-    debug!("Press Ctrl+C or close the console window to exit");
+struct WindowsStandaloneStopSignal;
 
-    // Create the ctrl_close handler
-    let mut close_signal = ctrl_close().expect("Failed to create ctrl_close handler");
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl+C signal, exiting...");
-        }
-        _ = close_signal.recv() => {
-            info!("Received close signal from Windows, exiting...");
-        }
-    }
+impl WindowsStandaloneStopSignal {
+    fn new() -> Self { Self }
 }
 
-async fn standalone_task(args: Cli) -> anyhow::Result<()> {
-    let endpoint = args.endpoint.clone().unwrap_or_else(|| socket_path().to_string());
+impl StopSignal for WindowsStandaloneStopSignal {
+    async fn wait(&mut self) -> anyhow::Result<()> {
+        debug!("Press Ctrl+C or close the console window to exit");
 
-    let mut services = MultiServiceHandle::new();
+        // Create the ctrl_close handler
+        let mut close_signal = ctrl_close().expect("Failed to create ctrl_close handler");
 
-    let driver: Arc<dyn FsctDriver> = if args.user {
-        // In user mode, connect to IPC driver
-        info!("Connecting to IPC driver at {}", endpoint);
-        Arc::new(fsct_core::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
-    } else {
-        // in driver and standalone mode use in-process driver
-        info!("Starting in-process driver and orchestrator");
-        let driver = Arc::new(LocalDriver::with_new_managers());
-        services = driver.run().await.map_err(|e| anyhow!(e))?;
-        driver
-    };
-
-
-    let ok  = if args.driver {
-        info!("Starting IPC server at {}", endpoint);
-        let ipc = fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone());
-    services.add(ipc);
-        true
-    } else {
-        // In user and standalone modes, start OS watcher and connect to driver (IPC or in-process)
-        debug!("Starting GSMTC watcher (WindowsSystemPlayer)");
-        if let Ok(watcher) = run_os_watcher(driver.clone()).await {
-            services.add(watcher);
-            true
-        } else {
-            warn!("Failed to start OS watcher");
-            false
+        tokio::select! {
+            res = tokio::signal::ctrl_c() => {
+                if res.is_ok() {
+                    info!("Received Ctrl+C signal, exiting...");
+                }
+                res.map_err(|e| anyhow!(e))
+            }
+            res = close_signal.recv() => {
+                if res.is_some() {
+                    info!("Received close signal from Windows, exiting...");
+                }
+                res.ok_or_else(|| anyhow!("Error in receiving close signal"))
+            }
         }
-    };
-
-    if ok {
-        shutdown_signal().await;
     }
-
-    debug!("Shutting down services");
-
-    let shutdown_res = services.shutdown().await
-                               .inspect_err(|e| log::error!("Shutdown error: {}", e));
-
-    shutdown_res?;
-    Ok(())
 }
 
 // Function to run the service in standalone mode (for debugging)
-pub fn run_standalone(log_level: LogLevel, args: Cli) -> anyhow::Result<()> {
-    // todo support driver and user here
-    
+pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
     // Initialize logger for standalone mode
     if let Err(e) = init_standalone_logger(log_level) {
         eprintln!("Failed to initialize logger: {}", e);
@@ -106,13 +68,10 @@ pub fn run_standalone(log_level: LogLevel, args: Cli) -> anyhow::Result<()> {
     debug!("Creating Tokio runtime");
     let rt = Runtime::new()?;
 
-    // Run the service in the Tokio runtime
-    rt.block_on(async {
-        standalone_task(args).await
-                         .map_err(|e| error!("Failed with error: {}", e))
-                         .ok();
-    });
+    let stop_signal = WindowsStandaloneStopSignal::new();
 
-    debug!("Standalone mode exited");
-    Ok(())
+    // Run the service in the Tokio runtime
+    rt.block_on(async move {
+        async_main(stop_signal, ServiceStateNullListener).await
+    })
 }
