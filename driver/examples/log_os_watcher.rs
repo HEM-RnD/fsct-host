@@ -34,7 +34,7 @@ use fsct::device_manager::ManagedDeviceId;
 use fsct::player_state::PlayerState;
 use fsct::service::ServiceHandle;
 
-use libdriver::run_os_watcher;
+use fsct_driver::run_os_watcher;
 
 
 #[derive(Default)]
