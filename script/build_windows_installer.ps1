@@ -80,7 +80,7 @@ try
     $LICENSE_ENABLE = $true
 
     $PROJECT_DIR = $projectLocation
-    $WIX_SOURCE_DIR = Join-Path $projectLocation "ports\native\packages\windows"
+    $WIX_SOURCE_DIR = Join-Path $projectLocation "packages\windows"
     $BUILD_DIR = Join-Path $projectLocation "target\wix_build"
     $EULA_DIR = Join-Path $projectLocation "ports\native"
     $EULA_RTF = Join-Path $BUILD_DIR "EULA.rtf"

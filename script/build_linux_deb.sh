@@ -9,7 +9,7 @@ BUILD_ROOT="${ROOT_DIR}/target/deb/build"
 STAGE_DIR="${BUILD_ROOT}/stage"
 OUTPUT_DIR="${ROOT_DIR}/target/deb"
 # FPM config used by fpm (must be under debian structure, no .conf)
-PACKAGE_SOURCE="${ROOT_DIR}/ports/native/packages/linux/"
+PACKAGE_SOURCE="${ROOT_DIR}/packages/linux/"
 CONFIG_DIR="${PACKAGE_SOURCE}/debian/"
 
 # Flags

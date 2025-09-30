@@ -11,7 +11,7 @@ IDENTIFIER="com.hem-e.fsct-driver"                     # Unique package identifi
 BUILD_DIR="${ROOT_DIR}/target"                          # Directory where build will be performed
 INSTALL_DIR="/usr/local/bin"                           # Target install directory for the binary
 DAEMON_DIR="/Library/LaunchDaemons"                    # Target install directory for the plist
-INSTALLER_FILES_DIR="${ROOT_DIR}/ports/native/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
+INSTALLER_FILES_DIR="${ROOT_DIR}/packages/macos"  # Directory with prepared files (plist, postinstall, distribution.xml)
 
 # Code signing certificate (ensure the certificate is installed in your Keychain)
 APPLE_DEVELOPER_ID_APP="Developer ID Application: HEM Sp. z o.o. (342MS6WA5D)"
