@@ -18,7 +18,8 @@
 
 pub mod service;
 pub mod player;
-
+#[cfg(windows)]
+pub mod ipc_transport;
 
 pub fn get_socket_activation_fd() -> Option<i32> {
     // There is no socket activation on Windows.

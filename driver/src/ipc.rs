@@ -22,12 +22,17 @@
 //! - Handle msgpack-rpc style requests for `get_protocol_version`
 //! - Forward to the provided FsctDriver
 
+
+#[cfg(unix)]
+use crate::ports::unix::ipc_transport as transport;
+#[cfg(windows)]
+use crate::ports::windows::ipc_transport as transport;
+
 use std::sync::{Arc, Mutex};
 
 use log::{error, info, warn};
 use anyhow::{anyhow, bail, Context};
 
-use super::transport;
 use fsct::service::{spawn_service, ServiceHandle, MultiServiceHandle};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
@@ -107,7 +112,7 @@ impl IpcServer {
             EndpointDefinitionType::Path(path) => {
                 info!("FSCT IPC server listening on: {}", path);
                 let listener = transport::EndpointListener::from_path(path.clone()).await
-                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
+                                                                                   .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
                 listener
             }
             #[cfg(unix)]
@@ -193,8 +198,8 @@ pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: 
 /// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
 #[cfg(unix)]
 pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
-        let server = IpcServer::with_socket_fd(driver, fd);
-        return run_ipc_server(server);
+    let server = IpcServer::with_socket_fd(driver, fd);
+    return run_ipc_server(server);
 }
 
 #[cfg(not(unix))]
@@ -242,7 +247,7 @@ impl Into<Value> for Nil {
 
 fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error> {
     let pid_u64 = param.as_u64()
-        .with_context(|| "invalid param: player_id must be integer")?;
+                       .with_context(|| "invalid param: player_id must be integer")?;
     let pid = std::num::NonZeroU32::new(pid_u64 as u32)
         .with_context(|| "invalid player_id: must be non-zero")?;
     Ok(pid)
@@ -250,7 +255,7 @@ fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error>
 
 fn parse_device_id(param: &Value) -> Result<Uuid, anyhow::Error> {
     let did_bytes = param.as_slice()
-        .with_context(|| "invalid param: device_id must be binary")?;
+                         .with_context(|| "invalid param: device_id must be binary")?;
     if did_bytes.len() != 16 {
         bail!("invalid device_id: uuid binary must be 16 bytes");
     }
