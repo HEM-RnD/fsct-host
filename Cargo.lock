@@ -710,6 +710,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "bitflags 2.8.0",
  "clap",
  "env_logger",
  "fsct-client",
