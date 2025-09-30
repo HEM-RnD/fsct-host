@@ -17,8 +17,8 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use fsct::{FsctDriver, ManagedPlayerId, PlayerState};
-use fsct::definitions::{FsctStatus, TimelineInfo};
+use fsct::{FsctDriver, PlayerState};
+use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use zbus::zvariant::OwnedValue;
 use fsct::player_state::TrackMetadata;
 use log::{debug, warn};

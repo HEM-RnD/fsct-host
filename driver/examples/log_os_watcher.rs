@@ -29,10 +29,10 @@ use async_trait::async_trait;
 use env_logger::Env;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::driver::FsctDriver;
-use fsct::ManagedPlayerId;
-use fsct::device_manager::ManagedDeviceId;
+use fsct::definitions::ManagedPlayerId;
+use fsct::definitions::ManagedDeviceId;
 use fsct::player_state::PlayerState;
-use fsct::service::ServiceHandle;
+use fsct::joinable_task::JoinableTaskHandle;
 
 use fsct_driver::run_os_watcher;
 
@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
     let driver: Arc<dyn FsctDriver> = Arc::new(LoggingDriver::new());
 
     // Start the OS watcher for the current platform
-    let watcher: ServiceHandle = run_os_watcher(driver.clone()).await?;
+    let watcher: JoinableTaskHandle = run_os_watcher(driver.clone()).await?;
 
     // Wait for Ctrl+C, then shut down
     tokio::select! {

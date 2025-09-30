@@ -16,9 +16,9 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use crate::device_manager::ManagedDeviceId;
+use crate::definitions::ManagedDeviceId;
 use crate::player_state::PlayerState;
-use crate::player_manager::ManagedPlayerId;
+use crate::definitions::ManagedPlayerId;
 
 /// Events emitted by PlayerManager about player lifecycle, assignments and state changes.
 #[derive(Debug, Clone)]

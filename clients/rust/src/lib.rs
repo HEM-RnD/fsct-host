@@ -21,11 +21,9 @@ use anyhow::Error;
 use async_trait::async_trait;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-use fsct::definitions::ProtocolVersion;
 use fsct::{default_endpoint_path, FsctDriver};
-use fsct::{PlayerState, ManagedPlayerId};
-use fsct::device_manager::ManagedDeviceId;
-use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::PlayerState;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo, ManagedPlayerId, ProtocolVersion};
 
 use msgpack_rpc::{Client, Value};
 

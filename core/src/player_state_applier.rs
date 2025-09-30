@@ -22,9 +22,9 @@ use anyhow::Error;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::device_manager::{DeviceControl, ManagedDeviceId};
+use crate::device_manager::DeviceControl;
 use crate::player_state::PlayerState;
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 
 /// Abstraction for applying PlayerState to devices.
 ///

@@ -26,8 +26,8 @@ use msgpack_rpc::Value;
 use fsct_client::IpcDriver;
 use fsct_driver::IpcServer;
 use fsct::FsctDriver;
-use fsct::{ManagedDeviceId, ManagedPlayerId};
-use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::ManagedPlayerId;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
 
 fn test_endpoint() -> String {
@@ -48,14 +48,14 @@ fn test_endpoint() -> String {
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
     use anyhow::Context;
-    use fsct::{spawn_service, ServiceHandle};
+    use fsct::{spawn_service, JoinableTaskHandle};
     use super::*;
 
     // Common helper used by both connect helpers: spawns server and retries connection via provided connector
     async fn start_server_and_connect_common<T, C, Fut>(
         driver: Arc<dyn FsctDriver>,
         connector: C,
-    ) -> (T, ServiceHandle)
+    ) -> (T, JoinableTaskHandle)
     where
         C: Fn(String) -> Fut,
         Fut: std::future::Future<Output=Result<T, anyhow::Error>>,
@@ -88,14 +88,14 @@ mod helpers {
     }
 
     // Unified helper to start server and connect client with retry
-    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, ServiceHandle) {
+    pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, JoinableTaskHandle) {
         start_server_and_connect_common(driver, |endpoint: String| async move {
             IpcDriver::connect_to_endpoint(endpoint).await
         }).await
     }
 
     // Unified helper to start server and connect a raw msgpack-rpc Client (for parsing error tests)
-    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, ServiceHandle) {
+    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, JoinableTaskHandle) {
         use parity_tokio_ipc::Endpoint;
         use tokio_util::compat::TokioAsyncReadCompatExt;
         start_server_and_connect_common(driver, |endpoint: String| async move {

@@ -193,7 +193,7 @@ fn build_orchestrator(applier: Arc<MockApplier>) -> (
     (orch, player_tx, device_tx)
 }
 
-async fn run_orchestrator(orch: Orchestrator<MockApplier>) -> ServiceHandle {
+async fn run_orchestrator(orch: Orchestrator<MockApplier>) -> JoinableTaskHandle {
     orch.run()
 }
 

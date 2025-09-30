@@ -21,31 +21,36 @@ mod player_manager;
 pub mod player_state_applier;
 pub mod player_events;
 pub mod orchestrator;
-pub mod service;
+pub mod joinable_task;
 pub mod driver;
 pub mod device_manager;
 pub mod usb_device_watch;
 pub mod player_state;
 mod device_uuid_calculator;
 mod endpoint;
+pub mod inprocess_driver;
 
-pub use player_manager::{ManagedPlayerId, PlayerManager};
+pub use player_manager::PlayerManager;
 pub use player_state::PlayerState;
 pub use player_events::PlayerEvent;
 pub use orchestrator::Orchestrator;
 
 // Export driver abstraction
-pub use driver::{FsctDriver, LocalDriver};
+pub use driver::FsctDriver;
 
 // Export device management types
-pub use device_manager::{DeviceControl, DeviceEvent, DeviceManagement, DeviceManager, DeviceManagerError, ManagedDeviceId};
+pub use device_manager::{DeviceControl, DeviceEvent, DeviceManagement, DeviceManager, DeviceManagerError};
 pub use usb_device_watch::run_usb_device_watch;
-pub use service::{spawn_service, MultiServiceHandle, ServiceHandle, StopHandle};
+pub use joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle, StopHandle};
 
 pub use nusb::DeviceId;
 
 
 // Re-export protocol version types
 pub use definitions::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
-
+// Export device management types
+pub use definitions::ManagedDeviceId;
+pub use definitions::ManagedPlayerId;
 pub use endpoint::default_endpoint_path;
+// Export driver abstraction
+pub use inprocess_driver::LocalDriver;

@@ -26,14 +26,14 @@ use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::broadcast;
 use scoring::{Assignment, PlayerSelectionParams};
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use crate::device_manager::{DeviceEvent, DeviceManager, ManagedDeviceId};
+use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use crate::device_manager::{DeviceEvent, DeviceManager};
 use crate::device_manager::DeviceControl;
 use crate::player_events::PlayerEvent;
-use crate::player_manager::ManagedPlayerId;
+use crate::definitions::ManagedPlayerId;
 use crate::player_state::PlayerState;
 use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
-use crate::service::{spawn_service, ServiceHandle};
+use crate::joinable_task::{spawn_service, JoinableTaskHandle};
 
 #[derive(Debug, Clone, Default)]
 struct RegisteredPlayer {
@@ -118,7 +118,7 @@ impl Orchestrator<DirectDeviceControlApplier<DeviceManager>> {
 
 impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     /// Spawn the orchestrator event loop in background and return a handle.
-    pub fn run(mut self) -> ServiceHandle {
+    pub fn run(mut self) -> JoinableTaskHandle {
         spawn_service(move |mut stop_handle| async move {
             loop {
                 select! {

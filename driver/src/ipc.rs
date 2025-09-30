@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use log::{error, info, warn};
 use anyhow::{anyhow, bail, Context};
 
-use fsct::service::{spawn_service, ServiceHandle, MultiServiceHandle};
+use fsct::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::{FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
@@ -67,18 +67,18 @@ pub struct IpcServer {
     endpoint: EndpointDefinitionType,
     driver: Arc<dyn FsctDriver>,
     // Container of per-connection services for cooperative shutdown
-    connections: Arc<Mutex<fsct::MultiServiceHandle>>,
+    connections: Arc<Mutex<fsct::MultiJoinableTaskHandle>>,
 }
 
 impl IpcServer {
     /// Create with an explicit socket path (useful for tests).
     pub fn with_socket_path(driver: Arc<dyn FsctDriver>, endpoint: &str) -> Self {
-        Self { endpoint: EndpointDefinitionType::Path(endpoint.into()), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+        Self { endpoint: EndpointDefinitionType::Path(endpoint.into()), driver, connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())) }
     }
 
     #[cfg(unix)]
     pub fn with_socket_fd(driver: Arc<dyn FsctDriver>, endpoint: OwnedFd) -> Self {
-        Self { endpoint: EndpointDefinitionType::Fd(Some(endpoint)), driver, connections: Arc::new(Mutex::new(MultiServiceHandle::new())) }
+        Self { endpoint: EndpointDefinitionType::Fd(Some(endpoint)), driver, connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())) }
     }
 
     /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
@@ -139,7 +139,7 @@ impl IpcServer {
     }
 
     fn start_connection_service(&self,
-                                stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> ServiceHandle {
+                                stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> JoinableTaskHandle {
         let driver = self.driver.clone();
         spawn_service(move |mut stop| async move {
             let connection_id = Uuid::new_v4();
@@ -170,7 +170,7 @@ impl IpcServer {
 }
 
 
-fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
+fn run_ipc_server(mut server: IpcServer) -> JoinableTaskHandle {
     spawn_service(move |mut stop| async move {
         // Reuse IpcServer::serve instead of duplicating accept-loop logic
 
@@ -190,20 +190,20 @@ fn run_ipc_server(mut server: IpcServer) -> ServiceHandle {
 }
 
 /// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
-pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: String) -> ServiceHandle {
+pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: String) -> JoinableTaskHandle {
     let server = IpcServer::with_socket_path(driver, &endpoint);
     run_ipc_server(server)
 }
 
 /// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
 #[cfg(unix)]
-pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> ServiceHandle {
+pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> JoinableTaskHandle {
     let server = IpcServer::with_socket_fd(driver, fd);
     return run_ipc_server(server);
 }
 
 #[cfg(not(unix))]
-pub fn run_ipc_server_with_fd(_driver: Arc<dyn FsctDriver>, _fd: i32) -> ServiceHandle {
+pub fn run_ipc_server_with_fd(_driver: Arc<dyn FsctDriver>, _fd: i32) -> JoinableTaskHandle {
     panic!("IPC running from file descriptor not supported on this platform");
 }
 

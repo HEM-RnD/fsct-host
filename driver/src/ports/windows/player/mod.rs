@@ -28,9 +28,9 @@ use windows::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
-use fsct::definitions::{TimelineInfo, FsctStatus};
+use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
-use fsct::{spawn_service, FsctDriver, ManagedPlayerId, ServiceHandle};
+use fsct::{spawn_service, FsctDriver, JoinableTaskHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 
@@ -315,7 +315,7 @@ impl WindowsOsWatcher {
         let handles = handles.as_ref().unwrap();
         *session == handles.session
     }
-    async fn run_notification_task(self: Arc<Self>) -> Result<ServiceHandle, PlayerError> {
+    async fn run_notification_task(self: Arc<Self>) -> Result<JoinableTaskHandle, PlayerError> {
         let (startup_done_signal, startup_awaiter) = tokio::sync::oneshot::channel::<()>();
         let service_handle = spawn_service(move |mut stop_token| async move {
             debug!("[WindowsPlayer] Notification task started");
@@ -431,7 +431,7 @@ enum WindowsNotification {
 const UNIX_EPOCH_OFFSET: i64 = 116444736000000000;
 
 
-pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> Result<ServiceHandle, PlayerError> {
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> Result<JoinableTaskHandle, PlayerError> {
     let windows_watcher = Arc::new(WindowsOsWatcher::new_with_driver(driver).await?);
     windows_watcher.run_notification_task().await
 }

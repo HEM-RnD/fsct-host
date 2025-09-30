@@ -21,10 +21,11 @@ use nusb::{list_devices, DeviceId, DeviceInfo};
 use log::{debug, info, warn};
 use nusb::hotplug::HotplugEvent;
 use futures::StreamExt;
-use crate::device_manager::{DeviceManagement, ManagedDeviceId};
+use crate::definitions::ManagedDeviceId;
+use crate::device_manager::DeviceManagement;
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;
-use crate::service::{ServiceHandle, spawn_service};
+use crate::joinable_task::{spawn_service, JoinableTaskHandle};
 
 /// Tries to initialize a device and add it to the device manager
 async fn try_initialize_device_and_add_to_manager<T: DeviceManagement>(
@@ -120,7 +121,7 @@ async fn deinitialize_devices<T: DeviceManagement>(device_manager: &T) {
 /// Runs the USB device watch task
 pub async fn run_usb_device_watch<T: DeviceManagement + Send + Sync + 'static>(
     device_manager: Arc<T>,
-) -> Result<ServiceHandle, anyhow::Error> {
+) -> Result<JoinableTaskHandle, anyhow::Error> {
     let mut devices_plug_events_stream = nusb::watch_devices()?;
 
     let handle = spawn_service(move |mut stop_handle| async move {

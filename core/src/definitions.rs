@@ -16,7 +16,9 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use std::fmt::Display;
+use std::num::NonZeroU32;
 use bitflags::bitflags;
+use uuid::Uuid;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -130,3 +132,8 @@ impl ProtocolVersion {
 }
 
 pub const FSCT_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
+
+/// Unique identifier for managed devices
+pub type ManagedDeviceId = Uuid;
+/// Type alias for player ID
+pub type ManagedPlayerId = NonZeroU32;

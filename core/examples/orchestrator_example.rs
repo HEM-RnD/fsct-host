@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
-use fsct::{DeviceManager, run_usb_device_watch, Orchestrator, PlayerManager, MultiServiceHandle};
+use fsct::{DeviceManager, run_usb_device_watch, Orchestrator, PlayerManager, MultiJoinableTaskHandle};
 use fsct::PlayerState;
 use log::info;
 use fsct::definitions::{FsctStatus, TimelineInfo};
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
     let player_events = player_manager.subscribe();
 
     let device_manager = Arc::new(DeviceManager::new());
-    let mut driver_service_handle = MultiServiceHandle::new();
+    let mut driver_service_handle = MultiJoinableTaskHandle::new();
 
     let usb_watch = run_usb_device_watch(device_manager.clone()).await?;
     driver_service_handle.add(usb_watch);

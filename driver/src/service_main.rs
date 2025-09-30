@@ -20,11 +20,12 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use fsct::{FsctDriver, LocalDriver, MultiServiceHandle};
+use fsct::{FsctDriver, MultiJoinableTaskHandle};
 use log::{debug, error, info, warn};
 use anyhow::anyhow;
 use crate::cli::{Cli, Parser};
 use fsct::default_endpoint_path;
+use fsct::inprocess_driver::LocalDriver;
 use crate::run_os_watcher;
 
 pub trait StopSignal {
@@ -51,7 +52,7 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
     // Parse CLI
     let args = Cli::parse();
 
-    let mut services = MultiServiceHandle::new();
+    let mut services = MultiJoinableTaskHandle::new();
 
     let endpoint = args.endpoint.clone().unwrap_or_else(|| default_endpoint_path().to_string());
 

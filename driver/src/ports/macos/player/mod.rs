@@ -15,13 +15,12 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use fsct::definitions::{FsctStatus, TimelineInfo};
+use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
-use fsct::{FsctDriver, ManagedPlayerId};
-use fsct::service::{ServiceHandle, spawn_service};
+use fsct::FsctDriver;
+use fsct::joinable_task::{spawn_service, JoinableTaskHandle};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use anyhow::anyhow;
@@ -111,7 +110,7 @@ enum NowPlayingImpl {
     Native(NowPlayingWrapper),
 }
 
-pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<JoinableTaskHandle> {
     // Register a single native macOS player (for the OS global now playing)
     let player_id = driver
         .register_player("native-macos-nowplaying".to_string())

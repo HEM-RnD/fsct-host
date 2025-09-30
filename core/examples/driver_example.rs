@@ -2,9 +2,10 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use fsct::{FsctDriver, LocalDriver, PlayerState};
+use fsct::{FsctDriver, PlayerState};
 use fsct::definitions::{FsctStatus, TimelineInfo};
 use log::info;
+use fsct::inprocess_driver::LocalDriver;
 use fsct::player_state::TrackMetadata;
 
 #[tokio::main]

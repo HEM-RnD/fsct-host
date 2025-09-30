@@ -24,7 +24,7 @@ use anyhow::bail;
 use futures_util::StreamExt;
 use log::{warn};
 use tokio::select;
-use fsct::{spawn_service, FsctDriver, ServiceHandle};
+use fsct::{spawn_service, FsctDriver, JoinableTaskHandle};
 use fsct::definitions::FsctStatus;
 use mpris::*;
 use player_manager::PlayerRegistrationManager;
@@ -57,7 +57,7 @@ pub async fn os_watcher_main_loop(driver: Arc<dyn FsctDriver>, player_watcher: m
     bail!("Player watcher stopped unexpectedly");
 }
 
-pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<ServiceHandle> {
+pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<JoinableTaskHandle> {
     let player_watcher = mpris::SessionWatcher::new().await?;
     let handle = spawn_service(|mut stop| async move {
         select! {

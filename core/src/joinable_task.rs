@@ -67,12 +67,12 @@ impl StopHandle {
 }
 
 /// A unified handle for background service tasks that support cooperative shutdown and abort.
-pub struct ServiceHandle {
+pub struct JoinableTaskHandle {
     join: JoinHandle<()>,
     shutdown_tx: oneshot::Sender<()>,
 }
 
-impl ServiceHandle {
+impl JoinableTaskHandle {
     /// Construct a new ServiceHandle from a spawned task handle and a oneshot shutdown sender.
     pub fn new(join: JoinHandle<()>, shutdown_tx: oneshot::Sender<()>) -> Self {
         Self { join, shutdown_tx: shutdown_tx }
@@ -99,7 +99,7 @@ impl ServiceHandle {
 ///
 /// The provided function will receive a StopHandle to await for shutdown, and will be executed
 /// on a Tokio task. The returned ServiceHandle allows triggering a cooperative shutdown or aborting.
-pub fn spawn_service<Fut, Func>(f: Func) -> ServiceHandle
+pub fn spawn_service<Fut, Func>(f: Func) -> JoinableTaskHandle
 where
     Fut: Future<Output=()> + Send + 'static,
     Func: FnOnce(StopHandle) -> Fut + Send + 'static,
@@ -109,19 +109,19 @@ where
     let join = tokio::spawn(async move {
         f(stop).await;
     });
-    ServiceHandle::new(join, shutdown_tx)
+    JoinableTaskHandle::new(join, shutdown_tx)
 }
 
 /// A container for multiple ServiceHandles with a single shutdown method.
-pub struct MultiServiceHandle {
-    handles: Vec<ServiceHandle>,
+pub struct MultiJoinableTaskHandle {
+    handles: Vec<JoinableTaskHandle>,
 }
 
-impl Default for MultiServiceHandle {
+impl Default for MultiJoinableTaskHandle {
     fn default() -> Self { Self { handles: Vec::new() } }
 }
 
-impl MultiServiceHandle {
+impl MultiJoinableTaskHandle {
     /// Create an empty MultiServiceHandle
     pub fn new() -> Self { Self::default() }
 
@@ -129,7 +129,7 @@ impl MultiServiceHandle {
     pub fn with_capacity(cap: usize) -> Self { Self { handles: Vec::with_capacity(cap) } }
 
     /// Add a ServiceHandle to be managed
-    pub fn add(&mut self, handle: ServiceHandle) { self.handles.push(handle); }
+    pub fn add(&mut self, handle: JoinableTaskHandle) { self.handles.push(handle); }
 
     /// Number of contained handles
     pub fn len(&self) -> usize { self.handles.len() }

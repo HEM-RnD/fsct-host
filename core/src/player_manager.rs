@@ -20,16 +20,13 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::{Context, Error};
-use log::{info};
+use log::info;
 
-use crate::device_manager::ManagedDeviceId;
+use crate::definitions::{ManagedDeviceId, ManagedPlayerId};
 use crate::player_events::PlayerEvent;
 use crate::player_state::PlayerState;
 use tokio::sync::broadcast;
 use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-
-/// Type alias for player ID
-pub type ManagedPlayerId = NonZeroU32;
 
 #[allow(dead_code)]
 /// Represents a registered player with its state and device assignments

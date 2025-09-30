@@ -22,10 +22,11 @@ mod js_types;
 #[macro_use]
 extern crate napi_derive;
 
-use fsct::definitions::{FsctStatus, FsctTextMetadata};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedPlayerId};
 use fsct::player_state::PlayerState;
-use fsct::{FsctDriver, LocalDriver, ManagedPlayerId, service::MultiServiceHandle};
+use fsct::{joinable_task::MultiJoinableTaskHandle, FsctDriver};
 use std::sync::{Arc, Mutex};
+use fsct::inprocess_driver::LocalDriver;
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 
 pub struct NodePlayerImpl {
@@ -129,7 +130,7 @@ impl NodePlayer {
 #[napi]
 pub struct FsctService {
     driver: Mutex<Option<Arc<LocalDriver>>>,
-    service_handle: Mutex<Option<MultiServiceHandle>>,
+    service_handle: Mutex<Option<MultiJoinableTaskHandle>>,
 }
 
 #[napi]
