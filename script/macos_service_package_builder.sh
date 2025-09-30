@@ -5,6 +5,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 
 # Configuration variables
+CRATE_NAME="fsct-driver"
 CARGO_BIN_NAME="fsctd"                      # Name of the binary target for Cargo
 APP_NAME="fsctd"                                # Application name (final binary name)
 IDENTIFIER="com.hem-e.fsct-driver"                     # Unique package identifier
@@ -82,7 +83,7 @@ if [ "$SKIP_LICENSE" = false ]; then
 fi
 
 # Extract version using cargo
-VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CARGO_BIN_NAME}'), ''))")
+VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; data = json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name'] == '${CRATE_NAME}'), ''))")
 if [ -z "$VERSION" ]; then
     echo "Error: Failed to extract version using cargo metadata"
     exit 1

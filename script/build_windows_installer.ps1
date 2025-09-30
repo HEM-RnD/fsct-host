@@ -452,8 +452,7 @@ try
 
         try {
             # Use Start-Process to better control output handling
-            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "driver/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait
-            -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
+            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "driver/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
 
             $licenseStdout = Get-Content "$env:TEMP\cargo_stdout.txt" -Raw -ErrorAction SilentlyContinue
             $licenseStderr = Get-Content "$env:TEMP\cargo_stderr.txt" -Raw -ErrorAction SilentlyContinue

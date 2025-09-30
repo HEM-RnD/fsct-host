@@ -149,7 +149,7 @@ if [[ -n "${FSCT_VERSION:-}" ]]; then
   VERSION="${FSCT_VERSION}"
 else
   if command -v cargo >/dev/null 2>&1; then
-    VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${CARGO_BIN_NAME}'),''))")
+    VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${PACKAGE_NAME}'),''))")
   else
     # Fallback: parse from workspace Cargo.toml [workspace.package]
     VERSION=$(grep -E '^version\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+"' "${ROOT_DIR}/Cargo.toml" | head -n1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)"/\1/')
