@@ -59,7 +59,3 @@ nix = { version = "0.29", default-features = false, features = ["signal", "poll"
 msgpack-rpc.workspace = true
 tokio-util = { version = "0.7.12", features = ["compat"] }
 parity-tokio-ipc = "0.9.0"
-
-[[bin]]
-name = "fsct_driver_service"
-path = "src/service_main.rs"

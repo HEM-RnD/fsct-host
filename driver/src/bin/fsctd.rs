@@ -15,20 +15,11 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-/// Returns the default path of the Unix Domain Socket used by FSCT IPC on Linux.
-#[cfg(target_os = "linux")]
-pub fn default_endpoint_path() -> &'static str {
-    "/run/fsct/fsct.sock"
-}
+// This file calls the appropriate service main implementation from the library
+// based on the target OS.
 
-/// Returns the default path of the Named Pipe used by FSCT IPC on Windows.
-#[cfg(target_os = "windows")]
-pub fn default_endpoint_path() -> &'static str {
-    "\\\\.\\pipe\\fsct_driver"
-}
+use fsct_driver::fsct_main;
 
-/// Returns the default path of the Unix Domain Socket used by FSCT IPC on macOS.
-#[cfg(target_os = "macos")]
-pub fn default_endpoint_path() -> &'static str {
-    "/var/run/fsct/fsct.sock"
+fn main() -> anyhow::Result<()> {
+    fsct_main()
 }

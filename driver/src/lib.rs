@@ -17,15 +17,15 @@
 
 
 mod cli;
-mod async_main;
+mod service_main;
 mod ports;
 pub mod ipc;
 
 pub use ports::*;
 
-pub use async_main::StopSignal;
-pub use async_main::ServiceStateListener;
-pub use async_main::ServiceStateNullListener;
+pub use service_main::StopSignal;
+pub use service_main::ServiceStateListener;
+pub use service_main::ServiceStateNullListener;
 
 pub use service::fsct_main;
 pub use player::run_os_watcher;

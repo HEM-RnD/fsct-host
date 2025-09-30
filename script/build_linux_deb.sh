@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 PACKAGE_NAME="fsct-driver"
-CARGO_BIN_NAME="fsct_driver_service"
+CARGO_BIN_NAME="fsctd"
 BUILD_ROOT="${ROOT_DIR}/target/deb/build"
 STAGE_DIR="${BUILD_ROOT}/stage"
 OUTPUT_DIR="${ROOT_DIR}/target/deb"

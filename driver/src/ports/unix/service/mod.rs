@@ -17,7 +17,7 @@
 
 use anyhow::anyhow;
 use env_logger::Env;
-use crate::{async_main, ServiceStateNullListener};
+use crate::{service_main, ServiceStateNullListener};
 
 pub struct UnixStopSignal {}
 impl UnixStopSignal {
@@ -25,7 +25,7 @@ impl UnixStopSignal {
         Self {}
     }
 }
-impl async_main::StopSignal for UnixStopSignal{
+impl service_main::StopSignal for UnixStopSignal{
     async fn wait(&mut self) -> anyhow::Result<()> {
         let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
@@ -45,6 +45,6 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     env_logger::init_from_env(env);
 
     let stop_signal = UnixStopSignal::new();
-    async_main::async_main(stop_signal, ServiceStateNullListener).await
+    service_main::async_main(stop_signal, ServiceStateNullListener).await
 }
 

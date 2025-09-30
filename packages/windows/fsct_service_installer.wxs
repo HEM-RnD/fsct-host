@@ -33,7 +33,7 @@
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="ServiceExe" Guid="fd6d8931-e4e4-4651-9f80-08663706c52a">
         <File Id="FsctServiceExe"
-              Source="fsct_driver_service.exe"
+              Source="fsctd.exe"
               KeyPath="yes" />
         <ServiceInstall
                 Id="FsctDriverService"

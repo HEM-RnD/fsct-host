@@ -22,7 +22,7 @@ use anyhow::anyhow;
 use crate::cli::{LogLevel};
 use crate::ports::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
-use crate::async_main::{async_main, StopSignal};
+use crate::service_main::{async_main, StopSignal};
 use crate::ServiceStateNullListener;
 
 struct WindowsStandaloneStopSignal;

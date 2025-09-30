@@ -72,7 +72,8 @@ try
     }
 
     # === Configuration ===
-    $PROJECT_NAME = "fsct_driver_service"
+    $CRATE_NAME = "fsct-driver"
+    $BIN_NAME = "fsctd.exe"
     $SIGN_CERT_THUMBPRINT = "aef0182f5de48143c336a56f9ef5b706a9eb0403"
     $TIMESTAMP_URL = "http://timestamp.globalsign.com/tsa/r6advanced1"
     $SIGN_ENABLED = $true
@@ -313,7 +314,7 @@ try
     try
     {
         cargo build --release
-        Copy-Item "target\release\$PROJECT_NAME.exe" "$BUILD_DIR\$PROJECT_NAME.exe" -Force
+        Copy-Item "target\release\$BIN_NAME" "$BUILD_DIR\$BIN_NAME" -Force
     }
     catch
     {
@@ -327,7 +328,7 @@ try
     function Get-CargoVersion
     {
         $cargoMetadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
-        $package = $cargoMetadata.packages | Where-Object { $_.name -eq $PROJECT_NAME }
+        $package = $cargoMetadata.packages | Where-Object { $_.name -eq $CRATE_NAME }
         return $package.version
     }
 
@@ -387,7 +388,7 @@ try
     Write-Host "[INFO] Installer version: $installerVersion"
 
     # === Signing EXE ===
-    if (-not (Sign-File -FilePath "$BUILD_DIR\$PROJECT_NAME.exe" -Description "EXE"))
+    if (-not (Sign-File -FilePath "$BUILD_DIR\$BIN_NAME" -Description "EXE"))
     {
         exit 1
     }
