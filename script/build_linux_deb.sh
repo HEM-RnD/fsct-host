@@ -181,7 +181,7 @@ License generation was skipped during this build (--skip-licensing).
 For complete license information, build without --skip-licensing.
 EOM
 elif [[ "$CARGO_ABOUT_AVAILABLE" == true ]]; then
-  (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs -o "${DOC_DIR}/LICENSES.md") || {
+  (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m driver/Cargo.toml licenses.hbs -o "${DOC_DIR}/LICENSES.md") || {
     echo "Warning: cargo about failed; continuing without LICENSES.md" >&2
   }
 fi

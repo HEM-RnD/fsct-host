@@ -212,7 +212,7 @@ chmod +x "${PACKAGE_DIR}/bin_scripts/preinstall"
 echo "========================================"
 echo "Generating EULA from FSCT_Driver_EULA.md..."
 # Generate EULA.rtf from FSCT_Driver_EULA.md using pandoc
-pandoc --from markdown --to rtf -s -o "${PACKAGE_DIR}/EULA.rtf" "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md"
+pandoc --from markdown --to rtf -s -o "${PACKAGE_DIR}/EULA.rtf" "${ROOT_DIR}/driver/FSCT_Driver_EULA.md"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to generate EULA.rtf using pandoc"
     exit 1
@@ -226,13 +226,13 @@ fi
 echo "EULA generated successfully: ${PACKAGE_DIR}/EULA.rtf"
 
 # Copy the EULA.md to the binary root directory
-cp "${ROOT_DIR}/ports/native/FSCT_Driver_EULA.md" "${BIN_ROOT}/usr/local/share/fsct-driver/EULA.md"
+cp "${ROOT_DIR}/driver/FSCT_Driver_EULA.md" "${BIN_ROOT}/usr/local/share/fsct-driver/EULA.md"
 
 echo "========================================"
 echo "Generating license information..."
 if [ "$SKIP_LICENSE" = false ]; then
     echo "Generating LICENSES.md using cargo about..."
-    (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs -o "${PACKAGE_DIR}/LICENSES.md")
+    (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m driver/Cargo.toml licenses.hbs -o "${PACKAGE_DIR}/LICENSES.md")
     if [ $? -ne 0 ]; then
         echo "Error: Failed to generate LICENSES.md using cargo about"
         exit 1

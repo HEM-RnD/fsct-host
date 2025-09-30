@@ -83,7 +83,7 @@ try
     $PROJECT_DIR = $projectLocation
     $WIX_SOURCE_DIR = Join-Path $projectLocation "packages\windows"
     $BUILD_DIR = Join-Path $projectLocation "target\wix_build"
-    $EULA_DIR = Join-Path $projectLocation "ports\native"
+    $EULA_DIR = Join-Path $projectLocation "driver"
     $EULA_RTF = Join-Path $BUILD_DIR "EULA.rtf"
 
     # Parse command line arguments
@@ -452,7 +452,8 @@ try
 
         try {
             # Use Start-Process to better control output handling
-            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "ports/native/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
+            $process = Start-Process -FilePath "cargo" -ArgumentList @("about", "generate", "-c", "about.toml", "-m", "driver/Cargo.toml", "licenses.hbs", "-o", "$BUILD_DIR/LICENSES.md") -NoNewWindow -Wait
+            -PassThru -RedirectStandardOutput "$env:TEMP\cargo_stdout.txt" -RedirectStandardError "$env:TEMP\cargo_stderr.txt"
 
             $licenseStdout = Get-Content "$env:TEMP\cargo_stdout.txt" -Raw -ErrorAction SilentlyContinue
             $licenseStderr = Get-Content "$env:TEMP\cargo_stderr.txt" -Raw -ErrorAction SilentlyContinue
