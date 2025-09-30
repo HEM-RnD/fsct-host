@@ -27,6 +27,7 @@ pub mod device_manager;
 pub mod usb_device_watch;
 pub mod player_state;
 mod device_uuid_calculator;
+mod endpoint;
 
 pub use player_manager::{ManagedPlayerId, PlayerManager};
 pub use player_state::PlayerState;
@@ -46,3 +47,5 @@ pub use nusb::DeviceId;
 
 // Re-export protocol version types
 pub use definitions::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
+
+pub use endpoint::default_endpoint_path;

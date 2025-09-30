@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use fsct::definitions::ProtocolVersion;
-use fsct::{FsctDriver};
+use fsct::{default_endpoint_path, FsctDriver};
 use fsct::{PlayerState, ManagedPlayerId};
 use fsct::device_manager::ManagedDeviceId;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
@@ -86,6 +86,12 @@ pub struct IpcDriver {
 }
 
 impl IpcDriver {
+    /// Connect to the default endpoint and verify protocol compatibility.
+    pub async fn connect() -> Result<Self, Error>
+    {
+        Self::connect_to_endpoint(default_endpoint_path().to_string()).await
+    }
+
     /// Connect to a specific endpoint and verify protocol compatibility.
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         // Establish persistent connection

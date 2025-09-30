@@ -24,7 +24,7 @@ use fsct::{FsctDriver, LocalDriver, MultiServiceHandle};
 use log::{debug, error, info, warn};
 use anyhow::anyhow;
 use crate::cli::{Cli, Parser};
-use crate::socket_path;
+use fsct::default_endpoint_path;
 use crate::run_os_watcher;
 
 pub trait StopSignal {
@@ -53,7 +53,7 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
 
     let mut services = MultiServiceHandle::new();
 
-    let endpoint = args.endpoint.clone().unwrap_or_else(|| socket_path().to_string());
+    let endpoint = args.endpoint.clone().unwrap_or_else(|| default_endpoint_path().to_string());
 
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver

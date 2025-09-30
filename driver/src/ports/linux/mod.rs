@@ -20,11 +20,6 @@ use log::{info, warn};
 
 pub mod player;
 
-/// Returns the default path of the Unix Domain Socket used by FSCT IPC on Linux.
-/// It prefers XDG_RUNTIME_DIR and falls back to /tmp when unavailable.
-pub fn socket_path() -> &'static str {
-    "/run/fsct/fsct.sock"
-}
 
 fn is_triggered_by_systemd_socket_activation() -> bool {
     let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
@@ -45,7 +40,7 @@ pub fn get_socket_activation_fd() -> Option<OwnedFd> {
         let fd = unsafe { OwnedFd::from_raw_fd(3) };
         Some(fd)
     } else {
-        info!("systemd socket activation not detected, using {}", socket_path());
+        info!("systemd socket activation not detected, using {}", fsct::default_endpoint_path());
         None
     }
 }

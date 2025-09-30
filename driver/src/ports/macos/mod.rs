@@ -20,9 +20,6 @@ use std::os::fd::{IntoRawFd, OwnedFd};
 pub mod player;
 
 
-pub fn socket_path() -> &'static str {
-    "/var/run/fsct/fsct.sock"
-}
 
 /// Returns the file descriptor provided by launchd socket activation (if any).
 ///
