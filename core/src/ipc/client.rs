@@ -21,7 +21,6 @@
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use super::transport;
 
 use crate::definitions::ProtocolVersion;
 use crate::{FsctDriver};
@@ -255,4 +254,65 @@ impl FsctDriver for IpcDriver {
         let uuid = uuid::Uuid::from_slice(bytes).map_err(|e| anyhow::anyhow!("invalid uuid: {e}"))?;
         Ok(Some(uuid))
     }
+}
+
+#[cfg(unix)]
+mod transport {
+    use anyhow::Context;
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio::net::{UnixStream};
+    pub struct EndpointClient;
+
+    impl EndpointClient {
+        pub async fn connect(path: String) -> anyhow::Result<UnixStream> {
+            UnixStream::connect(path).await.context("unix client connect failed")
+        }
+    }
+
+    // Re-export traits needed by server/client code
+    pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+    impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+}
+
+#[cfg(windows)]
+mod transport {
+    use std::time::Duration;
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio::net::windows::named_pipe;
+    use tokio::net::windows::named_pipe::NamedPipeClient;
+    use tokio::time::Instant;
+    use winapi::shared::winerror::ERROR_PIPE_BUSY;
+
+    pub struct EndpointClient;
+
+    const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
+
+    impl EndpointClient {
+        pub async fn connect(name: String) -> anyhow::Result<NamedPipeClient> {
+            let attempt_start = Instant::now();
+            let client = loop {
+                match named_pipe::ClientOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(name.as_str())
+                {
+                    Ok(client) => break client,
+                    Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                        if attempt_start.elapsed() < PIPE_AVAILABILITY_TIMEOUT {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            continue;
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
+
+            Ok(client)
+        }
+    }
+
+    pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+    impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 }

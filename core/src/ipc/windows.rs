@@ -25,20 +25,15 @@ use anyhow::{anyhow, Result};
 use futures::Stream;
 use futures::stream;
 use std::{io, marker, mem, ptr};
-use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::windows::named_pipe;
-use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer, ServerOptions};
-use tokio::time::Instant;
-use winapi::shared::winerror::{ERROR_PIPE_BUSY, ERROR_SUCCESS};
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use winapi::shared::winerror::{ERROR_SUCCESS};
 use winapi::um::accctrl::*;
 use winapi::um::aclapi::*;
 use winapi::um::minwinbase::{LPTR, PSECURITY_ATTRIBUTES, SECURITY_ATTRIBUTES};
 use winapi::um::securitybaseapi::*;
 use winapi::um::winbase::{LocalAlloc, LocalFree};
 use winapi::um::winnt::*;
-
-// --- Listener and client ---
 
 pub struct EndpointListener {
     name: String,
@@ -365,36 +360,6 @@ impl InnerAttributes {
 
     unsafe fn as_ptr(&mut self) -> PSECURITY_ATTRIBUTES {
         &mut self.attrs as *mut _
-    }
-}
-
-pub struct EndpointClient;
-
-const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
-
-impl EndpointClient {
-    pub async fn connect(name: String) -> Result<NamedPipeClient> {
-        let attempt_start = Instant::now();
-        let client = loop {
-            match named_pipe::ClientOptions::new()
-                .read(true)
-                .write(true)
-                .open(name.as_str())
-            {
-                Ok(client) => break client,
-                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
-                    if attempt_start.elapsed() < PIPE_AVAILABILITY_TIMEOUT {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        continue;
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-                Err(e) => return Err(e.into()),
-            }
-        };
-
-        Ok(client)
     }
 }
 

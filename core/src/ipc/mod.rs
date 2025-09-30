@@ -24,6 +24,6 @@ pub mod server;
 pub mod client;
 
 #[cfg(unix)]
-use unix as transport;
+use unix as server_transport;
 #[cfg(windows)]
-use windows as transport;
+use windows as server_transport;

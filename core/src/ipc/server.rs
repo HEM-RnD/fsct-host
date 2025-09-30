@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use log::{error, info, warn};
 use anyhow::{anyhow, bail, Context};
 
-use super::transport;
+use super::server_transport as transport;
 use crate::{FsctDriver, ProtocolVersion};
 use crate::service::{spawn_service, ServiceHandle, MultiServiceHandle};
 use crate::player_state::{PlayerState, TrackMetadata};

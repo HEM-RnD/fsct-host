@@ -88,14 +88,6 @@ impl Stream for EndpointIncoming {
     }
 }
 
-pub struct EndpointClient;
-
-impl EndpointClient {
-    pub async fn connect(path: String) -> Result<UnixStream> {
-        UnixStream::connect(path).await.context("unix client connect failed")
-    }
-}
-
 // Re-export traits needed by server/client code
 pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
