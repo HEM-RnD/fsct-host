@@ -35,7 +35,7 @@ use windows_service::service_control_handler::ServiceStatusHandle;
 use crate::{ServiceStateListener, StopSignal};
 use crate::async_main::async_main;
 use crate::cli::Cli;
-use crate::windows::service::get_service_name;
+use crate::ports::windows::service::get_service_name;
 
 // Define service events
 #[derive(Clone)]

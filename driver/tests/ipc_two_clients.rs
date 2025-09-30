@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fsct_client::IpcDriver;
-use fsct::ipc::server::IpcServer;
+use fsct_driver::IpcServer;
 use fsct::FsctDriver;
 use async_trait::async_trait;
 use fsct::FSCT_PROTOCOL_VERSION;

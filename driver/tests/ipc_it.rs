@@ -24,7 +24,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use msgpack_rpc::Value;
 use fsct_client::IpcDriver;
-use fsct::ipc::server::IpcServer;
+use fsct_driver::IpcServer;
 use fsct::FsctDriver;
 use fsct::{ManagedDeviceId, ManagedPlayerId};
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};

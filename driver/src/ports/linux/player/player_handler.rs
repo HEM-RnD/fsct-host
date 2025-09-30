@@ -25,7 +25,7 @@ use log::{debug, warn};
 use tokio::select;
 use zbus::export::ordered_stream::OrderedStreamExt;
 use futures_util::StreamExt;
-use crate::linux::player::mpris::{PlaybackStatus, Player, PlayerProxy};
+use crate::ports::linux::player::mpris::{PlaybackStatus, Player, PlayerProxy};
 
 pub struct PlayerHandler {
     player: Player,

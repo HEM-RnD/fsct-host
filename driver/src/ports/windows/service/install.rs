@@ -26,8 +26,8 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 use crate::cli::LogLevel;
-use crate::windows::service::constants::{DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION, USER_SERVICE_DISPLAY_NAME, USER_SERVICE_DESCRIPTION};
-use crate::windows::service::get_service_name;
+use crate::ports::windows::service::constants::{DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION, USER_SERVICE_DISPLAY_NAME, USER_SERVICE_DESCRIPTION};
+use crate::ports::windows::service::get_service_name;
 
 fn get_service_type(user_service: bool) -> ServiceType
 {

@@ -20,8 +20,8 @@ use log::{debug, error};
 use fsct::FsctDriver;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio::select;
-use crate::linux::player::mpris;
-use crate::linux::player::player_handler::PlayerHandler;
+use crate::ports::linux::player::mpris;
+use crate::ports::linux::player::player_handler::PlayerHandler;
 
 pub struct PlayerRegistrationManager {
     driver: Arc<dyn FsctDriver>,

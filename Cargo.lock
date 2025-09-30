@@ -703,13 +703,11 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
- "msgpack-rpc",
  "nusb",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "uuid",
- "winapi",
 ]
 
 [[package]]
@@ -723,6 +721,7 @@ dependencies = [
  "env_logger",
  "fsct-client",
  "fsct-core",
+ "futures",
  "futures-util",
  "log",
  "log4rs",
@@ -736,6 +735,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "winapi",
  "windows",
  "windows-core",
  "windows-future",

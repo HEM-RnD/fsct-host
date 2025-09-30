@@ -20,7 +20,7 @@ use tokio::runtime::Runtime;
 use anyhow::anyhow;
 
 use crate::cli::{LogLevel};
-use crate::windows::service::logger::init_standalone_logger;
+use crate::ports::windows::service::logger::init_standalone_logger;
 use tokio::signal::windows::ctrl_close;
 use crate::async_main::{async_main, StopSignal};
 use crate::ServiceStateNullListener;

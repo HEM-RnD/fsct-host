@@ -16,13 +16,15 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 #[cfg(unix)]
-pub mod unix;
+mod unix;
 #[cfg(windows)]
-pub mod windows;
+mod windows;
 
-pub mod server;
+mod server;
 
 #[cfg(unix)]
 use unix as transport;
 #[cfg(windows)]
 use windows as transport;
+
+pub use server::*;

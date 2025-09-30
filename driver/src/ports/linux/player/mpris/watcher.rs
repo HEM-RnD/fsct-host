@@ -18,7 +18,7 @@
 use futures_util::Stream;
 use zbus::fdo::DBusProxy;
 use zbus::names::OwnedBusName;
-use crate::linux::player::mpris::player::Player;
+use crate::ports::linux::player::mpris::player::Player;
 
 pub struct SessionWatcher {
     conn: zbus::Connection,

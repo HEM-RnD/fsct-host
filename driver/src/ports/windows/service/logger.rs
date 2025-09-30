@@ -23,7 +23,7 @@ use log4rs::{
     encode::pattern::PatternEncoder,
 };
 use crate::cli::LogLevel;
-use crate::windows::service::runtime::get_current_session_id;
+use crate::ports::windows::service::runtime::get_current_session_id;
 
 pub fn get_log_dir() -> anyhow::Result<PathBuf> {
     // Create a log directory in ProgramData

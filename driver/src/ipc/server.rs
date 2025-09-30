@@ -28,11 +28,10 @@ use log::{error, info, warn};
 use anyhow::{anyhow, bail, Context};
 
 use super::transport;
-use crate::{FsctDriver, ProtocolVersion};
-use crate::service::{spawn_service, ServiceHandle, MultiServiceHandle};
-use crate::player_state::{PlayerState, TrackMetadata};
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use crate::FSCT_PROTOCOL_VERSION;
+use fsct::service::{spawn_service, ServiceHandle, MultiServiceHandle};
+use fsct::player_state::{PlayerState, TrackMetadata};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::{FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
 
 use uuid::Uuid;
 use msgpack_rpc::{serve, Service, Value};
@@ -63,7 +62,7 @@ pub struct IpcServer {
     endpoint: EndpointDefinitionType,
     driver: Arc<dyn FsctDriver>,
     // Container of per-connection services for cooperative shutdown
-    connections: Arc<Mutex<crate::service::MultiServiceHandle>>,
+    connections: Arc<Mutex<fsct::MultiServiceHandle>>,
 }
 
 impl IpcServer {
@@ -219,8 +218,13 @@ fn fut_err<V: Into<Value>>(v: V) -> RequestFut {
     Box::pin(std::future::ready(Err(v.into())))
 }
 
-impl Into<Value> for ProtocolVersion {
-    fn into(self) -> Value {
+
+trait IntoValue {
+    fn into_value(self) -> Value;
+}
+
+impl IntoValue for ProtocolVersion {
+    fn into_value(self) -> Value {
         Value::Map(vec![
             ("major".into(), self.major.into()),
             ("minor".into(), self.minor.into()),
@@ -424,7 +428,7 @@ impl FsctRpcService {
                 },
             async |_driver, _params|
                 {
-                    Ok(FSCT_PROTOCOL_VERSION)
+                    Ok(FSCT_PROTOCOL_VERSION.into_value())
                 })
     }
 

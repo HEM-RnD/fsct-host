@@ -74,9 +74,9 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
             if args.endpoint.is_some() {
                 warn!("Ignoring --socket argument because systemd socket activation is detected");
             }
-            fsct::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
+            crate::ipc::run_ipc_server_with_fd(driver.clone(), fd)
         } else {
-            fsct::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
+            crate::ipc::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
         };
         services.add(ipc);
         true

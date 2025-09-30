@@ -19,7 +19,7 @@ use zbus::names::OwnedBusName;
 use zbus::fdo::{DBusProxy, PropertiesProxy};
 use anyhow::bail;
 use zbus::export::ordered_stream::OrderedStreamExt;
-use crate::linux::player::mpris::{media_player2, media_player2_player};
+use crate::ports::linux::player::mpris::{media_player2, media_player2_player};
 
 pub struct Player {
     conn: zbus::Connection,
