@@ -58,7 +58,7 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver
         info!("Connecting to IPC driver at {}", endpoint);
-        Arc::new(fsct::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
+        Arc::new(fsct_client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
     } else {
         // in driver and standalone mode use in-process driver
         let driver = Arc::new(LocalDriver::with_new_managers());

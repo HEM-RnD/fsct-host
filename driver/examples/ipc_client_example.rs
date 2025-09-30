@@ -2,7 +2,7 @@ use std::time::Duration;
 use log::info;
 use fsct::{FsctDriver, PlayerState, FSCT_PROTOCOL_VERSION};
 use fsct::definitions::{FsctStatus, TimelineInfo};
-use fsct::ipc::client::IpcDriver;
+use fsct_client::IpcDriver;
 use fsct::player_state::TrackMetadata;
 
 #[tokio::main]

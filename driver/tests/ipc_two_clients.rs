@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fsct::ipc::client::IpcDriver;
+use fsct_client::IpcDriver;
 use fsct::ipc::server::IpcServer;
 use fsct::FsctDriver;
 use async_trait::async_trait;

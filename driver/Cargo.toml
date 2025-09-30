@@ -26,6 +26,7 @@ clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
 tokio-util = "0.7.16"
 uuid = { version = "1.10", features = ["v4"] }
+fsct-client.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61.3", features = [
@@ -52,8 +53,9 @@ async-stream = "0.3"
 
 [dev-dependencies]
 nix = { version = "0.29", default-features = false, features = ["signal", "poll", "fs"] }
-msgpack-rpc = { git = "https://github.com/HEM-RnD/msgpack-rpc.git", rev = "75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3" }
+msgpack-rpc.workspace = true
 tokio-util = { version = "0.7.12", features = ["compat"] }
+parity-tokio-ipc = "0.9.0"
 
 [[bin]]
 name = "fsct_driver_service"

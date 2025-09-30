@@ -15,7 +15,7 @@ name = "fsct"
 [dependencies]
 log = "0.4.25"
 nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
-msgpack-rpc = { git = "https://github.com/HEM-RnD/msgpack-rpc.git", rev = "75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3" }
+msgpack-rpc.workspace = true
 uuid = { version = "1.17.0", features = ["v4", "v5"] }
 bitflags = "2.8.0"
 futures.workspace = true
@@ -30,5 +30,4 @@ winapi = { version = "0.3.9", features = ["winerror", "accctrl", "aclapi", "minw
 
 [dev-dependencies]
 env_logger = "0.11.8"
-parity-tokio-ipc = "0.9.0"
 tokio-util = { version = "0.7.12", features = ["compat"] }

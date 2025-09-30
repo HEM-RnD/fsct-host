@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use msgpack_rpc::Value;
-use fsct::ipc::client::IpcDriver;
+use fsct_client::IpcDriver;
 use fsct::ipc::server::IpcServer;
 use fsct::FsctDriver;
 use fsct::{ManagedDeviceId, ManagedPlayerId};

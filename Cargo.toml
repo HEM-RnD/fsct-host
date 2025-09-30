@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "driver", "ports/node"]
+members = ["clients/rust", "core", "driver", "ports/node"]
 
 [workspace.package]
 version = "0.2.13"
@@ -18,9 +18,12 @@ tokio = { version = "1.44", features = ["full"] }
 futures = "0.3"
 env_logger = "0.11"
 fsct-core = { path = "core" }
+fsct-client = {path = "clients/rust"}
 log = "0.4.25"
 thiserror = "2.0.12"
 anyhow = "1.0.98"
+uuid = { version = "1.17.0", features = ["v4", "v5"] }
+msgpack-rpc = { git = "https://github.com/HEM-RnD/msgpack-rpc.git", rev = "75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3" }
 
 [profile.release]
 lto = true

@@ -16,17 +16,16 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 //! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
-//! For now, only implements `get_protocol_version` method to interoperate with the msgpack-rpc server.
 
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-use crate::definitions::ProtocolVersion;
-use crate::{FsctDriver};
-use crate::{PlayerState, ManagedPlayerId};
-use crate::device_manager::ManagedDeviceId;
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::ProtocolVersion;
+use fsct::{FsctDriver};
+use fsct::{PlayerState, ManagedPlayerId};
+use fsct::device_manager::ManagedDeviceId;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 use msgpack_rpc::{Client, Value};
 
@@ -91,7 +90,7 @@ impl IpcDriver {
     pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
         // Establish persistent connection
         let stream = transport::EndpointClient::connect(endpoint.clone()).await
-            .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
+                                                                         .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
         let compat_stream = stream.compat();
         let client = Client::new(compat_stream);
 
@@ -120,13 +119,13 @@ impl IpcDriver {
         let negotiated_version = ProtocolVersion { major: major as u16, minor: minor as u16 };
 
         // Verify compatibility: major must match our supported major
-        if negotiated_version.major != crate::FSCT_PROTOCOL_VERSION.major {
+        if negotiated_version.major != fsct::FSCT_PROTOCOL_VERSION.major {
             return Err(anyhow::anyhow!(
                 "incompatible protocol version: remote {}.{} != local {}.{}",
                 negotiated_version.major,
                 negotiated_version.minor,
-                crate::FSCT_PROTOCOL_VERSION.major,
-                crate::FSCT_PROTOCOL_VERSION.minor
+                fsct::FSCT_PROTOCOL_VERSION.major,
+                fsct::FSCT_PROTOCOL_VERSION.minor
             ));
         }
 
@@ -256,9 +255,7 @@ impl FsctDriver for IpcDriver {
     }
 }
 
-// #[cfg(unix)]
 mod transport {
-    use tokio::io::{AsyncRead, AsyncWrite};
     pub struct EndpointClient;
 
     impl EndpointClient {
@@ -301,8 +298,4 @@ mod transport {
             Ok(client)
         }
     }
-
-    // Re-export traits needed by client code
-    pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
-    impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 }
