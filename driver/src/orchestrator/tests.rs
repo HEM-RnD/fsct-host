@@ -325,7 +325,7 @@ async fn multiple_players_one_device_unassigned_and_assignment_switch() {
     assert!(calls.is_empty());
 
     // P2 updates -> becomes not selected; should not propagate to unassigned device d
-    let mut s2 = default_state_with_title("S2");
+    let s2 = default_state_with_title("S2");
     let _ = ptx.send(PlayerEvent::StateUpdated { player_id: p2, state: s2.clone() });
     short_wait().await;
     calls = applier.take();
