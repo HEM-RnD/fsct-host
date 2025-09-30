@@ -680,22 +680,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fsct-node-lib"
-version = "0.2.13"
-dependencies = [
- "async-trait",
- "env_logger",
- "fsct_core",
- "log",
- "napi",
- "napi-build",
- "napi-derive",
- "systemd-journal-logger",
- "tokio",
-]
-
-[[package]]
-name = "fsct_core"
+name = "fsct-core"
 version = "0.2.13"
 dependencies = [
  "anyhow",
@@ -715,7 +700,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsct_driver_service"
+name = "fsct-driver"
 version = "0.2.13"
 dependencies = [
  "anyhow",
@@ -723,7 +708,7 @@ dependencies = [
  "async-trait",
  "clap",
  "env_logger",
- "fsct_core",
+ "fsct-core",
  "futures-util",
  "log",
  "log4rs",
@@ -741,6 +726,21 @@ dependencies = [
  "windows-future",
  "windows-service",
  "zbus",
+]
+
+[[package]]
+name = "fsct-node-lib"
+version = "0.2.13"
+dependencies = [
+ "async-trait",
+ "env_logger",
+ "fsct-core",
+ "log",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "systemd-journal-logger",
+ "tokio",
 ]
 
 [[package]]

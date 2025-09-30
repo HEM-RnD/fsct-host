@@ -1,9 +1,9 @@
 use std::time::Duration;
 use log::info;
-use fsct_core::{FsctDriver, PlayerState, FSCT_PROTOCOL_VERSION};
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use fsct_core::ipc::client::IpcDriver;
-use fsct_core::player_state::TrackMetadata;
+use fsct::{FsctDriver, PlayerState, FSCT_PROTOCOL_VERSION};
+use fsct::definitions::{FsctStatus, TimelineInfo};
+use fsct::ipc::client::IpcDriver;
+use fsct::player_state::TrackMetadata;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

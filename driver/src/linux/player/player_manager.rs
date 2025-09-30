@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 use log::{debug, error};
-use fsct_core::FsctDriver;
+use fsct::FsctDriver;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio::select;
 use crate::linux::player::mpris;
@@ -42,7 +42,7 @@ impl PlayerRegistrationManager {
         Ok(())
     }
 
-    fn run_player_handler(&self, player: mpris::Player, id: fsct_core::ManagedPlayerId) -> ()
+    fn run_player_handler(&self, player: mpris::Player, id: fsct::ManagedPlayerId) -> ()
     {
         let cancel_token = self.cancellation_token.child_token();
         let driver = self.driver.clone();

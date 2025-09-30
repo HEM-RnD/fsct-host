@@ -18,7 +18,7 @@
 // This file calls the appropriate service main implementation from the library
 // based on the target OS.
 
-use fsct_driver_service::fsct_main;
+use libdriver::fsct_main;
 
 fn main() -> anyhow::Result<()> {
     fsct_main()

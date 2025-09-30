@@ -24,8 +24,8 @@ use anyhow::bail;
 use futures_util::StreamExt;
 use log::{warn};
 use tokio::select;
-use fsct_core::{spawn_service, FsctDriver, ServiceHandle};
-use fsct_core::definitions::FsctStatus;
+use fsct::{spawn_service, FsctDriver, ServiceHandle};
+use fsct::definitions::FsctStatus;
 use mpris::*;
 use player_manager::PlayerRegistrationManager;
 

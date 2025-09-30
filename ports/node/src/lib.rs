@@ -22,9 +22,9 @@ mod js_types;
 #[macro_use]
 extern crate napi_derive;
 
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
-use fsct_core::player_state::PlayerState;
-use fsct_core::{FsctDriver, LocalDriver, ManagedPlayerId, service::MultiServiceHandle};
+use fsct::definitions::{FsctStatus, FsctTextMetadata};
+use fsct::player_state::PlayerState;
+use fsct::{FsctDriver, LocalDriver, ManagedPlayerId, service::MultiServiceHandle};
 use std::sync::{Arc, Mutex};
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 

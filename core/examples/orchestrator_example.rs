@@ -2,11 +2,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
-use fsct_core::{DeviceManager, run_usb_device_watch, Orchestrator, PlayerManager, MultiServiceHandle};
-use fsct_core::PlayerState;
+use fsct::{DeviceManager, run_usb_device_watch, Orchestrator, PlayerManager, MultiServiceHandle};
+use fsct::PlayerState;
 use log::info;
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
-use fsct_core::player_state::TrackMetadata;
+use fsct::definitions::{FsctStatus, TimelineInfo};
+use fsct::player_state::TrackMetadata;
 
 #[tokio::main]
 async fn main() -> Result<()> {

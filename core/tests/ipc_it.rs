@@ -23,12 +23,12 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use msgpack_rpc::Value;
-use fsct_core::ipc::client::IpcDriver;
-use fsct_core::ipc::server::IpcServer;
-use fsct_core::FsctDriver;
-use fsct_core::{ManagedDeviceId, ManagedPlayerId};
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct_core::player_state::{PlayerState, TrackMetadata};
+use fsct::ipc::client::IpcDriver;
+use fsct::ipc::server::IpcServer;
+use fsct::FsctDriver;
+use fsct::{ManagedDeviceId, ManagedPlayerId};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::player_state::{PlayerState, TrackMetadata};
 
 fn test_endpoint() -> String {
     #[cfg(windows)]
@@ -48,7 +48,7 @@ fn test_endpoint() -> String {
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
     use anyhow::Context;
-    use fsct_core::{spawn_service, ServiceHandle};
+    use fsct::{spawn_service, ServiceHandle};
     use super::*;
 
     // Common helper used by both connect helpers: spawns server and retries connection via provided connector
@@ -370,7 +370,7 @@ async fn ipc_get_protocol_version() -> anyhow::Result<()> {
     let (client, server_task) = helpers::start_server_and_connect(driver).await;
 
     let ver = client.get_protocol_version().await?;
-    assert_eq!(ver, fsct_core::FSCT_PROTOCOL_VERSION);
+    assert_eq!(ver, fsct::FSCT_PROTOCOL_VERSION);
 
     server_task.shutdown().await?;
     Ok(())

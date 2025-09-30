@@ -18,11 +18,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
-use fsct_core::{
+use fsct::{
     DeviceManager, DeviceManagement, DeviceControl,
     run_usb_device_watch, DeviceEvent
 };
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use log::{info, warn};
 
 #[tokio::main]

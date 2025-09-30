@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use fsct_core::{FsctDriver, LocalDriver, MultiServiceHandle};
+use fsct::{FsctDriver, LocalDriver, MultiServiceHandle};
 use log::{debug, error, info, warn};
 use anyhow::anyhow;
 use crate::cli::{Cli, Parser};
@@ -58,7 +58,7 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver
         info!("Connecting to IPC driver at {}", endpoint);
-        Arc::new(fsct_core::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
+        Arc::new(fsct::ipc::client::IpcDriver::connect_to_endpoint(endpoint.clone()).await?)
     } else {
         // in driver and standalone mode use in-process driver
         let driver = Arc::new(LocalDriver::with_new_managers());
@@ -74,9 +74,9 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
             if args.endpoint.is_some() {
                 warn!("Ignoring --socket argument because systemd socket activation is detected");
             }
-            fsct_core::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
+            fsct::ipc::server::run_ipc_server_with_fd(driver.clone(), fd)
         } else {
-            fsct_core::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
+            fsct::ipc::server::run_ipc_server_with_endpoint_path(driver.clone(), endpoint.clone())
         };
         services.add(ipc);
         true

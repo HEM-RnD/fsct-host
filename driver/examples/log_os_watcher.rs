@@ -18,7 +18,7 @@
 
 // Example: LoggingDriver that prints all driver interactions to stdout/stderr
 // Run with:
-//   cargo run --package fsct_driver_service --example logging_driver
+//   cargo run --package fsct_driver --example logging_driver
 // On Linux this will wire to the MPRIS-based OS watcher; on Windows/macOS it uses their respective watchers.
 
 use std::collections::HashMap;
@@ -27,14 +27,14 @@ use std::sync::{Arc, Mutex};
 use anyhow::Error;
 use async_trait::async_trait;
 use env_logger::Env;
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct_core::driver::FsctDriver;
-use fsct_core::ManagedPlayerId;
-use fsct_core::device_manager::ManagedDeviceId;
-use fsct_core::player_state::PlayerState;
-use fsct_core::service::ServiceHandle;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::driver::FsctDriver;
+use fsct::ManagedPlayerId;
+use fsct::device_manager::ManagedDeviceId;
+use fsct::player_state::PlayerState;
+use fsct::service::ServiceHandle;
 
-use fsct_driver_service::run_os_watcher;
+use libdriver::run_os_watcher;
 
 
 #[derive(Default)]

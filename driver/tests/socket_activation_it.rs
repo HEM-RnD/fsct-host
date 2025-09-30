@@ -1,11 +1,11 @@
 #![cfg(target_os = "linux")]
 // Integration test: simulate systemd socket activation without external helpers.
 // The test itself creates a UDS listener at a random /tmp path, hands it to the
-// cargo-built fsct_driver_service via fd=3 and LISTEN_FDS=1, and verifies that a
+// cargo-built fsct_driver via fd=3 and LISTEN_FDS=1, and verifies that a
 // client can connect.
 //
 // Enable with:
-//   FSCT_RUN_SOCKET_ACTIVATION_TEST=1 cargo test -p fsct_driver_service --test socket_activation_it -- --nocapture
+//   FSCT_RUN_SOCKET_ACTIVATION_TEST=1 cargo test -p fsct_driver --test socket_activation_it -- --nocapture
 //
 // Notes:
 // - Unix-only and #[ignore] by default.
@@ -21,7 +21,7 @@ use std::fs;
 use anyhow::{anyhow, bail, Context};
 use nix::libc::setenv;
 use nix::poll::PollTimeout;
-use fsct_core::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
+use fsct::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
 use std::os::unix::ffi::OsStrExt;
 use nix::libc as libc;
 use tokio::net::UnixStream;
@@ -115,9 +115,9 @@ fn terminate_child(handle: &mut ChildHandle) -> std::io::Result<()> {
 
 #[test]
 fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts_connection() {
-    // In a proper cargo test run for this package, Cargo sets CARGO_BIN_EXE_fsct_driver_service.
+    // In a proper cargo test run for this package, Cargo sets CARGO_BIN_EXE_fsct_driver.
     // Hitting this branch means test setup is broken; fail hard.
-    let fsct_bin: &str = env!("CARGO_BIN_EXE_fsct_driver_service");
+    let fsct_bin: &str = env!("CARGO_BIN_EXE_fsct_driver");
     let fsct_bin = PathBuf::from(fsct_bin);
 
     // Prepare socket
@@ -226,7 +226,7 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     });
 
     // Wait until we detect a connection attempt on the listening socket (POLLIN),
-    // then spawn the fsct_driver_service which should adopt fd=3 and accept the pending client.
+    // then spawn the fsct_driver which should adopt fd=3 and accept the pending client.
     {
         println!("[SOCKET] Waiting for first incoming connection on {}", sock_path.display());
         use nix::poll::{poll, PollFd, PollFlags};
@@ -250,7 +250,7 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
         }
     }
 
-    println!("[SOCKET] Starting fsct_driver_service");
+    println!("[SOCKET] Starting fsct_driver");
 
     let fd = listener.as_raw_fd();
     // Convert to raw fds and (optionally) clear CLOEXEC on them before passing

@@ -15,8 +15,8 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-pub use fsct_core::definitions::TimelineInfo as FsctTimelineInfo;
-use fsct_core::definitions::{FsctStatus, FsctTextMetadata};
+pub use fsct::definitions::TimelineInfo as FsctTimelineInfo;
+use fsct::definitions::{FsctStatus, FsctTextMetadata};
 use std::time::{Duration, SystemTime};
 
 #[napi(string_enum)]

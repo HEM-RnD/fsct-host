@@ -17,10 +17,10 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use fsct_core::{FsctDriver, ManagedPlayerId, PlayerState};
-use fsct_core::definitions::{FsctStatus, TimelineInfo};
+use fsct::{FsctDriver, ManagedPlayerId, PlayerState};
+use fsct::definitions::{FsctStatus, TimelineInfo};
 use zbus::zvariant::OwnedValue;
-use fsct_core::player_state::TrackMetadata;
+use fsct::player_state::TrackMetadata;
 use log::{debug, warn};
 use tokio::select;
 use zbus::export::ordered_stream::OrderedStreamExt;
@@ -73,7 +73,7 @@ impl PlayerHandler {
         }
     }
 
-    fn parse_metadata(map: &std::collections::HashMap<String, OwnedValue>) -> (fsct_core::player_state::TrackMetadata, Option<Duration>) {
+    fn parse_metadata(map: &std::collections::HashMap<String, OwnedValue>) -> (fsct::player_state::TrackMetadata, Option<Duration>) {
         let mut md = TrackMetadata::default();
         let mut dur: Option<Duration> = None;
         for (name, value) in map.iter() {
