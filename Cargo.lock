@@ -741,7 +741,6 @@ dependencies = [
 name = "fsct-node-lib"
 version = "0.2.13"
 dependencies = [
- "async-trait",
  "env_logger",
  "fsct-core",
  "fsct-driver",
@@ -750,7 +749,6 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "systemd-journal-logger",
- "tokio",
 ]
 
 [[package]]
