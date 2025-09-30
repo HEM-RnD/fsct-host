@@ -8,8 +8,8 @@
     <script>
         <postinstall file="./postinstall"/>
     </script>
-    <pkg-ref id="com.hem-e.fsctdriverservice.bin"/>
-    <pkg-ref id="com.hem-e.fsctdriverservice.daemon"/>
+    <pkg-ref id="com.hem-e.fsct-driver.bin"/>
+    <pkg-ref id="com.hem-e.fsct-driver.daemon"/>
     <choices-outline>
         <line choice="default">
             <line choice="bin"/>
@@ -18,11 +18,11 @@
     </choices-outline>
     <choice id="default"/>
     <choice id="bin" visible="false">
-        <pkg-ref id="com.hem-e.fsctdriverservice.bin"/>
+        <pkg-ref id="com.hem-e.fsct-driver.bin"/>
     </choice>
     <choice id="daemon" visible="false">
-        <pkg-ref id="com.hem-e.fsctdriverservice.daemon"/>
+        <pkg-ref id="com.hem-e.fsct-driver.daemon"/>
     </choice>
-    <pkg-ref id="com.hem-e.fsctdriverservice.bin" version="0.2.0" onConclusion="none">bin.pkg</pkg-ref>
-    <pkg-ref id="com.hem-e.fsctdriverservice.daemon" version="0.2.0" onConclusion="none">daemon.pkg</pkg-ref>
+    <pkg-ref id="com.hem-e.fsct-driver.bin" version="0.2.0" onConclusion="none">bin.pkg</pkg-ref>
+    <pkg-ref id="com.hem-e.fsct-driver.daemon" version="0.2.0" onConclusion="none">daemon.pkg</pkg-ref>
 </installer-gui-script>

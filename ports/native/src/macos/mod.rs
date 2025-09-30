@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::os::fd::OwnedFd;
+use std::os::fd::{IntoRawFd, OwnedFd};
 
 pub mod player;
 
@@ -24,7 +24,16 @@ pub fn socket_path() -> &'static str {
     "/var/run/fsct/fsct.sock"
 }
 
+/// Returns the file descriptor provided by launchd socket activation (if any).
+///
+/// This expects a socket named "fsct-socket" in the launchd .plist under the `Sockets` key.
+/// If the service wasn't activated via launchd sockets, returns None.
 pub fn get_socket_activation_fd() -> Option<OwnedFd> {
-    // Socket activation is not implemented on macOS yet.
-    None
+    use std::os::fd::{FromRawFd};
+
+    let fds: Vec<_> = raunch::activate_socket("fsct-socket").ok()?
+        // map to OwnedFd and collect, so all discarded fds are closed automatically
+        .into_iter().map(|fd| unsafe { OwnedFd::from_raw_fd(fd)}).collect();
+    // return the first fd, discarding the rest
+    fds.into_iter().next()
 }
