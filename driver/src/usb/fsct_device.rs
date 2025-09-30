@@ -17,12 +17,12 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use crate::definitions::TimelineInfo;
-use crate::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
-use crate::usb::descriptor_utils::FsctDescriptorSet;
-use crate::usb::errors::FsctDeviceError;
-use crate::usb::fsct_usb_interface::FsctUsbInterface;
-use crate::usb::requests::TrackProgressRequestData;
+use fsct::definitions::TimelineInfo;
+use fsct::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
+use super::descriptor_utils::FsctDescriptorSet;
+use super::errors::FsctDeviceError;
+use super::fsct_usb_interface::FsctUsbInterface;
+use super::requests::TrackProgressRequestData;
 
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -44,7 +44,7 @@ pub struct FsctDevice {
 }
 
 impl FsctDevice {
-    pub(super) fn new(fsct_interface: FsctUsbInterface) -> Self {
+    pub fn new(fsct_interface: FsctUsbInterface) -> Self {
         let fsct_device = Self {
             fsct_interface: Arc::new(fsct_interface),
             time_sync_handle: None,
@@ -58,7 +58,7 @@ impl FsctDevice {
         fsct_device
     }
 
-    pub(super) async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), FsctDeviceError> {
+    pub async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), FsctDeviceError> {
         self.parse_descriptors(fsct_descriptors);
         if self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
             self.synchronize_time().await?;
@@ -185,7 +185,7 @@ impl FsctDevice {
         }
     }
 
-    pub async fn set_status(&self, status: crate::definitions::FsctStatus) -> Result<(), FsctDeviceError>
+    pub async fn set_status(&self, status: fsct::definitions::FsctStatus) -> Result<(), FsctDeviceError>
     {
         self.fsct_interface.send_status(status).await
     }

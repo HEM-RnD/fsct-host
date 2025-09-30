@@ -26,12 +26,12 @@ use log::{debug, info, warn};
 use tokio::select;
 use tokio::sync::broadcast;
 use scoring::{Assignment, PlayerSelectionParams};
-use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 use crate::device_manager::{DeviceEvent, DeviceManager};
 use crate::device_manager::DeviceControl;
 use crate::player_events::PlayerEvent;
-use crate::definitions::ManagedPlayerId;
-use crate::player_state::PlayerState;
+use fsct::ManagedPlayerId;
+use fsct::PlayerState;
 use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
 use crate::joinable_task::{spawn_service, JoinableTaskHandle};
 

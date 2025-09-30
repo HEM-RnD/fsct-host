@@ -29,7 +29,7 @@ struct BosDescriptor {
     bNumDeviceCaps: u8,
 }
 
-use crate::usb::errors::{BosError, IoErrorOrAny};
+use super::errors::{BosError, IoErrorOrAny};
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]

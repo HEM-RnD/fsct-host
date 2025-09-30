@@ -20,8 +20,8 @@ use anyhow::Error;
 use std::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use crate::definitions::FsctStatus;
-use crate::orchestrator::scoring::{is_better_selection, PlaybackStatus};
+use fsct::definitions::FsctStatus;
+use super::scoring::{is_better_selection, PlaybackStatus};
 
 // ----------------- Helpers for selection testing -----------------
 fn fold_best(items: &[PlayerSelectionParams]) -> Option<PlayerSelectionParams> {
@@ -145,12 +145,12 @@ impl PlayerStateApplier for MockApplier {
         })
     }
 
-    fn apply_status<'a>(&'a self, _device_id: ManagedDeviceId, _status: crate::definitions::FsctStatus)
+    fn apply_status<'a>(&'a self, _device_id: ManagedDeviceId, _status: fsct::definitions::FsctStatus)
                         -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move { Ok(()) })
     }
 
-    fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<crate::definitions::TimelineInfo>)
+    fn apply_timeline<'a>(&'a self, device_id: ManagedDeviceId, timeline: Option<fsct::definitions::TimelineInfo>)
                           -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             self.timeline_calls.lock().unwrap().push(TimelineCall { device: device_id, timeline: timeline.clone() });
@@ -158,7 +158,7 @@ impl PlayerStateApplier for MockApplier {
         })
     }
 
-    fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: crate::definitions::FsctTextMetadata, text: Option<&'a str>)
+    fn apply_text<'a>(&'a self, device_id: ManagedDeviceId, text_id: fsct::definitions::FsctTextMetadata, text: Option<&'a str>)
                       -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(), Error>> + Send + 'a>> {
         let owned = text.map(|s| s.to_string());
         Box::pin(async move {
@@ -177,7 +177,7 @@ fn pid(n: u32) -> ManagedPlayerId { std::num::NonZeroU32::new(n).unwrap() }
 
 fn default_state_with_title(title: &str) -> PlayerState {
     let mut s = PlayerState::default();
-    s.texts.get_mut_text(crate::definitions::FsctTextMetadata::CurrentTitle).replace(title.to_string());
+    s.texts.get_mut_text(fsct::definitions::FsctTextMetadata::CurrentTitle).replace(title.to_string());
     s
 }
 

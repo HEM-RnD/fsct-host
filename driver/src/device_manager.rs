@@ -22,10 +22,10 @@ use std::sync::{Arc, Mutex};
 use nusb::{DeviceId, DeviceInfo};
 use tokio::sync::broadcast;
 use thiserror::Error;
-use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 use crate::usb::errors::FsctDeviceError;
 use crate::usb::fsct_device::FsctDevice;
-use crate::device_uuid_calculator::calculate_uuid;
+use fsct::calculate_uuid;
 
 /// Device event types that can be broadcast by the DeviceManager
 #[derive(Debug, Clone)]

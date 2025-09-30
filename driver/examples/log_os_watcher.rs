@@ -32,7 +32,7 @@ use fsct::driver::FsctDriver;
 use fsct::definitions::ManagedPlayerId;
 use fsct::definitions::ManagedDeviceId;
 use fsct::player_state::PlayerState;
-use fsct::joinable_task::JoinableTaskHandle;
+use fsct_driver::joinable_task::JoinableTaskHandle;
 
 use fsct_driver::run_os_watcher;
 

@@ -30,7 +30,8 @@ use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionMediaProperties, GlobalSystemMediaTransportControlsSessionPlaybackInfo, GlobalSystemMediaTransportControlsSessionTimelineProperties, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs};
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
-use fsct::{spawn_service, FsctDriver, JoinableTaskHandle};
+use fsct::FsctDriver;
+use crate::{spawn_service, JoinableTaskHandle};
 use anyhow::Error as AnyError;
 use windows_core::HRESULT;
 

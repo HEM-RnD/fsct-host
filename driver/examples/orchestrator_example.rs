@@ -2,7 +2,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
-use fsct::{DeviceManager, run_usb_device_watch, Orchestrator, PlayerManager, MultiJoinableTaskHandle};
+use fsct_driver::{DeviceManager, run_usb_device_watch, Orchestrator, player_manager::PlayerManager,
+                  MultiJoinableTaskHandle};
 use fsct::PlayerState;
 use log::info;
 use fsct::definitions::{FsctStatus, TimelineInfo};

@@ -63,7 +63,7 @@ async fn two_clients_can_connect_and_request_version() {
     let driver: Arc<dyn FsctDriver> = Arc::new(TestDriver);
     let mut server = IpcServer::with_socket_path(driver, endpoint.as_str());
     // run server in background
-    let server_task = fsct::spawn_service(async move |mut s| {
+    let server_task = fsct_driver::spawn_service(async move |mut s| {
         tokio::select! {
             _ = server.serve() => (),
             _ = s.signaled() => (),

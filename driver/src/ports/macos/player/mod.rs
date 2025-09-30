@@ -18,7 +18,7 @@
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct::FsctDriver;
-use fsct::joinable_task::{spawn_service, JoinableTaskHandle};
+use crate::joinable_task::{spawn_service, JoinableTaskHandle};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Arc;

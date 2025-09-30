@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use crate::definitions::{FsctFunctionality, FsctImagePixelFormat, FsctTextEncoding, FsctTextMetadata};
+use fsct::definitions::{FsctFunctionality, FsctImagePixelFormat, FsctTextEncoding, FsctTextMetadata};
 
 pub const FSCT_FUNCTIONALITY_DESCRIPTOR_ID: u8 = 0x31;
 pub const FSCT_TEXT_METADATA_DESCRIPTOR_ID: u8 = 0x32;

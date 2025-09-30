@@ -21,7 +21,7 @@ use nusb::{list_devices, DeviceId, DeviceInfo};
 use log::{debug, info, warn};
 use nusb::hotplug::HotplugEvent;
 use futures::StreamExt;
-use crate::definitions::ManagedDeviceId;
+use fsct::ManagedDeviceId;
 use crate::device_manager::DeviceManagement;
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;

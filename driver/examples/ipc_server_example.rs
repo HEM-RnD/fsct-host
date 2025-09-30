@@ -1,6 +1,6 @@
 // Example: standalone IPC server exposing FsctDriver over msgpack-rpc
 use std::sync::Arc;
-use fsct::inprocess_driver::LocalDriver;
+use fsct_driver::inprocess_driver::LocalDriver;
 use fsct_driver::ipc::run_ipc_server_with_endpoint_path;
 
 #[tokio::main]

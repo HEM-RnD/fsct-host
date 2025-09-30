@@ -23,8 +23,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::device_manager::DeviceControl;
-use crate::player_state::PlayerState;
-use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use fsct::PlayerState;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 
 /// Abstraction for applying PlayerState to devices.
 ///
@@ -100,7 +100,7 @@ impl<T: DeviceControl + Send + Sync + 'static> PlayerStateApplier for DirectDevi
                 .unwrap_or(true);
 
             // Collect text changes (covers both set and clear)
-            let mut text_changes: Vec<(crate::definitions::FsctTextMetadata, Option<&str>)> = Vec::new();
+            let mut text_changes: Vec<(fsct::definitions::FsctTextMetadata, Option<&str>)> = Vec::new();
             for text_id in state.texts.iter_id() {
                 let new_val = state.texts.get_text(*text_id);
                 let changed = match prev_state.as_ref() {

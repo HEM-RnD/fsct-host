@@ -29,6 +29,7 @@ uuid = { version = "1.10", features = ["v4"] }
 fsct-client.workspace = true
 msgpack-rpc.workspace = true
 futures.workspace = true
+nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61.3", features = [

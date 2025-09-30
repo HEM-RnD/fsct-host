@@ -20,8 +20,9 @@ use nusb::descriptors::Descriptor;
 use nusb::{Interface};
 use log::warn;
 use nusb::transfer::{ControlIn, ControlType, Recipient};
-use crate::usb::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor, FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
-use crate::usb::errors::{DescriptorError, IoErrorOrAny};
+use super::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor,
+                     FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
+use super::errors::{DescriptorError, IoErrorOrAny};
 
 async fn get_interface_descriptor(interface: &Interface,
                                   descriptor_number: u8,

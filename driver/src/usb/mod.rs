@@ -15,8 +15,6 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use nusb::DeviceInfo;
-use crate::usb::errors::{DeviceDiscoveryError};
 
 pub mod descriptors;
 pub mod fsct_bos_finder;
@@ -26,6 +24,11 @@ pub mod fsct_device;
 pub mod requests;
 
 pub mod errors;
+
+use nusb::DeviceInfo;
+
+use errors::{DeviceDiscoveryError};
+
 
 const FSCT_SUPPORTED_PROTOCOL_VERSION: u8 = 0x01;
 

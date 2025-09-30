@@ -16,7 +16,7 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 
-use crate::definitions::FsctStatus;
+use fsct::definitions::FsctStatus;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd)]
 pub enum Assignment {

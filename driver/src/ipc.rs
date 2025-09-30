@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use log::{error, info, warn};
 use anyhow::{anyhow, bail, Context};
 
-use fsct::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
+use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::{FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
@@ -67,7 +67,7 @@ pub struct IpcServer {
     endpoint: EndpointDefinitionType,
     driver: Arc<dyn FsctDriver>,
     // Container of per-connection services for cooperative shutdown
-    connections: Arc<Mutex<fsct::MultiJoinableTaskHandle>>,
+    connections: Arc<Mutex<MultiJoinableTaskHandle>>,
 }
 
 impl IpcServer {

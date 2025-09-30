@@ -18,8 +18,10 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use anyhow::Error;
-use crate::{run_usb_device_watch, DeviceManager, FsctDriver, MultiJoinableTaskHandle, Orchestrator, PlayerManager, PlayerState};
-use crate::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
+use fsct::{FsctDriver, PlayerState};
+use crate::{run_usb_device_watch, DeviceManager, MultiJoinableTaskHandle, Orchestrator};
+use crate::player_manager::PlayerManager;
 
 /// Local, in-process implementation of FsctDriver.
 /// Wraps the existing PlayerManager and DeviceManager and forwards all calls.

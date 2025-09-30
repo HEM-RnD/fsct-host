@@ -22,11 +22,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::{Context, Error};
 use log::info;
 
-use crate::definitions::{ManagedDeviceId, ManagedPlayerId};
-use crate::player_events::PlayerEvent;
-use crate::player_state::PlayerState;
+use fsct::definitions::{ManagedDeviceId, ManagedPlayerId};
+use crate::PlayerEvent;
+use fsct::PlayerState;
 use tokio::sync::broadcast;
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 #[allow(dead_code)]
 /// Represents a registered player with its state and device assignments

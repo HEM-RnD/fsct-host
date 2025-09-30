@@ -19,10 +19,10 @@ use std::mem::size_of;
 use anyhow::{Context};
 use nusb::Interface;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
-use crate::definitions::FsctTextMetadata;
-use crate::usb::requests;
-use crate::definitions::FsctStatus;
-use crate::usb::errors::{FsctDeviceError, ToFsctDeviceResult};
+use fsct::definitions::FsctTextMetadata;
+use super::requests;
+use fsct::definitions::FsctStatus;
+use super::errors::{FsctDeviceError, ToFsctDeviceResult};
 
 pub struct FsctUsbInterface {
     interface: Interface,

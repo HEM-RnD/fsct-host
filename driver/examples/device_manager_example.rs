@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
-use fsct::{
+use fsct_driver::{
     DeviceManager, DeviceManagement, DeviceControl,
     run_usb_device_watch, DeviceEvent
 };

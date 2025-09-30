@@ -24,9 +24,10 @@ extern crate napi_derive;
 
 use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedPlayerId};
 use fsct::player_state::PlayerState;
-use fsct::{joinable_task::MultiJoinableTaskHandle, FsctDriver};
+use fsct::FsctDriver;
 use std::sync::{Arc, Mutex};
-use fsct::inprocess_driver::LocalDriver;
+use fsct_driver::inprocess_driver::LocalDriver;
+use fsct_driver::joinable_task::MultiJoinableTaskHandle;
 use js_types::{CurrentTextMetadata, FsctTimelineInfo, PlayerStatus, TimelineInfo};
 
 pub struct NodePlayerImpl {

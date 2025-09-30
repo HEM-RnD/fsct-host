@@ -48,7 +48,7 @@ fn test_endpoint() -> String {
 // Shared test helpers for mocks: unified configurable mock
 mod helpers {
     use anyhow::Context;
-    use fsct::{spawn_service, JoinableTaskHandle};
+    use fsct_driver::{spawn_service, JoinableTaskHandle};
     use super::*;
 
     // Common helper used by both connect helpers: spawns server and retries connection via provided connector

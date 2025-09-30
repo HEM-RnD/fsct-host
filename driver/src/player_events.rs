@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use crate::definitions::ManagedDeviceId;
-use crate::player_state::PlayerState;
-use crate::definitions::ManagedPlayerId;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::ManagedDeviceId;
+use fsct::PlayerState;
+use fsct::ManagedPlayerId;
 
 /// Events emitted by PlayerManager about player lifecycle, assignments and state changes.
 #[derive(Debug, Clone)]

@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 // use tokio::main;
-use fsct::usb::create_and_configure_fsct_device;
+use fsct_driver::usb::create_and_configure_fsct_device;
 use nusb::list_devices;
 use fsct::definitions::TimelineInfo;
 use fsct::definitions::FsctTextMetadata;

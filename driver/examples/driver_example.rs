@@ -5,7 +5,7 @@ use anyhow::Result;
 use fsct::{FsctDriver, PlayerState};
 use fsct::definitions::{FsctStatus, TimelineInfo};
 use log::info;
-use fsct::inprocess_driver::LocalDriver;
+use fsct_driver::inprocess_driver::LocalDriver;
 use fsct::player_state::TrackMetadata;
 
 #[tokio::main]

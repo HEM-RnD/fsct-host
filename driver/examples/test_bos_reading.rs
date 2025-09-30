@@ -16,8 +16,8 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 use nusb::DeviceInfo;
-use fsct::usb::fsct_bos_finder;
-use fsct::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
+use fsct_driver::usb::fsct_bos_finder;
+use fsct_driver::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
 
 fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
     let devices = nusb::list_devices()

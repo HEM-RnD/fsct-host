@@ -20,13 +20,13 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use fsct::{FsctDriver, MultiJoinableTaskHandle};
+use fsct::{FsctDriver};
 use log::{debug, error, info, warn};
 use anyhow::anyhow;
 use crate::cli::{Cli, Parser};
 use fsct::default_endpoint_path;
-use fsct::inprocess_driver::LocalDriver;
-use crate::run_os_watcher;
+use crate::inprocess_driver::LocalDriver;
+use crate::{run_os_watcher, MultiJoinableTaskHandle};
 
 pub trait StopSignal {
     fn wait(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
