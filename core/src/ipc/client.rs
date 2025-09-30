@@ -256,39 +256,28 @@ impl FsctDriver for IpcDriver {
     }
 }
 
-#[cfg(unix)]
+// #[cfg(unix)]
 mod transport {
-    use anyhow::Context;
     use tokio::io::{AsyncRead, AsyncWrite};
-    use tokio::net::{UnixStream};
     pub struct EndpointClient;
 
     impl EndpointClient {
-        pub async fn connect(path: String) -> anyhow::Result<UnixStream> {
-            UnixStream::connect(path).await.context("unix client connect failed")
+        #[cfg(unix)]
+        pub async fn connect(path: String) -> anyhow::Result<tokio::net::UnixStream> {
+            use anyhow::Context;
+
+            tokio::net::UnixStream::connect(path).await.context("unix client connect failed")
         }
-    }
 
-    // Re-export traits needed by server/client code
-    pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
-    impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
-}
+        #[cfg(windows)]
+        pub async fn connect(name: String) -> anyhow::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+            use std::time::Duration;
+            use tokio::net::windows::named_pipe;
+            use tokio::time::Instant;
+            use winapi::shared::winerror::ERROR_PIPE_BUSY;
 
-#[cfg(windows)]
-mod transport {
-    use std::time::Duration;
-    use tokio::io::{AsyncRead, AsyncWrite};
-    use tokio::net::windows::named_pipe;
-    use tokio::net::windows::named_pipe::NamedPipeClient;
-    use tokio::time::Instant;
-    use winapi::shared::winerror::ERROR_PIPE_BUSY;
+            const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 
-    pub struct EndpointClient;
-
-    const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
-
-    impl EndpointClient {
-        pub async fn connect(name: String) -> anyhow::Result<NamedPipeClient> {
             let attempt_start = Instant::now();
             let client = loop {
                 match named_pipe::ClientOptions::new()
@@ -313,6 +302,7 @@ mod transport {
         }
     }
 
+    // Re-export traits needed by client code
     pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
     impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 }
