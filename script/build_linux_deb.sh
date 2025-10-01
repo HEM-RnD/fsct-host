@@ -4,12 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( dirname "${SCRIPT_DIR}" )"
 PACKAGE_NAME="fsct-driver"
-CARGO_BIN_NAME="fsct_driver_service"
+CARGO_BIN_NAME="fsctd"
 BUILD_ROOT="${ROOT_DIR}/target/deb/build"
 STAGE_DIR="${BUILD_ROOT}/stage"
 OUTPUT_DIR="${ROOT_DIR}/target/deb"
 # FPM config used by fpm (must be under debian structure, no .conf)
-PACKAGE_SOURCE="${ROOT_DIR}/ports/native/packages/linux/"
+PACKAGE_SOURCE="${ROOT_DIR}/packages/linux/"
 CONFIG_DIR="${PACKAGE_SOURCE}/debian/"
 
 # Flags
@@ -149,7 +149,7 @@ if [[ -n "${FSCT_VERSION:-}" ]]; then
   VERSION="${FSCT_VERSION}"
 else
   if command -v cargo >/dev/null 2>&1; then
-    VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${CARGO_BIN_NAME}'),''))")
+    VERSION=$(cd "${ROOT_DIR}" && cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; data=json.load(sys.stdin); print(next((p['version'] for p in data['packages'] if p['name']=='${PACKAGE_NAME}'),''))")
   else
     # Fallback: parse from workspace Cargo.toml [workspace.package]
     VERSION=$(grep -E '^version\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+"' "${ROOT_DIR}/Cargo.toml" | head -n1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)"/\1/')
@@ -181,7 +181,7 @@ License generation was skipped during this build (--skip-licensing).
 For complete license information, build without --skip-licensing.
 EOM
 elif [[ "$CARGO_ABOUT_AVAILABLE" == true ]]; then
-  (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m ports/native/Cargo.toml licenses.hbs -o "${DOC_DIR}/LICENSES.md") || {
+  (cd "${ROOT_DIR}" && cargo about generate -c about.toml -m driver/Cargo.toml licenses.hbs -o "${DOC_DIR}/LICENSES.md") || {
     echo "Warning: cargo about failed; continuing without LICENSES.md" >&2
   }
 fi

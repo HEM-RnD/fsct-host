@@ -1,0 +1,29 @@
+[package]
+name = "fsct-node-lib"
+description = "Node.js bindings to FSCT Host. Additional licensing terms apply as described in LICENSE-FSCT.md."
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
+napi = { version = "2.12.2", default-features = false, features = ["napi4", "tokio_rt"] }
+napi-derive = "2.12.2"
+fsct-core.workspace = true
+fsct-driver.workspace = true
+log = "0.4.25"
+env_logger.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+systemd-journal-logger = "2.2.1"
+
+[build-dependencies]
+napi-build = "2.0.1"
+
