@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["clients/rust", "core", "driver", "ports/node"]
+members = ["clients/rust", "core", "driver", "bindings/node"]
 
 [workspace.package]
 version = "0.2.13"

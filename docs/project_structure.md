@@ -22,7 +22,7 @@ This document explains how the repository is organized after the recent refactor
   - Notes: Contains minimal OS‑specific transport glue inline (modules gated by `cfg(unix)` / `cfg(windows)`).
     Public API focuses on establishing a connection and issuing driver requests.
   - Depends on `fsct-core` for shared domain types.
-- ports/node
+- bindings/node
   - Purpose: Node.js bindings/client for JavaScript runtimes. Currently maintained as a separate path; planned to use the same IPC contract as the Rust client.
   - Build: `npm install && npm run build` inside `ports/node`.
 
@@ -40,6 +40,6 @@ This document explains how the repository is organized after the recent refactor
   - `build_linux_deb.sh`: Builds a Debian package using fpm. Uses `packages/linux`.
   - `macos_service_package_builder.sh`: Builds a notarized macOS installer pkg. Uses `packages/macos`.
   - `build_node_lib_multitarget.sh` (if used): Assists Node multi‑target builds.
-- `ports/`
+- `bindings/`
   - `node/`: Node.js bindings and tests.
 - `docs/`: Documentation (this file, platform notes, architecture proposals, etc.).

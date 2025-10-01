@@ -7,14 +7,14 @@
       <sourceFolder url="file://$MODULE_DIR$/core/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/core/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/gui/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/ports/volumio/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/ports/volumio/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/ports/node/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/core/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/clients/rust/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/driver/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/driver/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/driver/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/bindings/node/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/bindings/volumio/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/bindings/volumio/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
