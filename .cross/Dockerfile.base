@@ -20,7 +20,7 @@ RUN gem install --no-document fpm
 # Align with Rust official Docker images: fixed homes under /usr/local and explicit PATH
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    RUST_VERSION=1.89.0 \
+    RUST_VERSION=1.90.0 \
     PATH=/usr/local/cargo/bin:$PATH
 
 # Install rustup and pin default toolchain to RUST_VERSION; targets added in derived images
