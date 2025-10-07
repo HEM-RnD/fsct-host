@@ -5,7 +5,7 @@ pub mod player_state;
 mod device_uuid_calculator;
 mod endpoint;
 
-pub use player_state::PlayerState;
+pub use player_state::{PlayerState, TrackMetadata, TrackMetadataIterator};
 
 // Export driver abstraction
 pub use driver::FsctDriver;
