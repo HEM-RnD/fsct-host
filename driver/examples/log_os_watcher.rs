@@ -106,6 +106,11 @@ impl FsctDriver for LoggingDriver {
         println!("[LoggingDriver] get_player_assigned_device: id={:?}", player_id);
         Ok(None)
     }
+
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, Error> {
+        println!("[LoggingDriver] get_detected_devices");
+        Ok(Vec::new())
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]

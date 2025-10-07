@@ -17,10 +17,11 @@
 
 use anyhow::Error;
 use async_trait::async_trait;
-use crate::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::definitions::ManagedDeviceId;
 use crate::definitions::ManagedPlayerId;
 use crate::player_state::PlayerState;
+
 /// Abstraction over FSCT host driver functionality that can be backed by a local
 /// in-process implementation or a future IPC-based implementation.
 #[async_trait]
@@ -41,6 +42,10 @@ pub trait FsctDriver: Send + Sync {
     async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
+
+    // --- Device management ---
+    /// Get list of all detected FSCT-capable devices
+    async fn get_detected_devices(&self) -> Result<Vec<DeviceInfo>, Error>;
 }
 
 

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::mem::swap;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use nusb::{DeviceId, DeviceInfo};
+use nusb::DeviceId;
 use tokio::sync::broadcast;
 use thiserror::Error;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
@@ -48,11 +48,22 @@ pub enum DeviceManagerError {
     FsctDeviceError(#[from] FsctDeviceError),
 }
 
+/// Stored device information
+#[derive(Clone)]
+struct StoredDeviceInfo {
+    device: Arc<FsctDevice>,
+    name: Option<String>,
+    manufacturer: Option<String>,
+    vendor_id: u16,
+    product_id: u16,
+    serial_number: Option<String>,
+}
+
 /// Trait for device management operations
 pub trait DeviceManagement {
     /// Add a device to the manager and return its managed ID
-    fn add_device(&self, device: Arc<FsctDevice>, device_info: &DeviceInfo) -> ManagedDeviceId;
-    
+    fn add_device(&self, device: Arc<FsctDevice>, device_info: &nusb::DeviceInfo) -> ManagedDeviceId;
+
     /// Remove a device from the manager by its USB device ID
     fn remove_device_by_usb_id(&self, device_id: DeviceId) -> Option<Arc<FsctDevice>>;
 
@@ -65,6 +76,8 @@ pub trait DeviceManagement {
     /// Get all devices managed ID
     fn get_all_managed_ids(&self) -> Vec<ManagedDeviceId>;
 
+    /// Get list of all detected devices with their info
+    fn get_detected_devices(&self) -> Vec<fsct::definitions::DeviceInfo>;
 }
 
 /// Trait for device control operations
@@ -90,12 +103,12 @@ pub trait DeviceControl {
 
 /// Device manager that handles device ID management and provides a unified API for device operations
 pub struct DeviceManager {
-    /// Map of managed device IDs to FSCT devices
-    devices: Arc<Mutex<HashMap<ManagedDeviceId, Arc<FsctDevice>>>>,
-    
+    /// Map of managed device IDs to stored device info
+    devices: Arc<Mutex<HashMap<ManagedDeviceId, StoredDeviceInfo>>>,
+
     /// Map of USB device IDs to managed device IDs
     usb_id_to_managed_id: Arc<Mutex<HashMap<DeviceId, ManagedDeviceId>>>,
-    
+
     /// Broadcast sender for device events
     event_sender: broadcast::Sender<DeviceEvent>,
 }
@@ -115,33 +128,45 @@ impl DeviceManager {
 
     fn get_device(&self, managed_id: ManagedDeviceId) -> Result<Arc<FsctDevice>, DeviceManagerError> {
         let devices = self.devices.lock().unwrap();
-        devices.get(&managed_id).cloned().ok_or(DeviceManagerError::DeviceNotFound(managed_id))
+        devices.get(&managed_id)
+            .map(|info| info.device.clone())
+            .ok_or(DeviceManagerError::DeviceNotFound(managed_id))
     }
 }
 
 impl DeviceManagement for DeviceManager {
-    fn add_device(&self, device: Arc<FsctDevice>, device_info: &DeviceInfo) -> ManagedDeviceId {
+    fn add_device(&self, device: Arc<FsctDevice>, device_info: &nusb::DeviceInfo) -> ManagedDeviceId {
         // Compute UUID from VID, PID, and Serial Number
         let vid = device_info.vendor_id();
         let pid = device_info.product_id();
         let sn = device_info.serial_number().unwrap_or("");
         let managed_id = calculate_uuid(vid, pid, sn);
-        
+
+        // Create stored device info
+        let stored_info = StoredDeviceInfo {
+            device,
+            name: device_info.product_string().map(String::from),
+            manufacturer: device_info.manufacturer_string().map(String::from),
+            vendor_id: vid,
+            product_id: pid,
+            serial_number: device_info.serial_number().map(String::from),
+        };
+
         // Add to devices map
         {
             let mut devices = self.devices.lock().unwrap();
-            devices.insert(managed_id, device);
+            devices.insert(managed_id, stored_info);
         }
-        
+
         // Add to USB ID mapping
         {
             let mut usb_id_map = self.usb_id_to_managed_id.lock().unwrap();
             usb_id_map.insert(device_info.id(), managed_id);
         }
-        
+
         // Broadcast device added event
         let _ = self.event_sender.send(DeviceEvent::Added(managed_id));
-        
+
         managed_id
     }
     
@@ -151,25 +176,25 @@ impl DeviceManagement for DeviceManager {
             let usb_id_map = self.usb_id_to_managed_id.lock().unwrap();
             *usb_id_map.get(&device_id)?
         };
-        
+
         // Remove from USB ID mapping
         {
             let mut usb_id_map = self.usb_id_to_managed_id.lock().unwrap();
             usb_id_map.remove(&device_id);
         }
-        
+
         // Remove from devices map
-        let device = {
+        let stored_info = {
             let mut devices = self.devices.lock().unwrap();
             devices.remove(&managed_id)
         };
-        
+
         // Broadcast device removed event if a device was actually removed
-        if device.is_some() {
+        if stored_info.is_some() {
             let _ = self.event_sender.send(DeviceEvent::Removed(managed_id));
         }
-        
-        device
+
+        stored_info.map(|info| info.device)
     }
 
     fn remove_all_devices(&self) -> Vec<(ManagedDeviceId, Arc<FsctDevice>)> {
@@ -177,7 +202,7 @@ impl DeviceManagement for DeviceManager {
         let mut devices = self.devices.lock().unwrap();
         swap(&mut local_devices, devices.deref_mut());
         local_devices.into_iter()
-            .map(|(id, device)| (id, device))
+            .map(|(id, info)| (id, info.device))
             .collect()
     }
 
@@ -189,6 +214,20 @@ impl DeviceManagement for DeviceManager {
     fn get_all_managed_ids(&self) -> Vec<ManagedDeviceId> {
         let devices = self.devices.lock().unwrap();
         devices.keys().copied().collect()
+    }
+
+    fn get_detected_devices(&self) -> Vec<fsct::definitions::DeviceInfo> {
+        let devices = self.devices.lock().unwrap();
+        devices.iter()
+            .map(|(id, stored)| fsct::definitions::DeviceInfo {
+                id: *id,
+                name: stored.name.clone(),
+                manufacturer: stored.manufacturer.clone(),
+                vendor_id: stored.vendor_id,
+                product_id: stored.product_id,
+                serial_number: stored.serial_number.clone(),
+            })
+            .collect()
     }
 }
 

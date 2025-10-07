@@ -54,6 +54,7 @@ impl FsctDriver for TestDriver {
     async fn update_player_timeline(&self, _player_id: fsct::ManagedPlayerId, _new_timeline: Option<fsct::definitions::TimelineInfo>) -> Result<(), anyhow::Error> { Ok(()) }
     async fn update_player_metadata(&self, _player_id: fsct::ManagedPlayerId, _metadata_id: fsct::definitions::FsctTextMetadata, _new_text: Option<String>) -> Result<(), anyhow::Error> { Ok(()) }
     async fn get_player_assigned_device(&self, _player_id: fsct::ManagedPlayerId) -> Result<Option<fsct::ManagedDeviceId>, anyhow::Error> { Ok(None) }
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, anyhow::Error> { Ok(Vec::new()) }
 }
 
 #[tokio::test]

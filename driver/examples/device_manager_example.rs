@@ -61,9 +61,24 @@ async fn main() -> Result<()> {
     // Wait for devices to be discovered
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Get all discovered devices
+    // Get all discovered devices with detailed info
+    let detected_devices = device_manager.get_detected_devices();
+    info!("Discovered {} devices", detected_devices.len());
+
+    // Print detailed information about each detected device
+    for device_info in &detected_devices {
+        info!("Device details:");
+        info!("  ID: {}", device_info.id);
+        info!("  Name: {}", device_info.name.as_deref().unwrap_or("N/A"));
+        info!("  Manufacturer: {}", device_info.manufacturer.as_deref().unwrap_or("N/A"));
+        info!("  VID: 0x{:04X}", device_info.vendor_id);
+        info!("  PID: 0x{:04X}", device_info.product_id);
+        info!("  Serial: {}", device_info.serial_number.as_deref().unwrap_or("N/A"));
+    }
+
+    // Get all discovered device IDs
     let devices = device_manager.get_all_managed_ids();
-    info!("Discovered {} devices", devices.len());
+    info!("Device IDs: {:?}", devices);
 
     // Interact with each device
     for managed_id in &devices {

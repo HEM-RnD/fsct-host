@@ -23,7 +23,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use fsct::{default_endpoint_path, FsctDriver};
 use fsct::PlayerState;
-use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo, ManagedPlayerId, ProtocolVersion};
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo, ManagedPlayerId, ProtocolVersion};
 
 use msgpack_rpc::{Client, Value};
 
@@ -256,6 +256,79 @@ impl FsctDriver for IpcDriver {
         if bytes.len() != 16 { return Err(anyhow::anyhow!("invalid uuid length")); }
         let uuid = uuid::Uuid::from_slice(bytes).map_err(|e| anyhow::anyhow!("invalid uuid: {e}"))?;
         Ok(Some(uuid))
+    }
+
+    async fn get_detected_devices(&self) -> Result<Vec<DeviceInfo>, Error> {
+        let resp: Value = self
+            .client
+            .request("get_detected_devices", &[])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+
+        let arr = resp.as_array()
+            .ok_or_else(|| anyhow::anyhow!("invalid response for get_detected_devices: expected array"))?;
+
+        let mut devices = Vec::new();
+        for device_val in arr {
+            let map = device_val.as_map()
+                .ok_or_else(|| anyhow::anyhow!("invalid device entry: expected map"))?;
+
+            let mut id: Option<uuid::Uuid> = None;
+            let mut name: Option<String> = None;
+            let mut manufacturer: Option<String> = None;
+            let mut vendor_id: Option<u16> = None;
+            let mut product_id: Option<u16> = None;
+            let mut serial_number: Option<String> = None;
+
+            for (k, v) in map.iter() {
+                if let Value::String(s) = k {
+                    if let Some(key) = s.as_str() {
+                        match key {
+                            "id" => {
+                                let bytes = v.as_slice()
+                                    .ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
+                                if bytes.len() != 16 {
+                                    return Err(anyhow::anyhow!("device id must be 16 bytes"));
+                                }
+                                id = Some(uuid::Uuid::from_slice(bytes)?);
+                            }
+                            "name" => {
+                                name = if v.is_nil() { None } else { Some(v.as_str()
+                                    .ok_or_else(|| anyhow::anyhow!("name must be string or nil"))?.to_string()) };
+                            }
+                            "manufacturer" => {
+                                manufacturer = if v.is_nil() { None } else { Some(v.as_str()
+                                    .ok_or_else(|| anyhow::anyhow!("manufacturer must be string or nil"))?.to_string()) };
+                            }
+                            "vendor_id" => {
+                                vendor_id = Some(v.as_u64()
+                                    .ok_or_else(|| anyhow::anyhow!("vendor_id must be integer"))? as u16);
+                            }
+                            "product_id" => {
+                                product_id = Some(v.as_u64()
+                                    .ok_or_else(|| anyhow::anyhow!("product_id must be integer"))? as u16);
+                            }
+                            "serial_number" => {
+                                serial_number = if v.is_nil() { None } else { Some(v.as_str()
+                                    .ok_or_else(|| anyhow::anyhow!("serial_number must be string or nil"))?.to_string()) };
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            devices.push(DeviceInfo {
+                id: id.ok_or_else(|| anyhow::anyhow!("missing device id"))?,
+                name,
+                manufacturer,
+                vendor_id: vendor_id.ok_or_else(|| anyhow::anyhow!("missing vendor_id"))?,
+                product_id: product_id.ok_or_else(|| anyhow::anyhow!("missing product_id"))?,
+                serial_number,
+            });
+        }
+
+        Ok(devices)
     }
 }
 

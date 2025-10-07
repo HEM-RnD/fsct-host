@@ -237,6 +237,36 @@ impl IntoValue for ProtocolVersion {
     }
 }
 
+impl IntoValue for fsct::definitions::DeviceInfo {
+    fn into_value(self) -> Value {
+        let mut map = vec![
+            ("id".into(), Value::Binary(self.id.as_bytes().to_vec())),
+            ("vendor_id".into(), Value::from(self.vendor_id as u64)),
+            ("product_id".into(), Value::from(self.product_id as u64)),
+        ];
+
+        if let Some(name) = self.name {
+            map.push(("name".into(), Value::from(name)));
+        } else {
+            map.push(("name".into(), Value::Nil));
+        }
+
+        if let Some(manufacturer) = self.manufacturer {
+            map.push(("manufacturer".into(), Value::from(manufacturer)));
+        } else {
+            map.push(("manufacturer".into(), Value::Nil));
+        }
+
+        if let Some(serial) = self.serial_number {
+            map.push(("serial_number".into(), Value::from(serial)));
+        } else {
+            map.push(("serial_number".into(), Value::Nil));
+        }
+
+        Value::Map(map)
+    }
+}
+
 struct Nil;
 
 impl Into<Value> for Nil {
@@ -625,6 +655,23 @@ impl FsctRpcService {
             },
         )
     }
+
+    fn req_get_detected_devices(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            |_, params| {
+                expect_params(params, 0, "")?;
+                Ok(())
+            },
+            async |driver, _| {
+                let devices = driver.get_detected_devices().await?;
+                let device_values: Vec<Value> = devices.into_iter()
+                    .map(|d| d.into_value())
+                    .collect();
+                Ok(Value::Array(device_values))
+            },
+        )
+    }
 }
 
 impl Service for FsctRpcService {
@@ -643,6 +690,7 @@ impl Service for FsctRpcService {
             "update_player_timeline" => self.req_update_player_timeline(params),
             "update_player_metadata" => self.req_update_player_metadata(params),
             "get_player_assigned_device" => self.req_get_player_assigned_device(params),
+            "get_detected_devices" => self.req_get_detected_devices(params),
             _ => fut_err(format!("unknown method: {}", m)),
         }
     }

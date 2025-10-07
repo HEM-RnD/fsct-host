@@ -27,7 +27,7 @@ use fsct_client::IpcDriver;
 use fsct_driver::IpcServer;
 use fsct::FsctDriver;
 use fsct::definitions::ManagedPlayerId;
-use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
 
 fn test_endpoint() -> String {
@@ -114,6 +114,7 @@ mod helpers {
         pub enable_update_timeline: bool,
         pub enable_update_metadata: bool,
         pub enable_get_assigned_device: bool,
+        pub enable_get_detected_devices: bool,
 
         // register/unregister captures
         pub register_calls: Mutex<Vec<String>>,
@@ -131,6 +132,9 @@ mod helpers {
         pub status_calls: Mutex<Vec<(u32, FsctStatus)>>,
         pub timeline_calls: Mutex<Vec<(u32, Option<TimelineInfo>)>>,
         pub metadata_calls: Mutex<Vec<(u32, FsctTextMetadata, Option<String>)>>,
+
+        // devices
+        pub detected_devices: Mutex<Vec<DeviceInfo>>,
     }
 
     impl FsctDriverMock {
@@ -145,6 +149,7 @@ mod helpers {
                 enable_update_timeline: false,
                 enable_update_metadata: false,
                 enable_get_assigned_device: false,
+                enable_get_detected_devices: false,
                 register_calls: Mutex::new(Vec::new()),
                 unregister_calls: Mutex::new(Vec::new()),
                 fixed_id: std::num::NonZeroU32::new(1).unwrap(),
@@ -156,6 +161,7 @@ mod helpers {
                 status_calls: Mutex::new(Vec::new()),
                 timeline_calls: Mutex::new(Vec::new()),
                 metadata_calls: Mutex::new(Vec::new()),
+                detected_devices: Mutex::new(Vec::new()),
             }
         }
     }
@@ -206,6 +212,10 @@ mod helpers {
             if !self.enable_get_assigned_device { return Err(anyhow::anyhow!("not used")); }
             self.last_assigned_query.lock().unwrap().push(player_id.get());
             Ok(*self.assigned_device.lock().unwrap())
+        }
+        async fn get_detected_devices(&self) -> anyhow::Result<Vec<DeviceInfo>, anyhow::Error> {
+            if !self.enable_get_detected_devices { return Err(anyhow::anyhow!("not used")); }
+            Ok(self.detected_devices.lock().unwrap().clone())
         }
     }
 }
@@ -639,6 +649,62 @@ async fn ipc_auto_unregister_on_disconnect() -> anyhow::Result<()> {
     // Validate that unregister was called for the registered id
     let calls = mock.unregister_calls.lock().unwrap().clone();
     assert_eq!(calls, vec![201]);
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_get_detected_devices() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    // Create test devices
+    let device1 = DeviceInfo {
+        id: uuid::Uuid::parse_str("12345678-1234-5678-1234-567812345678").unwrap(),
+        name: Some("Test Device 1".to_string()),
+        manufacturer: Some("Test Manufacturer".to_string()),
+        vendor_id: 0x1234,
+        product_id: 0x5678,
+        serial_number: Some("SN001".to_string()),
+    };
+
+    let device2 = DeviceInfo {
+        id: uuid::Uuid::parse_str("87654321-4321-8765-4321-876543218765").unwrap(),
+        name: None,
+        manufacturer: Some("Another Manufacturer".to_string()),
+        vendor_id: 0x8765,
+        product_id: 0x4321,
+        serial_number: None,
+    };
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_get_detected_devices = true;
+    um.detected_devices = Mutex::new(vec![device1.clone(), device2.clone()]);
+    let mock = Arc::new(um);
+
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
+
+    // Get detected devices
+    let devices = client.get_detected_devices().await?;
+
+    // Verify we got 2 devices
+    assert_eq!(devices.len(), 2);
+
+    // Verify device 1
+    assert_eq!(devices[0].id, device1.id);
+    assert_eq!(devices[0].name, device1.name);
+    assert_eq!(devices[0].manufacturer, device1.manufacturer);
+    assert_eq!(devices[0].vendor_id, device1.vendor_id);
+    assert_eq!(devices[0].product_id, device1.product_id);
+    assert_eq!(devices[0].serial_number, device1.serial_number);
+
+    // Verify device 2
+    assert_eq!(devices[1].id, device2.id);
+    assert_eq!(devices[1].name, device2.name);
+    assert_eq!(devices[1].manufacturer, device2.manufacturer);
+    assert_eq!(devices[1].vendor_id, device2.vendor_id);
+    assert_eq!(devices[1].product_id, device2.product_id);
+    assert_eq!(devices[1].serial_number, device2.serial_number);
 
     server_task.shutdown().await?;
     Ok(())

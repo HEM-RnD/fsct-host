@@ -103,4 +103,9 @@ impl FsctDriver for LocalDriver {
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
         self.player_manager.get_player_assigned_devices(player_id)
     }
+
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, Error> {
+        use crate::device_manager::DeviceManagement;
+        Ok(self.device_manager.get_detected_devices())
+    }
 }

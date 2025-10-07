@@ -137,3 +137,20 @@ pub const FSCT_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, m
 pub type ManagedDeviceId = Uuid;
 /// Type alias for player ID
 pub type ManagedPlayerId = NonZeroU32;
+
+/// Information about a detected FSCT device
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    /// Unique identifier for the device (UUID computed from VID, PID, serial number)
+    pub id: ManagedDeviceId,
+    /// Device name/product string
+    pub name: Option<String>,
+    /// Manufacturer/vendor string
+    pub manufacturer: Option<String>,
+    /// USB Vendor ID
+    pub vendor_id: u16,
+    /// USB Product ID
+    pub product_id: u16,
+    /// Serial number
+    pub serial_number: Option<String>,
+}
