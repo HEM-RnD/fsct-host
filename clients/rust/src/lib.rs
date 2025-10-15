@@ -86,11 +86,11 @@ pub struct IpcDriverServer {
 impl msgpack_rpc::ServiceWithClient for IpcDriverServer {
     type RequestFuture = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
 
-    fn handle_request(&mut self, client: &mut Client, method: &str, params: &[Value]) -> Self::RequestFuture {
+    fn handle_request(&mut self, _client: &mut Client, _method: &str, _params: &[Value]) -> Self::RequestFuture {
         Box::pin(async move {Err(Value::from("not implemented"))})
     }
 
-    fn handle_notification(&mut self, client: &mut Client, method: &str, params: &[Value]) {
+    fn handle_notification(&mut self, _client: &mut Client, method: &str, params: &[Value]) {
         match method {
             "device_changed" => {
                 if params.len() != 2 {
@@ -329,7 +329,7 @@ impl FsctDriver for IpcDriver {
         Ok(Some(uuid))
     }
 
-    async fn get_detected_devices(&self) -> Result<Vec<DeviceInfo>, Error> {
+    async fn get_detected_devices(&self) -> Result<Vec<ManagedDeviceId>, Error> {
         let resp: Value = self
             .client
             .request("get_detected_devices", &[])
@@ -339,67 +339,59 @@ impl FsctDriver for IpcDriver {
         let arr = resp.as_array()
             .ok_or_else(|| anyhow::anyhow!("invalid response for get_detected_devices: expected array"))?;
 
-        let mut devices = Vec::new();
-        for device_val in arr {
-            let map = device_val.as_map()
-                .ok_or_else(|| anyhow::anyhow!("invalid device entry: expected map"))?;
+        let mut ids = Vec::new();
+        for v in arr.iter() {
+            let bytes = v.as_slice().ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
+            if bytes.len() != 16 { return Err(anyhow::anyhow!("device id must be 16 bytes")); }
+            ids.push(uuid::Uuid::from_slice(bytes)?);
+        }
+        Ok(ids)
+    }
 
-            let mut id: Option<uuid::Uuid> = None;
-            let mut name: Option<String> = None;
-            let mut manufacturer: Option<String> = None;
-            let mut vendor_id: Option<u16> = None;
-            let mut product_id: Option<u16> = None;
-            let mut serial_number: Option<String> = None;
+    async fn get_device_info(&self, device_id: ManagedDeviceId) -> Result<DeviceInfo, Error> {
+        let resp: Value = self
+            .client
+            .request("get_device_info", &[Value::Binary(device_id.as_bytes().to_vec())])
+            .await
+            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
 
-            for (k, v) in map.iter() {
-                if let Value::String(s) = k {
-                    if let Some(key) = s.as_str() {
-                        match key {
-                            "id" => {
-                                let bytes = v.as_slice()
-                                    .ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
-                                if bytes.len() != 16 {
-                                    return Err(anyhow::anyhow!("device id must be 16 bytes"));
-                                }
-                                id = Some(uuid::Uuid::from_slice(bytes)?);
-                            }
-                            "name" => {
-                                name = if v.is_nil() { None } else { Some(v.as_str()
-                                    .ok_or_else(|| anyhow::anyhow!("name must be string or nil"))?.to_string()) };
-                            }
-                            "manufacturer" => {
-                                manufacturer = if v.is_nil() { None } else { Some(v.as_str()
-                                    .ok_or_else(|| anyhow::anyhow!("manufacturer must be string or nil"))?.to_string()) };
-                            }
-                            "vendor_id" => {
-                                vendor_id = Some(v.as_u64()
-                                    .ok_or_else(|| anyhow::anyhow!("vendor_id must be integer"))? as u16);
-                            }
-                            "product_id" => {
-                                product_id = Some(v.as_u64()
-                                    .ok_or_else(|| anyhow::anyhow!("product_id must be integer"))? as u16);
-                            }
-                            "serial_number" => {
-                                serial_number = if v.is_nil() { None } else { Some(v.as_str()
-                                    .ok_or_else(|| anyhow::anyhow!("serial_number must be string or nil"))?.to_string()) };
-                            }
-                            _ => {}
+        let map = resp.as_map().ok_or_else(|| anyhow::anyhow!("invalid response for get_device_info: expected map"))?;
+
+        let mut id: Option<uuid::Uuid> = None;
+        let mut name: Option<String> = None;
+        let mut manufacturer: Option<String> = None;
+        let mut vendor_id: Option<u16> = None;
+        let mut product_id: Option<u16> = None;
+        let mut serial_number: Option<String> = None;
+
+        for (k, v) in map.iter() {
+            if let Value::String(s) = k {
+                if let Some(key) = s.as_str() {
+                    match key {
+                        "id" => {
+                            let bytes = v.as_slice().ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
+                            if bytes.len() != 16 { return Err(anyhow::anyhow!("device id must be 16 bytes")); }
+                            id = Some(uuid::Uuid::from_slice(bytes)?);
                         }
+                        "name" => { name = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("name must be string or nil"))?.to_string()) }; }
+                        "manufacturer" => { manufacturer = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("manufacturer must be string or nil"))?.to_string()) }; }
+                        "vendor_id" => { vendor_id = Some(v.as_u64().ok_or_else(|| anyhow::anyhow!("vendor_id must be integer"))? as u16); }
+                        "product_id" => { product_id = Some(v.as_u64().ok_or_else(|| anyhow::anyhow!("product_id must be integer"))? as u16); }
+                        "serial_number" => { serial_number = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("serial_number must be string or nil"))?.to_string()) }; }
+                        _ => {}
                     }
                 }
             }
-
-            devices.push(DeviceInfo {
-                id: id.ok_or_else(|| anyhow::anyhow!("missing device id"))?,
-                name,
-                manufacturer,
-                vendor_id: vendor_id.ok_or_else(|| anyhow::anyhow!("missing vendor_id"))?,
-                product_id: product_id.ok_or_else(|| anyhow::anyhow!("missing product_id"))?,
-                serial_number,
-            });
         }
 
-        Ok(devices)
+        Ok(DeviceInfo {
+            id: id.ok_or_else(|| anyhow::anyhow!("missing device id"))?,
+            name,
+            manufacturer,
+            vendor_id: vendor_id.ok_or_else(|| anyhow::anyhow!("missing vendor_id"))?,
+            product_id: product_id.ok_or_else(|| anyhow::anyhow!("missing product_id"))?,
+            serial_number,
+        })
     }
 
     async fn subscribe_device_changes(&self) -> Result<Receiver<DeviceChangeEvent>, Error> {

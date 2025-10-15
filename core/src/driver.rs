@@ -55,11 +55,14 @@ pub trait FsctDriver: Send + Sync {
 
     // --- Device management ---
     /// Get list of all detected FSCT-capable devices
-    async fn get_detected_devices(&self) -> Result<Vec<DeviceInfo>, Error>;
+    async fn get_detected_devices(&self) -> Result<Vec<ManagedDeviceId>, Error>;
 
     /// Subscribe to device change events (added/removed devices)
     /// Returns a broadcast receiver that will receive DeviceChangeEvent notifications
     async fn subscribe_device_changes(&self) -> Result<broadcast::Receiver<DeviceChangeEvent>, Error>;
+
+    /// Get device info of a connected device by device ID
+    async fn get_device_info(&self, device_id: ManagedDeviceId) -> Result<DeviceInfo, Error>;
 }
 
 

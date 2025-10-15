@@ -5,6 +5,11 @@ use fsct::definitions::{FsctStatus, TimelineInfo};
 use fsct_client::IpcDriver;
 use fsct::player_state::TrackMetadata;
 
+async fn print_device_info(driver: &IpcDriver, device_id: uuid::Uuid) {
+    let device_info = driver.get_device_info(device_id).await.unwrap();
+    info!("Device info: {:?}", device_info);
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -42,12 +47,18 @@ async fn main() -> anyhow::Result<()> {
 
     driver.update_player_state(player_id, state).await?;
 
+    let connected_devices = driver.get_detected_devices().await?;
+    for device in connected_devices {
+        print_device_info(&driver, device).await;
+    }
+
     let mut rx = driver.subscribe_device_changes().await?;
     let handle =  tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
                 match event {
                     fsct::DeviceChangeEvent::Added(uuid) => {
                         info!("Device added: {}", uuid);
+                        print_device_info(&driver, uuid).await;
                     }
                     fsct::DeviceChangeEvent::Removed(uuid) => {
                         info!("Device removed: {}", uuid);

@@ -683,11 +683,26 @@ impl FsctRpcService {
                 Ok(())
             },
             async |driver, _| {
-                let devices = driver.get_detected_devices().await?;
-                let device_values: Vec<Value> = devices.into_iter()
-                                                       .map(|d| d.into_value())
-                                                       .collect();
-                Ok(Value::Array(device_values))
+                let ids = driver.get_detected_devices().await?;
+                let values: Vec<Value> = ids.into_iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect();
+                Ok(Value::Array(values))
+            },
+        )
+    }
+
+    fn req_get_device_info(&self, params: &[Value]) -> RequestFut {
+        self.handle_function(
+            params,
+            |_, params| {
+                expect_params(params, 1, "device_id")?;
+                let did = parse_device_id(&params[0])?;
+                Ok(did)
+            },
+            async |driver, did| {
+                let info = driver.get_device_info(did).await?;
+                Ok(info.into_value())
             },
         )
     }
@@ -710,6 +725,7 @@ impl ServiceWithClient for FsctRpcService {
             "update_player_metadata" => self.req_update_player_metadata(params),
             "get_player_assigned_device" => self.req_get_player_assigned_device(params),
             "get_detected_devices" => self.req_get_detected_devices(params),
+            "get_device_info" => self.req_get_device_info(params),
             _ => fut_err(format!("unknown method: {}", m)),
         }
     }

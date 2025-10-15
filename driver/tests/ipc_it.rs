@@ -220,13 +220,17 @@ mod helpers {
             self.last_assigned_query.lock().unwrap().push(player_id.get());
             Ok(*self.assigned_device.lock().unwrap())
         }
-        async fn get_detected_devices(&self) -> anyhow::Result<Vec<DeviceInfo>, anyhow::Error> {
+        async fn get_detected_devices(&self) -> anyhow::Result<Vec<ManagedDeviceId>, anyhow::Error> {
             if !self.enable_get_detected_devices { return Err(anyhow::anyhow!("not used")); }
-            Ok(self.detected_devices.lock().unwrap().clone())
+            Ok(self.detected_devices.lock().unwrap().iter().map(|d| d.id).collect())
         }
         async fn subscribe_device_changes(&self) -> anyhow::Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, anyhow::Error> {
             if !self.enable_subscribe_device_changes { return Err(anyhow::anyhow!("not used")); }
             Ok(self.device_changes_tx.subscribe())
+        }
+        async fn get_device_info(&self, device_id: ManagedDeviceId) -> anyhow::Result<DeviceInfo, anyhow::Error> {
+            let list = self.detected_devices.lock().unwrap();
+            list.iter().find(|d| d.id == device_id).cloned().ok_or_else(|| anyhow::anyhow!("not found"))
         }
     }
 }
@@ -695,27 +699,18 @@ async fn ipc_get_detected_devices() -> anyhow::Result<()> {
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // Get detected devices
-    let devices = client.get_detected_devices().await?;
+    // Get detected device IDs
+    let device_ids = client.get_detected_devices().await?;
 
-    // Verify we got 2 devices
-    assert_eq!(devices.len(), 2);
+    // Verify we got 2 device IDs
+    assert_eq!(device_ids.len(), 2);
 
-    // Verify device 1
-    assert_eq!(devices[0].id, device1.id);
-    assert_eq!(devices[0].name, device1.name);
-    assert_eq!(devices[0].manufacturer, device1.manufacturer);
-    assert_eq!(devices[0].vendor_id, device1.vendor_id);
-    assert_eq!(devices[0].product_id, device1.product_id);
-    assert_eq!(devices[0].serial_number, device1.serial_number);
+    // Fetch full info for each ID and verify
+    let d1 = client.get_device_info(device_ids[0]).await?;
+    assert_eq!(d1, device1);
 
-    // Verify device 2
-    assert_eq!(devices[1].id, device2.id);
-    assert_eq!(devices[1].name, device2.name);
-    assert_eq!(devices[1].manufacturer, device2.manufacturer);
-    assert_eq!(devices[1].vendor_id, device2.vendor_id);
-    assert_eq!(devices[1].product_id, device2.product_id);
-    assert_eq!(devices[1].serial_number, device2.serial_number);
+    let d2 = client.get_device_info(device_ids[1]).await?;
+    assert_eq!(d2, device2);
 
     server_task.shutdown().await?;
     Ok(())

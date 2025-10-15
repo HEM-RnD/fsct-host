@@ -104,13 +104,21 @@ impl FsctDriver for LocalDriver {
         self.player_manager.get_player_assigned_devices(player_id)
     }
 
-    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, Error> {
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::ManagedDeviceId>, Error> {
         use crate::device_manager::DeviceManagement;
-        Ok(self.device_manager.get_detected_devices())
+        Ok(self.device_manager.get_all_managed_ids())
     }
 
     async fn subscribe_device_changes(&self) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, Error> {
         use crate::device_manager::DeviceControl;
         Ok(self.device_manager.subscribe())
+    }
+
+    async fn get_device_info(&self, device_id: fsct::definitions::ManagedDeviceId) -> Result<fsct::definitions::DeviceInfo, Error> {
+        use crate::device_manager::DeviceManagement;
+        let devices = self.device_manager.get_detected_devices();
+        devices.into_iter()
+            .find(|d| d.id == device_id)
+            .ok_or_else(|| anyhow::anyhow!("device not found"))
     }
 }

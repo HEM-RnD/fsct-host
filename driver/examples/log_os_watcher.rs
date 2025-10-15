@@ -109,13 +109,18 @@ impl FsctDriver for LoggingDriver {
         Ok(None)
     }
 
-    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, Error> {
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::ManagedDeviceId>, Error> {
         println!("[LoggingDriver] get_detected_devices");
         Ok(Vec::new())
     }
 
     async fn subscribe_device_changes(&self) -> Result<Receiver<DeviceChangeEvent>, Error> {
         todo!()
+    }
+
+    async fn get_device_info(&self, device_id: fsct::definitions::ManagedDeviceId) -> Result<fsct::definitions::DeviceInfo, Error> {
+        println!("[LoggingDriver] get_device_info: id={:?}", device_id);
+        Err(anyhow::anyhow!("not implemented"))
     }
 }
 

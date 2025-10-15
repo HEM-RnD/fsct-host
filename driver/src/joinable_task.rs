@@ -48,7 +48,7 @@ impl StopHandle {
     ///
     /// # Example
     /// ```rust
-    /// use fsct::spawn_service;
+    /// use fsct_driver::spawn_service;
     ///
     /// async fn run_service () {
     ///     let service_handle = spawn_service(move |mut stop_handle| async move {
