@@ -17,15 +17,19 @@
 
 //! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 
+use std::pin::Pin;
+use std::sync::Arc;
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-use fsct::{default_endpoint_path, FsctDriver};
+use fsct::{default_endpoint_path, DeviceChangeEvent, FsctDriver};
 use fsct::PlayerState;
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo, ManagedPlayerId, ProtocolVersion};
 
-use msgpack_rpc::{Client, Value};
+use msgpack_rpc::{Client, Endpoint, Value};
+use tokio::sync::broadcast::Receiver;
+use log::warn;
 
 fn encode_status(s: FsctStatus) -> Value { Value::from(s as u64) }
 
@@ -75,12 +79,67 @@ fn encode_player_state(ps: &PlayerState) -> Value {
 }
 
 fn encode_player_id(pid: ManagedPlayerId) -> Value { Value::from(pid.get() as u64) }
+pub struct IpcDriverServer {
+    tx: tokio::sync::broadcast::Sender<DeviceChangeEvent>,
+}
+
+impl msgpack_rpc::ServiceWithClient for IpcDriverServer {
+    type RequestFuture = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
+
+    fn handle_request(&mut self, client: &mut Client, method: &str, params: &[Value]) -> Self::RequestFuture {
+        Box::pin(async move {Err(Value::from("not implemented"))})
+    }
+
+    fn handle_notification(&mut self, client: &mut Client, method: &str, params: &[Value]) {
+        match method {
+            "device_changed" => {
+                if params.len() != 2 {
+                    warn!("invalid device_changed notification: expected 2 parameters");
+                    return;
+                }
+                let event = match (&params[0], &params[1]) {
+                    (Value::String(name), Value::Binary(id)) => {
+                        if let Ok(uuid) = uuid::Uuid::from_slice(id.as_slice()) {
+                            match name.as_str() {
+                                Some("Added") => DeviceChangeEvent::Added(uuid),
+                                Some("Removed") => DeviceChangeEvent::Removed(uuid),
+                                _ => {
+                                    warn!("invalid device_changed notification: unknown event type");
+                                    return;
+                                }
+                            }
+                        } else {
+                            warn!("invalid device_changed notification: invalid device id");
+                            return;
+                        }
+                    }
+                    _ => {
+                        warn!("invalid device_changed notification: expected string and binary");
+                        return;
+                    }
+                };
+                let _ = self.tx.send(event); // ignore error, because receivers can be attached at any time
+            }
+            name => {
+                warn!("unknown notification {}", name);
+            }
+        }
+    }
+}
 
 /// IPC-backed implementation of FsctDriver.
 pub struct IpcDriver {
     // Underlying msgpack-rpc client bound to a persistent IPC stream
     client: msgpack_rpc::Client,
+    tx: tokio::sync::broadcast::Sender<DeviceChangeEvent>,
     negotiated_version: ProtocolVersion,
+    notification_task_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for IpcDriver {
+    fn drop(&mut self) {
+        self.notification_task_handle.abort();
+    }
 }
 
 impl IpcDriver {
@@ -96,7 +155,19 @@ impl IpcDriver {
         let stream = transport::EndpointClient::connect(endpoint.clone()).await
                                                                          .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
         let compat_stream = stream.compat();
-        let client = Client::new(compat_stream);
+        let (tx, _rx) = tokio::sync::broadcast::channel(100);
+        let server = IpcDriverServer { tx: tx.clone() };
+        let endpoint = Endpoint::new(compat_stream, server);
+        let client = endpoint.client();
+
+        let notification_task_handle = tokio::spawn(async move {
+            let res = endpoint.await;
+            if let Err(e) = res {
+                warn!("IPC endpoint error: {e}");
+            } else {
+                warn!("IPC endpoint closed");
+            }
+        });
 
         // Handshake: fetch remote protocol version
         let response: Value = client
@@ -133,7 +204,7 @@ impl IpcDriver {
             ));
         }
 
-        Ok(Self { client, negotiated_version })
+        Ok(Self { client, tx, negotiated_version, notification_task_handle })
     }
 
     /// Returns the negotiated protocol version obtained during creation.
@@ -329,6 +400,10 @@ impl FsctDriver for IpcDriver {
         }
 
         Ok(devices)
+    }
+
+    async fn subscribe_device_changes(&self) -> Result<Receiver<DeviceChangeEvent>, Error> {
+        Ok(self.tx.subscribe())
     }
 }
 

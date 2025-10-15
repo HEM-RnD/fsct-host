@@ -42,11 +42,26 @@ async fn main() -> anyhow::Result<()> {
 
     driver.update_player_state(player_id, state).await?;
 
+    let mut rx = driver.subscribe_device_changes().await?;
+    let handle =  tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+                match event {
+                    fsct::DeviceChangeEvent::Added(uuid) => {
+                        info!("Device added: {}", uuid);
+                    }
+                    fsct::DeviceChangeEvent::Removed(uuid) => {
+                        info!("Device removed: {}", uuid);
+                    }
+                }
+        }
+    });
+
     info!("Driver example is running. Press Ctrl+C to shut down.");
 
     // Wait for Ctrl+C signal
     tokio::signal::ctrl_c().await.expect("failed to listen for ctrl_c");
     info!("Ctrl+C received, shutting down services...");
 
+    handle.abort();
     Ok(())
 }

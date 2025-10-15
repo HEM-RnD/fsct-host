@@ -8,7 +8,7 @@ mod endpoint;
 pub use player_state::{PlayerState, TrackMetadata, TrackMetadataIterator};
 
 // Export driver abstraction
-pub use driver::FsctDriver;
+pub use driver::{DeviceChangeEvent, FsctDriver};
 
 // Re-export protocol version types
 pub use definitions::{ProtocolVersion, FSCT_PROTOCOL_VERSION};

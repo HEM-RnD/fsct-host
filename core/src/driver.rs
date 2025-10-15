@@ -17,10 +17,20 @@
 
 use anyhow::Error;
 use async_trait::async_trait;
+use tokio::sync::broadcast;
 use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
 use crate::definitions::ManagedDeviceId;
 use crate::definitions::ManagedPlayerId;
 use crate::player_state::PlayerState;
+
+/// Device change event types that can be received from device change subscription
+#[derive(Debug, Clone)]
+pub enum DeviceChangeEvent {
+    /// A device was detected and added
+    Added(ManagedDeviceId),
+    /// A device was removed
+    Removed(ManagedDeviceId),
+}
 
 /// Abstraction over FSCT host driver functionality that can be backed by a local
 /// in-process implementation or a future IPC-based implementation.
@@ -46,6 +56,10 @@ pub trait FsctDriver: Send + Sync {
     // --- Device management ---
     /// Get list of all detected FSCT-capable devices
     async fn get_detected_devices(&self) -> Result<Vec<DeviceInfo>, Error>;
+
+    /// Subscribe to device change events (added/removed devices)
+    /// Returns a broadcast receiver that will receive DeviceChangeEvent notifications
+    async fn subscribe_device_changes(&self) -> Result<broadcast::Receiver<DeviceChangeEvent>, Error>;
 }
 
 

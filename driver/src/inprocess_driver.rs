@@ -108,4 +108,9 @@ impl FsctDriver for LocalDriver {
         use crate::device_manager::DeviceManagement;
         Ok(self.device_manager.get_detected_devices())
     }
+
+    async fn subscribe_device_changes(&self) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, Error> {
+        use crate::device_manager::DeviceControl;
+        Ok(self.device_manager.subscribe())
+    }
 }

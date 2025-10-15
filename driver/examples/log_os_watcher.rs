@@ -27,10 +27,12 @@ use std::sync::{Arc, Mutex};
 use anyhow::Error;
 use async_trait::async_trait;
 use env_logger::Env;
+use tokio::sync::broadcast::Receiver;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::driver::FsctDriver;
 use fsct::definitions::ManagedPlayerId;
 use fsct::definitions::ManagedDeviceId;
+use fsct::DeviceChangeEvent;
 use fsct::player_state::PlayerState;
 use fsct_driver::joinable_task::JoinableTaskHandle;
 
@@ -110,6 +112,10 @@ impl FsctDriver for LoggingDriver {
     async fn get_detected_devices(&self) -> Result<Vec<fsct::definitions::DeviceInfo>, Error> {
         println!("[LoggingDriver] get_detected_devices");
         Ok(Vec::new())
+    }
+
+    async fn subscribe_device_changes(&self) -> Result<Receiver<DeviceChangeEvent>, Error> {
+        todo!()
     }
 }
 

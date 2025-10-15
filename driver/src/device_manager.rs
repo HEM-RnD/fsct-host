@@ -28,13 +28,7 @@ use crate::usb::fsct_device::FsctDevice;
 use fsct::calculate_uuid;
 
 /// Device event types that can be broadcast by the DeviceManager
-#[derive(Debug, Clone)]
-pub enum DeviceEvent {
-    /// A device was added with the given managed ID
-    Added(ManagedDeviceId),
-    /// A device was removed with the given managed ID
-    Removed(ManagedDeviceId),
-}
+pub use fsct::DeviceChangeEvent as DeviceEvent;
 
 /// Error type for device manager operations
 #[derive(Error, Debug)]

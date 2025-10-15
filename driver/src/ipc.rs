@@ -22,7 +22,6 @@
 //! - Handle msgpack-rpc style requests for `get_protocol_version`
 //! - Forward to the provided FsctDriver
 
-
 #[cfg(unix)]
 use crate::ports::unix::ipc_transport as transport;
 #[cfg(windows)]
@@ -36,10 +35,10 @@ use anyhow::{anyhow, bail, Context};
 use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct::{FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
+use fsct::{DeviceChangeEvent, FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
 
 use uuid::Uuid;
-use msgpack_rpc::{serve, Service, Value};
+use msgpack_rpc::{Client, Service, ServiceWithClient, Value};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
@@ -99,8 +98,8 @@ impl IpcServer {
                 }
                 None => {
                     info!("IPC accept loop terminated");
-                    break
-                },
+                    break;
+                }
             }
         }
 
@@ -147,10 +146,15 @@ impl IpcServer {
             let service = FsctRpcService::new(driver.clone(), connection_id);
             let players = service.conn_players_arc();
             let mut compat_stream = stream.compat();
+            let endpoint = msgpack_rpc::Endpoint::new(&mut compat_stream, service);
+            if let Err(e) = start_device_changes_task(driver.clone(), endpoint.client()).await {
+                error!("Failed to start device changes task: {}", e);
+            }
             select! {
-                res = serve(&mut compat_stream, service) => {
-                    if let Err(e) = res { warn!("IPC connection (id = {}) handler ended with error: {}",
-                        connection_id, e); }
+                res = endpoint => {
+                    if let Err(e) = res {
+                        warn!("IPC connection (id = {}) handler ended with error: {}",connection_id, e);
+                    }
                 }
                 _ = stop.signaled() => {
                     info!("IPC connection stop requested, id = {}", connection_id);
@@ -302,6 +306,21 @@ fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &
                            if expected_params_names.is_empty() { "" } else { ": " },
                            expected_params_names));
     }
+    Ok(())
+}
+
+async fn start_device_changes_task(driver: Arc<dyn FsctDriver>, client: Client) -> anyhow::Result<()>{
+    let mut rx = driver.subscribe_device_changes().await?;
+    tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            let args = match event {
+                DeviceChangeEvent::Added(id) => [Value::String("Added".into()), Value::Binary(id.as_bytes().into())],
+                DeviceChangeEvent::Removed(id) => [Value::String("Removed".into()), Value::Binary(id.as_bytes().into())]
+            };
+            client.notify("device_changed", &args);
+            log::debug!("Device change event: {:?}", event);
+        }
+    });
     Ok(())
 }
 
@@ -666,18 +685,18 @@ impl FsctRpcService {
             async |driver, _| {
                 let devices = driver.get_detected_devices().await?;
                 let device_values: Vec<Value> = devices.into_iter()
-                    .map(|d| d.into_value())
-                    .collect();
+                                                       .map(|d| d.into_value())
+                                                       .collect();
                 Ok(Value::Array(device_values))
             },
         )
     }
 }
 
-impl Service for FsctRpcService {
+impl ServiceWithClient for FsctRpcService {
     type RequestFuture = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
 
-    fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture {
+    fn handle_request(&mut self, _client: &mut Client, method: &str, params: &[Value]) -> Self::RequestFuture {
         let m = method.to_string();
         match m.as_str() {
             "get_protocol_version" => self.req_get_protocol_version(params),
@@ -695,7 +714,7 @@ impl Service for FsctRpcService {
         }
     }
 
-    fn handle_notification(&mut self, _method: &str, _params: &[Value]) {
+    fn handle_notification(&mut self, _client: &mut Client, _method: &str, _params: &[Value]) {
         // No-op for now
     }
 }

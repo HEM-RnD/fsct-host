@@ -17,6 +17,7 @@ uuid.workspace = true
 tokio.workspace = true
 fsct-core.workspace = true
 msgpack-rpc.workspace = true
+log.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winerror", "accctrl", "aclapi", "minwinbase", "securitybaseapi", "winbase", "winnt"] }

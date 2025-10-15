@@ -115,6 +115,7 @@ mod helpers {
         pub enable_update_metadata: bool,
         pub enable_get_assigned_device: bool,
         pub enable_get_detected_devices: bool,
+        pub enable_subscribe_device_changes: bool,
 
         // register/unregister captures
         pub register_calls: Mutex<Vec<String>>,
@@ -135,10 +136,14 @@ mod helpers {
 
         // devices
         pub detected_devices: Mutex<Vec<DeviceInfo>>,
+
+        // device change subscription
+        pub device_changes_tx: tokio::sync::broadcast::Sender<fsct::DeviceChangeEvent>,
     }
 
     impl FsctDriverMock {
         pub fn new() -> Self {
+            let (tx, _rx) = tokio::sync::broadcast::channel(16);
             Self {
                 enable_register: false,
                 enable_unregister: false,
@@ -150,6 +155,7 @@ mod helpers {
                 enable_update_metadata: false,
                 enable_get_assigned_device: false,
                 enable_get_detected_devices: false,
+                enable_subscribe_device_changes: false,
                 register_calls: Mutex::new(Vec::new()),
                 unregister_calls: Mutex::new(Vec::new()),
                 fixed_id: std::num::NonZeroU32::new(1).unwrap(),
@@ -162,6 +168,7 @@ mod helpers {
                 timeline_calls: Mutex::new(Vec::new()),
                 metadata_calls: Mutex::new(Vec::new()),
                 detected_devices: Mutex::new(Vec::new()),
+                device_changes_tx: tx,
             }
         }
     }
@@ -216,6 +223,10 @@ mod helpers {
         async fn get_detected_devices(&self) -> anyhow::Result<Vec<DeviceInfo>, anyhow::Error> {
             if !self.enable_get_detected_devices { return Err(anyhow::anyhow!("not used")); }
             Ok(self.detected_devices.lock().unwrap().clone())
+        }
+        async fn subscribe_device_changes(&self) -> anyhow::Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, anyhow::Error> {
+            if !self.enable_subscribe_device_changes { return Err(anyhow::anyhow!("not used")); }
+            Ok(self.device_changes_tx.subscribe())
         }
     }
 }
@@ -705,6 +716,42 @@ async fn ipc_get_detected_devices() -> anyhow::Result<()> {
     assert_eq!(devices[1].vendor_id, device2.vendor_id);
     assert_eq!(devices[1].product_id, device2.product_id);
     assert_eq!(devices[1].serial_number, device2.serial_number);
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_subscribe_device_changes() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_subscribe_device_changes = true;
+    let mock = Arc::new(um);
+
+    let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
+
+    // Subscribe on client side
+    let mut rx = client.subscribe_device_changes().await?;
+
+    // Emit Added
+    let dev = uuid::Uuid::new_v4();
+    let _ = mock.device_changes_tx.send(fsct::DeviceChangeEvent::Added(dev));
+
+    // Receive and assert
+    let evt = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await??;
+    match evt {
+        fsct::DeviceChangeEvent::Added(id) => assert_eq!(id, dev),
+        _ => panic!("expected Added"),
+    }
+
+    // Emit Removed
+    let _ = mock.device_changes_tx.send(fsct::DeviceChangeEvent::Removed(dev));
+    let evt2 = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await??;
+    match evt2 {
+        fsct::DeviceChangeEvent::Removed(id) => assert_eq!(id, dev),
+        _ => panic!("expected Removed"),
+    }
 
     server_task.shutdown().await?;
     Ok(())

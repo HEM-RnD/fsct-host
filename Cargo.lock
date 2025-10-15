@@ -686,6 +686,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "fsct-core",
+ "log",
  "msgpack-rpc",
  "tokio",
  "tokio-util",
@@ -700,6 +701,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bitflags 2.8.0",
+ "tokio",
  "uuid",
 ]
 
