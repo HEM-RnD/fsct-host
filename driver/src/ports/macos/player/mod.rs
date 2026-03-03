@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use anyhow::anyhow;
 use tokio::sync::mpsc;
+use tokio::time;
 
 #[allow(dead_code)]
 struct NowPlayingWrapper {
@@ -32,6 +33,22 @@ struct NowPlayingWrapper {
 }
 
 unsafe impl Send for NowPlayingWrapper {}
+
+#[derive(Clone)]
+struct ScriptNowPlayingInfo {
+    title: String,
+    artist: String,
+    album: String,
+    elapsed_time: f64,
+    duration: f64,
+    is_playing: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActiveSource {
+    Music,
+    Spotify,
+}
 
 
 fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
@@ -42,6 +59,192 @@ fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     texts.genre = None;
 
     texts
+}
+
+fn parse_applescript_float(value: &str) -> Option<f64> {
+    value.trim().replace(',', ".").parse::<f64>().ok()
+}
+
+fn normalize_duration_seconds(duration_value: f64) -> f64 {
+    if duration_value > 10000.0 {
+        duration_value / 1000.0
+    } else {
+        duration_value
+    }
+}
+
+fn script_info_to_state(info: &ScriptNowPlayingInfo) -> PlayerState {
+    PlayerState {
+        status: if info.is_playing { FsctStatus::Playing } else { FsctStatus::Paused },
+        texts: TrackMetadata {
+            title: Some(info.title.clone()),
+            artist: Some(info.artist.clone()),
+            album: Some(info.album.clone()),
+            genre: None,
+        },
+        timeline: Some(TimelineInfo {
+            position: Duration::from_secs_f64(info.elapsed_time.max(0.0)),
+            update_time: SystemTime::now(),
+            duration: Duration::from_secs_f64(info.duration.max(0.0)),
+            rate: if info.is_playing { 1.0 } else { 0.0 },
+        }),
+    }
+}
+
+fn music_now_playing_via_applescript(allow_paused: bool) -> Option<ScriptNowPlayingInfo> {
+    let script = if allow_paused {
+        r#"
+if application id "com.apple.Music" is running then
+    tell application id "com.apple.Music"
+        set currentState to player state
+        if currentState is playing or currentState is paused then
+            set trackName to (name of current track)
+            set trackArtist to (artist of current track)
+            set trackAlbum to (album of current track)
+            set trackPosition to (player position)
+            set trackDuration to (duration of current track)
+            return trackName & "|||FSCT|||" & trackArtist & "|||FSCT|||" & trackAlbum & "|||FSCT|||" & (trackPosition as string) & "|||FSCT|||" & (trackDuration as string) & "|||FSCT|||" & (currentState as string)
+        else
+            return ""
+        end if
+    end tell
+else
+    return ""
+end if
+"#
+    } else {
+        r#"
+if application id "com.apple.Music" is running then
+    tell application id "com.apple.Music"
+        set currentState to player state
+        if currentState is playing then
+            set trackName to (name of current track)
+            set trackArtist to (artist of current track)
+            set trackAlbum to (album of current track)
+            set trackPosition to (player position)
+            set trackDuration to (duration of current track)
+            return trackName & "|||FSCT|||" & trackArtist & "|||FSCT|||" & trackAlbum & "|||FSCT|||" & (trackPosition as string) & "|||FSCT|||" & (trackDuration as string) & "|||FSCT|||" & (currentState as string)
+        else
+            return ""
+        end if
+    end tell
+else
+    return ""
+end if
+"#
+    };
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<&str> = trimmed.splitn(6, "|||FSCT|||").collect();
+    if parts.len() != 6 {
+        return None;
+    }
+
+    let elapsed_time = parse_applescript_float(parts[3])?;
+    let duration = parse_applescript_float(parts[4])?;
+    let is_playing = matches!(parts[5].trim(), "playing");
+
+    Some(ScriptNowPlayingInfo {
+        title: parts[0].to_string(),
+        artist: parts[1].to_string(),
+        album: parts[2].to_string(),
+        elapsed_time,
+        duration: normalize_duration_seconds(duration),
+        is_playing,
+    })
+}
+
+fn spotify_now_playing_via_applescript(allow_paused: bool) -> Option<ScriptNowPlayingInfo> {
+    let script = if allow_paused {
+        r#"
+if application id "com.spotify.client" is running then
+    tell application id "com.spotify.client"
+        set currentState to player state
+        if currentState is playing or currentState is paused then
+            set trackName to (name of current track)
+            set trackArtist to (artist of current track)
+            set trackAlbum to (album of current track)
+            set trackPosition to (player position)
+            set trackDuration to (duration of current track)
+            return trackName & "|||FSCT|||" & trackArtist & "|||FSCT|||" & trackAlbum & "|||FSCT|||" & (trackPosition as string) & "|||FSCT|||" & (trackDuration as string) & "|||FSCT|||" & (currentState as string)
+        else
+            return ""
+        end if
+    end tell
+else
+    return ""
+end if
+"#
+    } else {
+        r#"
+if application id "com.spotify.client" is running then
+    tell application id "com.spotify.client"
+        set currentState to player state
+        if currentState is playing then
+            set trackName to (name of current track)
+            set trackArtist to (artist of current track)
+            set trackAlbum to (album of current track)
+            set trackPosition to (player position)
+            set trackDuration to (duration of current track)
+            return trackName & "|||FSCT|||" & trackArtist & "|||FSCT|||" & trackAlbum & "|||FSCT|||" & (trackPosition as string) & "|||FSCT|||" & (trackDuration as string) & "|||FSCT|||" & (currentState as string)
+        else
+            return ""
+        end if
+    end tell
+else
+    return ""
+end if
+"#
+    };
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<&str> = trimmed.splitn(6, "|||FSCT|||").collect();
+    if parts.len() != 6 {
+        return None;
+    }
+
+    let elapsed_time = parse_applescript_float(parts[3])?;
+    let duration = parse_applescript_float(parts[4])?;
+    let is_playing = matches!(parts[5].trim(), "playing");
+
+    Some(ScriptNowPlayingInfo {
+        title: parts[0].to_string(),
+        artist: parts[1].to_string(),
+        album: parts[2].to_string(),
+        elapsed_time,
+        duration: normalize_duration_seconds(duration),
+        is_playing,
+    })
 }
 
 fn get_timeline_info(now_playing_info: &NowPlayingInfo) -> Option<TimelineInfo> {
@@ -79,13 +282,98 @@ fn build_state(info: &NowPlayingInfo) -> PlayerState {
     }
 }
 
-async fn push_state(driver: Arc<dyn FsctDriver>, player_id: ManagedPlayerId, previous_state: &mut PlayerState, info: Option<NowPlayingInfo>) {
-    if let Some(info) = info {
-        let state = build_state(&info);
+async fn push_state(
+    driver: Arc<dyn FsctDriver>,
+    player_id: ManagedPlayerId,
+    previous_state: &mut PlayerState,
+    previous_source: &mut Option<ActiveSource>,
+    info: Option<NowPlayingInfo>,
+) {
+    let spotify_info = spotify_now_playing_via_applescript(true);
+    let music_info = music_now_playing_via_applescript(true);
+
+    if let Some(spotify) = spotify_info.as_ref() && spotify.is_playing {
+        *previous_source = Some(ActiveSource::Spotify);
+        let state = script_info_to_state(spotify);
         if *previous_state != state {
             *previous_state = state.clone();
             let _ = driver.update_player_state(player_id, state).await;
         }
+        return;
+    }
+
+    if let Some(music) = music_info.as_ref() && music.is_playing {
+        *previous_source = Some(ActiveSource::Music);
+        let state = script_info_to_state(music);
+        if *previous_state != state {
+            *previous_state = state.clone();
+            let _ = driver.update_player_state(player_id, state).await;
+        }
+        return;
+    }
+
+    let info_ref = info.as_ref();
+
+    if *previous_source == Some(ActiveSource::Spotify)
+        && let Some(spotify) = spotify_info.as_ref()
+    {
+        let opposite_is_playing = info_ref
+            .map(|value| {
+                value.bundle_id.as_deref() == Some("com.apple.Music")
+                    && get_status(value) == FsctStatus::Playing
+            })
+            .unwrap_or(false);
+
+        if !opposite_is_playing {
+            let state = script_info_to_state(spotify);
+            if *previous_state != state {
+                *previous_state = state.clone();
+                let _ = driver.update_player_state(player_id, state).await;
+            }
+            return;
+        }
+    }
+
+    if *previous_source == Some(ActiveSource::Music)
+        && let Some(music) = music_info.as_ref()
+    {
+        let opposite_is_playing = info_ref
+            .map(|value| {
+                value.bundle_id.as_deref() == Some("com.spotify.client")
+                    && get_status(value) == FsctStatus::Playing
+            })
+            .unwrap_or(false);
+
+        if !opposite_is_playing {
+            let state = script_info_to_state(music);
+            if *previous_state != state {
+                *previous_state = state.clone();
+                let _ = driver.update_player_state(player_id, state).await;
+            }
+            return;
+        }
+    }
+
+    if let Some(info) = info {
+        let state = build_state(&info);
+        let bundle_id = info.bundle_id.as_deref();
+        if bundle_id == Some("com.spotify.client") {
+            *previous_source = Some(ActiveSource::Spotify);
+        } else if bundle_id == Some("com.apple.Music") {
+            *previous_source = Some(ActiveSource::Music);
+        }
+        if *previous_state != state {
+            *previous_state = state.clone();
+            let _ = driver.update_player_state(player_id, state).await;
+        }
+        return;
+    }
+
+    let state = PlayerState::default();
+    *previous_source = None;
+    if *previous_state != state {
+        *previous_state = state.clone();
+        let _ = driver.update_player_state(player_id, state).await;
     }
 }
 
@@ -123,7 +411,7 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Joina
         let (tx, mut rx) = mpsc::unbounded_channel::<Option<NowPlayingInfo>>();
 
         // Choose implementation based on macOS version and set up subscriptions
-        let _now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version() && (major > 15 || (major == 15 && minor >= 4)) {
+        let now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version() && (major > 15 || (major == 15 && minor >= 4)) {
                 let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
                 let tx_clone = tx.clone();
                 now_playing.subscribe(move |guard| {
@@ -149,15 +437,25 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Joina
         };
 
         let mut previous_state = PlayerState::default();
+        let mut previous_source: Option<ActiveSource> = None;
+        let mut poll_interval = time::interval(Duration::from_secs(1));
+        poll_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 _ = stop.signaled() => {
                     break;
                 }
+                _ = poll_interval.tick() => {
+                    let polled = match &now_playing {
+                        NowPlayingImpl::JXA(value) => value.get_info().as_ref().cloned(),
+                        NowPlayingImpl::Native(value) => value.now_playing.get_info().as_ref().cloned(),
+                    };
+                    push_state(driver.clone(), player_id, &mut previous_state, &mut previous_source, polled).await;
+                }
                 maybe = rx.recv() => {
                     match maybe {
                         Some(opt) => {
-                            push_state(driver.clone(), player_id, &mut previous_state, opt).await;
+                            push_state(driver.clone(), player_id, &mut previous_state, &mut previous_source, opt).await;
                         }
                         None => {
                             // Sender dropped; exit loop
