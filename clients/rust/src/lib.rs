@@ -17,81 +17,22 @@
 
 //! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 
+pub mod rpc;
+
 use std::collections::HashMap;
-use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::Context;
 use async_trait::async_trait;
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimelineInfo};
 use fsct::player_state::PlayerState;
 use fsct::{default_endpoint_path, DeviceChangeEvent, FsctDriver};
-use fsct_ipc::{RpcNotification, RpcRequest, RpcResponse, MAX_LINE_BYTES};
 use log::warn;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use futures::{SinkExt, StreamExt};
-
-// ---------------------------------------------------------------------------
-// Wire-format helpers (mirrors ipc.rs server-side)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TimelineWire {
-    position_ms: u64,
-    update_unix_ms: i64,
-    duration_ms: u64,
-    rate: f64,
-}
-
-impl From<&TimelineInfo> for TimelineWire {
-    fn from(t: &TimelineInfo) -> Self {
-        let update_unix_ms = t.update_time
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
-        Self {
-            position_ms: t.position.as_millis() as u64,
-            update_unix_ms,
-            duration_ms: t.duration.as_millis() as u64,
-            rate: t.rate,
-        }
-    }
-}
-
-impl TryFrom<TimelineWire> for TimelineInfo {
-    type Error = anyhow::Error;
-    fn try_from(w: TimelineWire) -> Result<Self, Self::Error> {
-        let update_time = if w.update_unix_ms >= 0 {
-            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
-        } else {
-            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
-        };
-        Ok(TimelineInfo {
-            position: Duration::from_millis(w.position_ms),
-            update_time,
-            duration: Duration::from_millis(w.duration_ms),
-            rate: w.rate,
-        })
-    }
-}
-
-fn encode_timeline_opt(t: &Option<TimelineInfo>) -> JsonValue {
-    match t {
-        None => JsonValue::Null,
-        Some(tl) => serde_json::to_value(TimelineWire::from(tl)).unwrap(),
-    }
-}
-
-fn encode_player_state(ps: &PlayerState) -> JsonValue {
-    json!({
-        "status": ps.status,
-        "timeline": encode_timeline_opt(&ps.timeline),
-        "texts": ps.texts,
-    })
-}
+use crate::rpc::{RpcNotification, RpcRequest, RpcResponse, MAX_LINE_BYTES};
 
 // ---------------------------------------------------------------------------
 // Multiplexer background task
@@ -334,7 +275,7 @@ impl FsctDriver for IpcDriver {
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<()> {
         self.rpc_call("update_player_state", json!({
             "player_id": player_id.get(),
-            "state": encode_player_state(&new_state),
+            "state": serde_json::to_value(&new_state)?,
         })).await?;
         Ok(())
     }
@@ -350,7 +291,7 @@ impl FsctDriver for IpcDriver {
     async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
         self.rpc_call("update_player_timeline", json!({
             "player_id": player_id.get(),
-            "timeline": encode_timeline_opt(&new_timeline),
+            "timeline": serde_json::to_value(&new_timeline)?,
         })).await?;
         Ok(())
     }

@@ -52,7 +52,7 @@ fn test_endpoint() -> String {
 mod raw_client {
     #[cfg(unix)]
     use anyhow::Context;
-    use fsct_ipc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
+    use fsct_client::rpc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
     use futures::{SinkExt, StreamExt};
     use serde_json::{json, Value as JsonValue};
     use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};

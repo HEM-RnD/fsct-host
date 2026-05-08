@@ -16,7 +16,6 @@ tokio-util.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 fsct-core.workspace = true
-fsct-ipc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 futures.workspace = true

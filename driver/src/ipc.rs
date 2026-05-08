@@ -26,7 +26,6 @@ use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -34,7 +33,6 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use anyhow::Context;
 use futures::StreamExt;
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
@@ -43,58 +41,14 @@ use futures::SinkExt;
 use uuid::Uuid;
 
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct::player_state::{PlayerState, TrackMetadata};
+use fsct::player_state::PlayerState;
 use fsct::{DeviceChangeEvent, FsctDriver, FSCT_PROTOCOL_VERSION};
-use fsct_ipc::{
+use fsct_client::rpc::{
     RpcNotification, RpcRequest, RpcResponse,
-    ERR_APPLICATION, ERR_METHOD_NOT_FOUND, MAX_LINE_BYTES,
+    ERR_APPLICATION, ERR_METHOD_NOT_FOUND, ERR_PARSE_ERROR, MAX_LINE_BYTES,
 };
 
 use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
-
-// ---------------------------------------------------------------------------
-// Wire-format helpers for types that use std::time (not directly serializable)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TimelineWire {
-    position_ms: u64,
-    update_unix_ms: i64,
-    duration_ms: u64,
-    rate: f64,
-}
-
-impl From<&TimelineInfo> for TimelineWire {
-    fn from(t: &TimelineInfo) -> Self {
-        let update_unix_ms = t.update_time
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
-        Self {
-            position_ms: t.position.as_millis() as u64,
-            update_unix_ms,
-            duration_ms: t.duration.as_millis() as u64,
-            rate: t.rate,
-        }
-    }
-}
-
-impl TryFrom<TimelineWire> for TimelineInfo {
-    type Error = anyhow::Error;
-    fn try_from(w: TimelineWire) -> Result<Self, Self::Error> {
-        let update_time = if w.update_unix_ms >= 0 {
-            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
-        } else {
-            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
-        };
-        Ok(TimelineInfo {
-            position: Duration::from_millis(w.position_ms),
-            update_time,
-            duration: Duration::from_millis(w.duration_ms),
-            rate: w.rate,
-        })
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Endpoint types
@@ -343,7 +297,7 @@ impl ConnectionHandler {
             Err(e) => {
                 return RpcResponse::err(
                     JsonValue::Null,
-                    fsct_ipc::ERR_PARSE_ERROR,
+                    ERR_PARSE_ERROR,
                     format!("parse error: {}", e),
                 );
             }
@@ -414,79 +368,15 @@ impl ConnectionHandler {
             .with_context(|| "invalid metadata_id value")
     }
 
-    fn parse_timeline_opt(v: &JsonValue) -> anyhow::Result<Option<TimelineInfo>> {
-        if v.is_null() {
-            return Ok(None);
-        }
-        let wire: TimelineWire = serde_json::from_value(v.clone())
-            .with_context(|| "invalid timeline object")?;
-        Ok(Some(wire.try_into()?))
+    fn parse_player_state(params: &JsonValue) -> anyhow::Result<PlayerState> {
+        let state = params.get("state").ok_or_else(|| anyhow::anyhow!("missing 'state'"))?;
+        serde_json::from_value::<PlayerState>(state.clone())
+            .map_err(|e| anyhow::anyhow!("invalid player state: {}", e))
     }
 
-    fn parse_player_state(params: &JsonValue) -> anyhow::Result<PlayerState> {
-        let state_val = &params["state"];
-        if !state_val.is_object() {
-            anyhow::bail!("state must be an object");
-        }
-
-        // Validate no unknown keys
-        if let Some(obj) = state_val.as_object() {
-            for key in obj.keys() {
-                match key.as_str() {
-                    "status" | "timeline" | "texts" => {}
-                    other => anyhow::bail!("invalid player state key: {}", other),
-                }
-            }
-
-            // Validate texts sub-object if present
-            if let Some(texts_val) = obj.get("texts") {
-                if !texts_val.is_object() {
-                    anyhow::bail!("texts must be an object");
-                }
-                if let Some(texts_obj) = texts_val.as_object() {
-                    for key in texts_obj.keys() {
-                        match key.as_str() {
-                            "title" | "artist" | "album" | "genre" => {
-                                let v = &texts_obj[key];
-                                if !v.is_null() && !v.is_string() {
-                                    anyhow::bail!("text '{}' must be string or null", key);
-                                }
-                            }
-                            other => anyhow::bail!("invalid text key: {}", other),
-                        }
-                    }
-                }
-            }
-
-            // Validate status if present
-            if let Some(status_val) = obj.get("status") {
-                serde_json::from_value::<FsctStatus>(status_val.clone())
-                    .with_context(|| "invalid status value")?;
-            }
-
-            // Validate timeline if present
-            if let Some(timeline_val) = obj.get("timeline") {
-                Self::parse_timeline_opt(timeline_val)?;
-            }
-        }
-
-        let status: FsctStatus = if state_val["status"].is_null() || state_val.get("status").is_none() {
-            FsctStatus::default()
-        } else {
-            serde_json::from_value(state_val["status"].clone())
-                .with_context(|| "invalid status value")?
-        };
-
-        let timeline = Self::parse_timeline_opt(&state_val["timeline"])?;
-
-        let texts = if let Some(texts_val) = state_val.get("texts") {
-            serde_json::from_value(texts_val.clone())
-                .with_context(|| "invalid texts object")?
-        } else {
-            TrackMetadata::default()
-        };
-
-        Ok(PlayerState { status, timeline, texts })
+    fn parse_timeline_opt(params: &JsonValue) -> anyhow::Result<Option<TimelineInfo>> {
+        serde_json::from_value::<Option<TimelineInfo>>(params["timeline"].clone())
+            .with_context(|| "invalid timeline")
     }
 
     // -----------------------------------------------------------------------
@@ -559,7 +449,7 @@ impl ConnectionHandler {
     async fn req_update_player_timeline(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
         let pid = Self::parse_player_id(params)?;
         self.ensure_player_for_connection(pid)?;
-        let timeline = Self::parse_timeline_opt(&params["timeline"])?;
+        let timeline = Self::parse_timeline_opt(params)?;
         self.driver.update_player_timeline(pid, timeline).await?;
         Ok(JsonValue::Null)
     }

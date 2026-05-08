@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrackMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -87,9 +88,12 @@ impl TrackMetadata {
 }
 
 // PlayerState remains as a data structure
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlayerState {
     pub status: FsctStatus,
+    #[serde(default)]
     pub timeline: Option<TimelineInfo>,
+    #[serde(default)]
     pub texts: TrackMetadata,
 }

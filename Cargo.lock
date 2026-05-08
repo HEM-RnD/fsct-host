@@ -680,7 +680,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "fsct-core",
- "fsct-ipc",
  "futures",
  "log",
  "serde",
@@ -715,7 +714,6 @@ dependencies = [
  "env_logger",
  "fsct-client",
  "fsct-core",
- "fsct-ipc",
  "futures",
  "futures-util",
  "log",
@@ -736,14 +734,6 @@ dependencies = [
  "windows-future",
  "windows-service",
  "zbus",
-]
-
-[[package]]
-name = "fsct-ipc"
-version = "0.2.13"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

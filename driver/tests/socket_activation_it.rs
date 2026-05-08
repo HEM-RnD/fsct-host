@@ -171,10 +171,10 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
+        use fsct_client::rpc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
         use tokio::time::timeout;
         use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
         use futures::{SinkExt, StreamExt};
-        use fsct_ipc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
         use serde_json::json;
 
         // Create a small Tokio runtime inside the thread

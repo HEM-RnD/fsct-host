@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["clients/rust", "core", "driver", "bindings/node", "ipc"]
+members = ["clients/rust", "core", "driver", "bindings/node"]
 
 [workspace.package]
 version = "0.2.13"
@@ -20,7 +20,6 @@ env_logger = "0.11"
 fsct-core = { path = "core" }
 fsct-client = { path = "clients/rust" }
 fsct-driver = { path = "driver" }
-fsct-ipc = { path = "ipc" }
 log = "0.4.25"
 thiserror = "2.0.12"
 anyhow = "1.0.98"
