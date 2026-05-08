@@ -67,6 +67,14 @@ Unit tests live in `#[cfg(test)]` modules in the source files. Integration tests
 - **No over-engineering** — don't add abstraction layers for hypothetical future needs. Solve the problem at hand.
 - **Logical file structure** — don't hesitate to create a new file when a module grows large or has a clear independent responsibility. But don't split files so finely that related logic becomes scattered. A good heuristic: one cohesive concept per file.
 
+## IPC API Compatibility
+
+`docs/ipc.md` is the authoritative specification of the IPC protocol. When changing the IPC API:
+
+- **Add, don't break** — new methods, new optional fields, and new enum variants are always allowed.
+- **Never remove or rename** existing methods, fields, or enum values, and never change the type or meaning of existing fields. Clients written against an older `docs/ipc.md` must continue to work.
+- **Version bump** — increment `FSCT_PROTOCOL_VERSION.minor` for backwards-compatible additions. Increment `major` only for breaking changes (which should be avoided).
+
 ## Architecture
 
 ### Driver Operational Modes
@@ -99,7 +107,7 @@ Root Service — IPC Server (driver/src/ipc.rs)  ──►  FsctDriver trait (co
 ### Key Design Points
 
 - **`FsctDriver` trait** (`core/src/driver.rs`): central abstraction for player/device operations. Two implementations: `LocalDriver` (in-process, used by the driver binary itself) and `IpcDriver` (client-side, in `clients/rust/`).
-- **IPC transport**: Unix domain socket at `/tmp/fsct-driver.sock` on Linux/macOS; named pipe at `\\.\pipe\fsct-driver` on Windows. Protocol: msgpack-rpc.
+- **IPC transport**: Unix domain socket (`/run/fsct/fsct.sock` on Linux, `/var/run/fsct/fsct.sock` on macOS); named pipe (`\\.\pipe\fsct_driver`) on Windows. Protocol: JSON-RPC 2.0 over NDJSON. See [`docs/ipc.md`](docs/ipc.md) for the full protocol specification — this file is the source of truth for the IPC API.
 - **PlayerManager** is a pure event source — it stores player state and emits `PlayerEvent` but never touches devices directly. The `Orchestrator` bridges player events to device control.
 - **Device identity**: devices are identified by a `ManagedDeviceId` (UUID) calculated deterministically from VID + PID + serial number (`core/src/device_uuid_calculator.rs`).
 - **Platform ports**: `driver/src/ports/` contains platform-specific code gated by `cfg(target_os)`. Linux uses MPRIS/D-Bus (`zbus`); Windows uses named pipes + WinAPI; macOS uses LaunchDaemon.

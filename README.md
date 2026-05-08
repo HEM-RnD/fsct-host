@@ -42,6 +42,7 @@ npm install @hemspzoo/fsct-lib
 
 ## Documentation
 
+- **IPC protocol reference**: see [docs/ipc.md](docs/ipc.md)
 - Active player selection (authoritative): see docs/active_player_selection.md
 - Proposed architecture and background: see docs/proposed_architecture.md
 - Device management overview: see docs/device_management.md
