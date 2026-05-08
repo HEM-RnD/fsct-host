@@ -59,6 +59,14 @@ Unit tests live in `#[cfg(test)]` modules in the source files. Integration tests
 - Format: `cargo fmt`
 - Debug logging: `RUST_LOG=debug cargo run ...`
 
+## Code Quality Rules
+
+- **Short functions** — each function does one thing. If a function body needs a mental "and then…", split it.
+- **Avoid deep nesting** — max ~2–3 levels. Prefer early returns, `?`, and extracting helper functions over nested `if`/`match` arms.
+- **Readable over clever** — name things after what they mean, not how they work. Code is read far more than written.
+- **No over-engineering** — don't add abstraction layers for hypothetical future needs. Solve the problem at hand.
+- **Logical file structure** — don't hesitate to create a new file when a module grows large or has a clear independent responsibility. But don't split files so finely that related logic becomes scattered. A good heuristic: one cohesive concept per file.
+
 ## Architecture
 
 ### Driver Operational Modes
