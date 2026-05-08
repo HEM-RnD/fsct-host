@@ -55,7 +55,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install cargo-about
-        run: cargo install cargo-about
+        run: cargo install cargo-about --features cli
         continue-on-error: true
 
       - name: Install Pandoc
@@ -64,7 +64,13 @@ jobs:
 
       - name: Install WiX Toolset v6.0
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version "6.*"
+
+      - name: Install WiX extensions
+        run: |
+          $wixVersion = (wix --version) -split '\+' | Select-Object -First 1
+          wix extension add "WixToolset.Util.wixext/$wixVersion"
+          wix extension add "WixToolset.BootstrapperApplications.wixext/$wixVersion"
 
       - name: Install AzureSignTool
         run: |
