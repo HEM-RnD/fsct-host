@@ -85,6 +85,22 @@ mod raw_client {
             })
         }
 
+        /// Send an arbitrary raw line (bypasses RpcRequest serialization).
+        pub async fn send_raw_line(&mut self, line: &str) -> anyhow::Result<()> {
+            self.writer.send(line.to_string()).await.map_err(|e| anyhow::anyhow!("{}", e))
+        }
+
+        /// Read one raw response line from the server, returning None on EOF.
+        pub async fn read_response(&mut self) -> Option<anyhow::Result<RpcResponse>> {
+            match self.reader.next().await {
+                None => None,
+                Some(Ok(line)) => {
+                    Some(serde_json::from_str::<RpcResponse>(&line).map_err(|e| anyhow::anyhow!("{}", e)))
+                }
+                Some(Err(e)) => Some(Err(anyhow::anyhow!("{}", e))),
+            }
+        }
+
         /// Send a request and return `Ok(result)` or `Err(error_message)`.
         pub async fn request(&mut self, method: &str, params: JsonValue) -> Result<JsonValue, String> {
             let id = self.next_id;
@@ -737,6 +753,90 @@ async fn ipc_subscribe_device_changes() -> anyhow::Result<()> {
         fsct::DeviceChangeEvent::Removed(id) => assert_eq!(id, dev),
         _ => panic!("expected Removed"),
     }
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_driver_errors_become_application_errors() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    // register is enabled; all other methods keep their default enable=false → driver returns Err
+    let mut um = helpers::FsctDriverMock::new();
+    um.enable_register = true;
+    um.fixed_id = std::num::NonZeroU32::new(77).unwrap();
+    let mock = Arc::new(um);
+
+    let (mut client, server_task) = helpers::start_server_and_connect_raw(mock.clone()).await;
+
+    let pid = client.request("register_player", json!({"self_id": "p77"})).await
+        .expect("register_player should succeed");
+    let pid = pid.as_u64().unwrap();
+
+    // unregister_player: scope check passes (player is registered), but driver returns Err
+    let err = client.request("unregister_player", json!({"player_id": pid})).await;
+    assert!(err.is_err(), "driver error should be returned to client");
+
+    // update_player_status: driver returns Err → ERR_APPLICATION
+    let err2 = client.request("update_player_status", json!({"player_id": pid, "status": "playing"})).await;
+    assert!(err2.is_err(), "driver error should be returned to client");
+
+    // assign_player_to_device: driver returns Err → ERR_APPLICATION
+    let device_id = uuid::Uuid::new_v4().to_string();
+    let err3 = client.request("assign_player_to_device", json!({"player_id": pid, "device_id": device_id})).await;
+    assert!(err3.is_err(), "driver error should be returned to client");
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_malformed_jsonrpc_structure() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let driver = Arc::new(helpers::FsctDriverMock::new());
+    let (mut client, server_task) = helpers::start_server_and_connect_raw(driver).await;
+
+    // Empty object — missing jsonrpc, id, method
+    client.send_raw_line("{}").await?;
+    let resp = client.read_response().await
+        .expect("server should respond to malformed request")
+        .expect("response should deserialize");
+    assert!(resp.error.is_some(), "expected error for missing fields");
+    assert_eq!(resp.error.unwrap().code, fsct_client::rpc::ERR_PARSE_ERROR, "expected ERR_PARSE_ERROR code");
+
+    // Missing id field only
+    client.send_raw_line(r#"{"jsonrpc":"2.0","method":"get_protocol_version"}"#).await?;
+    let resp2 = client.read_response().await
+        .expect("server should respond to missing-id request")
+        .expect("response should deserialize");
+    assert!(resp2.error.is_some(), "expected error for missing id");
+    assert_eq!(resp2.error.unwrap().code, fsct_client::rpc::ERR_PARSE_ERROR, "expected ERR_PARSE_ERROR code");
+
+    // Connection must survive parse errors — a valid request should still work
+    let ok = client.request("get_protocol_version", json!({})).await;
+    assert!(ok.is_ok(), "connection should remain alive after parse errors");
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_oversized_line_closes_connection() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let driver = Arc::new(helpers::FsctDriverMock::new());
+    let (mut client, server_task) = helpers::start_server_and_connect_raw(driver).await;
+
+    // Send a line larger than MAX_LINE_BYTES (1 MiB); server's LinesCodec returns an error and closes the connection
+    let oversized = "x".repeat(fsct_client::rpc::MAX_LINE_BYTES + 1);
+    client.send_raw_line(&oversized).await?;
+
+    // Server closes the connection — next read should return None (EOF)
+    let resp = tokio::time::timeout(Duration::from_secs(2), async { client.read_response().await }).await
+        .expect("timed out waiting for server to close connection");
+    assert!(resp.is_none(), "server should close connection after oversized line");
 
     server_task.shutdown().await?;
     Ok(())
