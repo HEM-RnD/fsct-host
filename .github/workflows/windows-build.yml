@@ -68,8 +68,9 @@ jobs:
 
       - name: Install WiX extensions
         run: |
-          wix extension add WixToolset.Util.wixext
-          wix extension add WixToolset.BootstrapperApplications.wixext
+          $wixVersion = (wix --version) -split '\+' | Select-Object -First 1
+          wix extension add "WixToolset.Util.wixext/$wixVersion"
+          wix extension add "WixToolset.BootstrapperApplications.wixext/$wixVersion"
 
       - name: Install AzureSignTool
         run: |

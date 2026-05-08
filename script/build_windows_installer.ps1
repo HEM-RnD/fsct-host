@@ -502,8 +502,9 @@ For complete license information, please build with license generation enabled.
     # === Installing WiX extensions ===
     if ($DOWNLOAD_ENABLE)
     {
-        Write-Host "[INFO] Installing WixToolset.Util.wixext extension..."
-        $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
+        $wixVersion = (& wix --version 2>&1) -split '\+' | Select-Object -First 1
+        Write-Host "[INFO] Installing WixToolset.Util.wixext $wixVersion extension..."
+        $utilResult = & wix extension add "WixToolset.Util.wixext/$wixVersion" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             $listResult = & wix extension list 2>&1
@@ -516,8 +517,8 @@ For complete license information, please build with license generation enabled.
             Write-Host "[INFO] WixToolset.Util.wixext already installed"
         }
 
-        Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext extension..."
-        $utilResult = & wix extension add WixToolset.BootstrapperApplications.wixext 2>&1
+        Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext $wixVersion extension..."
+        $utilResult = & wix extension add "WixToolset.BootstrapperApplications.wixext/$wixVersion" 2>&1
         if ($LASTEXITCODE -ne 0)
         {
             $listResult = & wix extension list 2>&1
