@@ -146,81 +146,20 @@ impl IpcServer {
             let connection_id = Uuid::new_v4();
             info!("New IPC client connected, id = {}", connection_id);
 
-            let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> =
-                Arc::new(Mutex::new(HashSet::new()));
-
+            let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
             let (read_half, write_half) = tokio::io::split(stream);
             let reader = FramedRead::new(read_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
-            let writer = Arc::new(tokio::sync::Mutex::new(FramedWrite::new(
-                write_half,
-                LinesCodec::new_with_max_length(MAX_LINE_BYTES),
-            )));
+            let writer = Arc::new(tokio::sync::Mutex::new(
+                FramedWrite::new(write_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES)),
+            ));
 
-            // Spawn notification forwarder
-            let notify_writer = writer.clone();
-            let notify_driver = driver.clone();
-            let notify_task = tokio::spawn(async move {
-                match notify_driver.subscribe_device_changes().await {
-                    Err(e) => warn!("subscribe_device_changes failed: {}", e),
-                    Ok(mut rx) => {
-                        loop {
-                            match rx.recv().await {
-                                Ok(event) => {
-                                    let notif = device_event_to_notification(event);
-                                    match serde_json::to_string(&notif) {
-                                        Ok(line) => {
-                                            let mut w = notify_writer.lock().await;
-                                            if let Err(e) = w.send(line).await {
-                                                warn!("notification send error: {}", e);
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => warn!("notification serialize error: {}", e),
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                    warn!("device change receiver lagged by {} events", n);
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                            }
-                        }
-                    }
-                }
-            });
+            let notify_task = tokio::spawn(run_notification_forwarder(writer.clone(), driver.clone()));
 
-            let handler = ConnectionHandler {
-                driver: driver.clone(),
-                conn_players: conn_players.clone(),
-                connection_id,
-            };
+            let handler = ConnectionHandler { driver: driver.clone(), conn_players: conn_players.clone(), connection_id };
 
             tokio::pin!(reader);
             select! {
-                _ = async {
-                    while let Some(line_result) = reader.next().await {
-                        match line_result {
-                            Err(e) => {
-                                warn!("IPC read error (id={}): {}", connection_id, e);
-                                break;
-                            }
-                            Ok(line) => {
-                                let response = handler.handle_line(&line).await;
-                                match serde_json::to_string(&response) {
-                                    Ok(resp_line) => {
-                                        let mut w = writer.lock().await;
-                                        if let Err(e) = w.send(resp_line).await {
-                                            warn!("IPC write error (id={}): {}", connection_id, e);
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to serialize response: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } => {}
+                _ = run_request_loop(reader, writer, &handler, connection_id) => {}
                 _ = stop.signaled() => {
                     info!("IPC connection stop requested, id = {}", connection_id);
                 }
@@ -228,7 +167,6 @@ impl IpcServer {
 
             notify_task.abort();
 
-            // Auto-unregister all players from this connection
             let ids = std::mem::take(conn_players.lock().unwrap().deref_mut());
             for pid in ids {
                 if let Err(e) = driver.unregister_player(pid).await {
@@ -237,6 +175,66 @@ impl IpcServer {
             }
             info!("IPC connection closed, id = {}", connection_id);
         })
+    }
+}
+
+async fn run_notification_forwarder<W>(
+    writer: Arc<tokio::sync::Mutex<W>>,
+    driver: Arc<dyn FsctDriver>,
+) where
+    W: futures::Sink<String> + Unpin,
+    W::Error: std::fmt::Display,
+{
+    let mut rx = match driver.subscribe_device_changes().await {
+        Ok(rx) => rx,
+        Err(e) => { warn!("subscribe_device_changes failed: {}", e); return; }
+    };
+    loop {
+        let event = match rx.recv().await {
+            Ok(e) => e,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                warn!("device change receiver lagged by {} events", n);
+                continue;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        };
+        let line = match serde_json::to_string(&device_event_to_notification(event)) {
+            Ok(l) => l,
+            Err(e) => { warn!("notification serialize error: {}", e); continue; }
+        };
+        let mut w = writer.lock().await;
+        if let Err(e) = w.send(line).await {
+            warn!("notification send error: {}", e);
+            break;
+        }
+    }
+}
+
+async fn run_request_loop<R, W>(
+    mut reader: R,
+    writer: Arc<tokio::sync::Mutex<W>>,
+    handler: &ConnectionHandler,
+    connection_id: Uuid,
+) where
+    R: futures::Stream<Item = Result<String, tokio_util::codec::LinesCodecError>> + Unpin,
+    W: futures::Sink<String> + Unpin,
+    W::Error: std::fmt::Display,
+{
+    while let Some(line_result) = reader.next().await {
+        let line = match line_result {
+            Err(e) => { warn!("IPC read error (id={}): {}", connection_id, e); break; }
+            Ok(l) => l,
+        };
+        let response = handler.handle_line(&line).await;
+        let resp_line = match serde_json::to_string(&response) {
+            Ok(l) => l,
+            Err(e) => { error!("Failed to serialize response: {}", e); continue; }
+        };
+        let mut w = writer.lock().await;
+        if let Err(e) = w.send(resp_line).await {
+            warn!("IPC write error (id={}): {}", connection_id, e);
+            break;
+        }
     }
 }
 
