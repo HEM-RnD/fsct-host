@@ -7,3 +7,5 @@
 /dataSources/
 /dataSources.local.xml
 /codeStyles/codeStyleConfig.xml
+deployment.xml
+inspectionProfiles/
