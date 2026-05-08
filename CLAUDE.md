@@ -121,3 +121,6 @@ Cross-compilation Docker files are in `.cross/` and are used automatically by `c
 - `tokio` — async runtime ("full" features)
 - `zbus` — D-Bus / MPRIS integration (Linux only)
 - `thiserror` / `anyhow` — error handling
+
+## IDE
+Project is usually developed in JetBrains Clion or RustRover. If you can use `mcp__clion__` or `mcp__rustrover__` commands, prefer them over console.
