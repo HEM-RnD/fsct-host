@@ -44,6 +44,8 @@ struct OutboundCall {
     reply: oneshot::Sender<Result<JsonValue, String>>,
 }
 
+type PendingMap = HashMap<u64, oneshot::Sender<Result<JsonValue, String>>>;
+
 async fn run_mux<R, W>(
     mut reader: FramedRead<R, LinesCodec>,
     mut writer: FramedWrite<W, LinesCodec>,
@@ -54,73 +56,90 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut pending: HashMap<u64, oneshot::Sender<Result<JsonValue, String>>> = HashMap::new();
+    let mut pending: PendingMap = HashMap::new();
     let mut next_id: u64 = 1;
 
     loop {
         tokio::select! {
-            // Outbound: caller wants to send a request
             call = rx.recv() => {
                 let Some(call) = call else { break };
-                let id = next_id;
-                next_id += 1;
-                let req = RpcRequest {
-                    jsonrpc: "2.0".into(),
-                    id: json!(id),
-                    method: call.method,
-                    params: call.params,
-                };
-                match serde_json::to_string(&req) {
-                    Ok(line) => {
-                        if writer.send(line).await.is_err() {
-                            let _ = call.reply.send(Err("connection closed".into()));
-                            break;
-                        }
-                        pending.insert(id, call.reply);
-                    }
-                    Err(e) => {
-                        let _ = call.reply.send(Err(format!("serialize error: {}", e)));
-                    }
-                }
+                if handle_outbound(call, &mut writer, &mut pending, &mut next_id).await { break; }
             }
-            // Inbound: a line arrived from the server
             line = reader.next() => {
-                let Some(line) = line else {
-                    // Connection closed — fail all pending
-                    for (_, tx) in pending.drain() {
-                        let _ = tx.send(Err("connection closed".into()));
-                    }
-                    break;
-                };
-                let line = match line {
-                    Ok(l) => l,
-                    Err(e) => {
-                        warn!("IPC read error: {}", e);
-                        for (_, tx) in pending.drain() {
-                            let _ = tx.send(Err(format!("read error: {}", e)));
-                        }
-                        break;
-                    }
-                };
-                // Try to parse as response (has "id"), else as notification
-                if let Ok(resp) = serde_json::from_str::<RpcResponse>(&line) {
-                    if let Some(id_u64) = resp.id.as_u64() {
-                        if let Some(tx) = pending.remove(&id_u64) {
-                            let result = if let Some(err) = resp.error {
-                                Err(err.message)
-                            } else {
-                                Ok(resp.result.unwrap_or(JsonValue::Null))
-                            };
-                            let _ = tx.send(result);
-                        }
-                    }
-                } else if let Ok(notif) = serde_json::from_str::<RpcNotification>(&line) {
-                    handle_notification(&notif, &device_tx);
-                } else {
-                    warn!("IPC: unrecognized message: {}", &line[..line.len().min(200)]);
-                }
+                if handle_inbound(line, &mut pending, &device_tx) { break; }
             }
         }
+    }
+}
+
+async fn handle_outbound<W: AsyncWrite + Unpin>(
+    call: OutboundCall,
+    writer: &mut FramedWrite<W, LinesCodec>,
+    pending: &mut PendingMap,
+    next_id: &mut u64,
+) -> bool {
+    let id = *next_id;
+    *next_id += 1;
+    let req = RpcRequest { jsonrpc: "2.0".into(), id: json!(id), method: call.method, params: call.params };
+    match serde_json::to_string(&req) {
+        Ok(line) => {
+            if writer.send(line).await.is_err() {
+                let _ = call.reply.send(Err("connection closed".into()));
+                return true;
+            }
+            pending.insert(id, call.reply);
+        }
+        Err(e) => {
+            let _ = call.reply.send(Err(format!("serialize error: {}", e)));
+        }
+    }
+    false
+}
+
+fn handle_inbound(
+    line_result: Option<Result<String, tokio_util::codec::LinesCodecError>>,
+    pending: &mut PendingMap,
+    device_tx: &broadcast::Sender<DeviceChangeEvent>,
+) -> bool {
+    let Some(line_result) = line_result else {
+        fail_all_pending(pending, "connection closed");
+        return true;
+    };
+    let line = match line_result {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("IPC read error: {}", e);
+            fail_all_pending(pending, &format!("read error: {}", e));
+            return true;
+        }
+    };
+    dispatch_inbound(&line, pending, device_tx);
+    false
+}
+
+fn fail_all_pending(pending: &mut PendingMap, reason: &str) {
+    for (_, tx) in pending.drain() {
+        let _ = tx.send(Err(reason.into()));
+    }
+}
+
+fn dispatch_inbound(
+    line: &str,
+    pending: &mut HashMap<u64, oneshot::Sender<Result<JsonValue, String>>>,
+    device_tx: &broadcast::Sender<DeviceChangeEvent>,
+) {
+    if let Ok(resp) = serde_json::from_str::<RpcResponse>(line) {
+        if let Some(id_u64) = resp.id.as_u64() {
+            if let Some(tx) = pending.remove(&id_u64) {
+                let result = resp.error.map(|e| Err(e.message))
+                    .unwrap_or_else(|| Ok(resp.result.unwrap_or(JsonValue::Null)));
+                let _ = tx.send(result);
+            }
+        }
+    } else if let Ok(notif) = serde_json::from_str::<RpcNotification>(line) {
+        handle_notification(&notif, device_tx);
+    } else {
+        warn!("IPC: unrecognized message: {}", &line[..line.len().min(200)]);
     }
 }
 
@@ -190,29 +209,31 @@ impl IpcDriver {
         let (device_tx, _) = broadcast::channel::<DeviceChangeEvent>(100);
         let device_tx_task = device_tx.clone();
 
-        let task = tokio::spawn(async move {
-            run_mux(reader, writer, call_rx, device_tx_task).await;
-        });
+        let task = tokio::spawn(run_mux(reader, writer, call_rx, device_tx_task));
 
-        // Handshake: send get_protocol_version before constructing Self (avoids Drop conflicts)
+        // Handshake before constructing Self (avoids Drop/abort conflicts if it fails)
+        let negotiated_version = Self::perform_handshake(&call_tx).await
+            .inspect_err(|_| task.abort())?;
+
+        Ok(Self { call_tx, device_tx, negotiated_version, _task: task })
+    }
+
+    async fn perform_handshake(call_tx: &mpsc::Sender<OutboundCall>) -> anyhow::Result<ProtocolVersion> {
         let (reply_tx, reply_rx) = oneshot::channel();
         call_tx.send(OutboundCall {
             method: "get_protocol_version".into(),
             params: json!({}),
             reply: reply_tx,
-        }).await.map_err(|_| { task.abort(); anyhow::anyhow!("IPC connection closed") })?;
+        }).await.map_err(|_| anyhow::anyhow!("IPC connection closed"))?;
         let resp = reply_rx.await
-            .map_err(|_| { task.abort(); anyhow::anyhow!("IPC connection closed") })?
-            .map_err(|e| { task.abort(); anyhow::anyhow!("{}", e) })?;
+            .map_err(|_| anyhow::anyhow!("IPC connection closed"))?
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let major = resp["major"].as_u64()
-            .with_context(|| "missing major in protocol version")? as u16;
-        let minor = resp["minor"].as_u64()
-            .with_context(|| "missing minor in protocol version")? as u16;
-        let negotiated_version = ProtocolVersion { major, minor };
+        let major = resp["major"].as_u64().with_context(|| "missing major in protocol version")? as u16;
+        let minor = resp["minor"].as_u64().with_context(|| "missing minor in protocol version")? as u16;
+        let negotiated = ProtocolVersion { major, minor };
 
-        if negotiated_version.major != fsct::FSCT_PROTOCOL_VERSION.major {
-            task.abort();
+        if negotiated.major != fsct::FSCT_PROTOCOL_VERSION.major {
             return Err(anyhow::anyhow!(
                 "incompatible protocol version: remote {}.{} != local {}.{}",
                 major, minor,
@@ -220,8 +241,7 @@ impl IpcDriver {
                 fsct::FSCT_PROTOCOL_VERSION.minor
             ));
         }
-
-        Ok(Self { call_tx, device_tx, negotiated_version, _task: task })
+        Ok(negotiated)
     }
 
     async fn rpc_call(&self, method: &str, params: JsonValue) -> anyhow::Result<JsonValue> {
