@@ -506,18 +506,28 @@ For complete license information, please build with license generation enabled.
         $utilResult = & wix extension add WixToolset.Util.wixext 2>&1
         if ($LASTEXITCODE -ne 0)
         {
-            Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
-            Write-Error "[ERROR] Error details: $utilResult"
-            exit 1
+            $listResult = & wix extension list 2>&1
+            if ($listResult -notmatch "WixToolset\.Util\.wixext")
+            {
+                Write-Error "[ERROR] Failed to install WixToolset.Util.wixext"
+                Write-Error "[ERROR] Error details: $utilResult"
+                exit 1
+            }
+            Write-Host "[INFO] WixToolset.Util.wixext already installed"
         }
 
         Write-Host "[INFO] Installing WixToolset.BootstrapperApplications.wixext extension..."
         $utilResult = & wix extension add WixToolset.BootstrapperApplications.wixext 2>&1
         if ($LASTEXITCODE -ne 0)
         {
-            Write-Error "[ERROR] Failed to install WixToolset.BootstrapperApplications.wixext"
-            Write-Error "[ERROR] Error details: $utilResult"
-            exit 1
+            $listResult = & wix extension list 2>&1
+            if ($listResult -notmatch "WixToolset\.BootstrapperApplications\.wixext")
+            {
+                Write-Error "[ERROR] Failed to install WixToolset.BootstrapperApplications.wixext"
+                Write-Error "[ERROR] Error details: $utilResult"
+                exit 1
+            }
+            Write-Host "[INFO] WixToolset.BootstrapperApplications.wixext already installed"
         }
 
         Write-Host "[INFO] WiX extensions ready"

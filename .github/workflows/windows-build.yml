@@ -66,6 +66,11 @@ jobs:
         run: |
           dotnet tool install --global wix
 
+      - name: Install WiX extensions
+        run: |
+          wix extension add WixToolset.Util.wixext
+          wix extension add WixToolset.BootstrapperApplications.wixext
+
       - name: Install AzureSignTool
         run: |
           dotnet tool install --global AzureSignTool
