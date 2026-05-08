@@ -152,7 +152,7 @@ mod helpers {
             match connector(endpoint.clone()).await {
                 Ok(c) => break c,
                 Err(e) => {
-                    log::error!("Failed to connect to IPC server: {}", e);
+                    log::debug!("Failed to connect to IPC server: {}", e);
                     if start.elapsed() > timeout {
                         server_task.abort();
                         panic!("Failed to connect to IPC server in time");
