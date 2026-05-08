@@ -64,7 +64,7 @@ jobs:
 
       - name: Install WiX Toolset v6.0
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version "6.*"
 
       - name: Install WiX extensions
         run: |
