@@ -171,8 +171,11 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
-        use tokio_util::compat::TokioAsyncReadCompatExt;
         use tokio::time::timeout;
+        use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+        use futures::{SinkExt, StreamExt};
+        use fsct_ipc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
+        use serde_json::json;
 
         // Create a small Tokio runtime inside the thread
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -189,34 +192,39 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
                 .with_context(|| format!("client connection timed out after 5 seconds to {}", endpoint_str))?
                 .with_context(|| format!("client failed to connect to {}: invalid endpoint", endpoint_str))?;
 
-            let client = msgpack_rpc::Client::new(connection.compat());
+            let (rd, wr) = tokio::io::split(connection);
+            let mut reader = FramedRead::new(rd, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
+            let mut writer = FramedWrite::new(wr, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
 
             // Call get_protocol_version and assert shape
             println!("[CLIENT] Connected, sending get_protocol_version request");
-            let ver = timeout(Duration::from_secs(1), client.request("get_protocol_version", &[]))
-                .await
-                .with_context(|| format!("get_protocol_version request failed to complete after 5 seconds to {}", endpoint_str))?
-                .map_err(|_| anyhow!("get_protocol_version request failed"))?;
+            let req = RpcRequest {
+                jsonrpc: "2.0".into(),
+                id: json!(1u64),
+                method: "get_protocol_version".into(),
+                params: json!({}),
+            };
+            writer.send(serde_json::to_string(&req).unwrap()).await
+                .with_context(|| "failed to send get_protocol_version request")?;
 
-            // Expect a map { major: <int>, minor: <int> }
-            let m = ver.as_map().with_context(|| "protocol version is not a map")?;
-            let mut major = None;
-            let mut minor = None;
-            for (k, v) in m.iter() {
-                if let msgpack_rpc::Value::String(s) = k {
-                    if let Some(ks) = s.as_str() {
-                        match ks {
-                            "major" => { major = v.as_u64(); }
-                            "minor" => { minor = v.as_u64(); }
-                            _ => {}
-                        }
-                    }
-                }
+            let resp_line = timeout(Duration::from_secs(1), reader.next()).await
+                .with_context(|| format!("get_protocol_version response timed out to {}", endpoint_str))?
+                .ok_or_else(|| anyhow!("connection closed before get_protocol_version response"))?
+                .with_context(|| "error reading get_protocol_version response")?;
+
+            let resp: RpcResponse = serde_json::from_str(&resp_line)
+                .with_context(|| format!("failed to parse protocol version response: {}", resp_line))?;
+
+            if let Some(err) = resp.error {
+                bail!("get_protocol_version returned error: {}", err.message);
             }
-            // let (maj, min) = (major.unwrap_or(0), minor.unwrap_or(0));
+
+            let result = resp.result.with_context(|| "get_protocol_version returned no result")?;
+            let major = result["major"].as_u64().with_context(|| "missing major in protocol version")? as u16;
+            let minor = result["minor"].as_u64().with_context(|| "missing minor in protocol version")? as u16;
 
             let protocol_version = FSCT_PROTOCOL_VERSION;
-            let read_version = ProtocolVersion { major: major.unwrap_or(0) as u16, minor: minor.unwrap_or(0) as u16 };
+            let read_version = ProtocolVersion { major, minor };
             println!("[CLIENT] Read protocol version: {}", read_version);
             if protocol_version != read_version {
                 bail!("protocol version mismatch: expected {}, got {}", protocol_version, read_version);

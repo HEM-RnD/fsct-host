@@ -12,11 +12,14 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-tokio-util = { version = "0.7.12", features = ["compat"] }
+tokio-util.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 fsct-core.workspace = true
-msgpack-rpc.workspace = true
+fsct-ipc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
 log.workspace = true
 
 [target.'cfg(windows)'.dependencies]

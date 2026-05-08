@@ -15,45 +15,90 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-//! IPC server using unix sockets or windows pipes transport and MessagePack(-RPC style) framing.
-//!
-//! The server currently implements a minimal subset required by docs/ipc_plan.md phase 2:
-//! - Accept connections on a local endpoint
-//! - Handle msgpack-rpc style requests for `get_protocol_version`
-//! - Forward to the provided FsctDriver
+//! IPC server using unix sockets or windows pipes transport and JSON-RPC 2.0 / NDJSON framing.
 
 #[cfg(unix)]
 use crate::ports::unix::ipc_transport as transport;
 #[cfg(windows)]
 use crate::ports::windows::ipc_transport as transport;
 
+use std::collections::HashSet;
+use std::num::NonZeroU32;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-
-use log::{error, info, warn};
-use anyhow::{anyhow, bail, Context};
-
-use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
-use fsct::player_state::{PlayerState, TrackMetadata};
-use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use fsct::{DeviceChangeEvent, FsctDriver, ProtocolVersion, FSCT_PROTOCOL_VERSION};
-
-use uuid::Uuid;
-use msgpack_rpc::{Client, Service, ServiceWithClient, Value};
-
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::select;
-use tokio_util::compat::TokioAsyncReadCompatExt;
-use futures::StreamExt;
+use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::time::{Duration, UNIX_EPOCH};
-use std::num::NonZeroU32;
-use std::future::Future;
-use std::pin::Pin;
-use std::collections::HashSet;
-use std::ops::DerefMut;
 
+use anyhow::Context;
+use futures::StreamExt;
+use log::{error, info, warn};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as JsonValue};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::select;
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+use futures::SinkExt;
+use uuid::Uuid;
+
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::player_state::{PlayerState, TrackMetadata};
+use fsct::{DeviceChangeEvent, FsctDriver, FSCT_PROTOCOL_VERSION};
+use fsct_ipc::{
+    RpcNotification, RpcRequest, RpcResponse,
+    ERR_APPLICATION, ERR_METHOD_NOT_FOUND, MAX_LINE_BYTES,
+};
+
+use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
+
+// ---------------------------------------------------------------------------
+// Wire-format helpers for types that use std::time (not directly serializable)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TimelineWire {
+    position_ms: u64,
+    update_unix_ms: i64,
+    duration_ms: u64,
+    rate: f64,
+}
+
+impl From<&TimelineInfo> for TimelineWire {
+    fn from(t: &TimelineInfo) -> Self {
+        let update_unix_ms = t.update_time
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+        Self {
+            position_ms: t.position.as_millis() as u64,
+            update_unix_ms,
+            duration_ms: t.duration.as_millis() as u64,
+            rate: t.rate,
+        }
+    }
+}
+
+impl TryFrom<TimelineWire> for TimelineInfo {
+    type Error = anyhow::Error;
+    fn try_from(w: TimelineWire) -> Result<Self, Self::Error> {
+        let update_time = if w.update_unix_ms >= 0 {
+            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
+        } else {
+            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
+        };
+        Ok(TimelineInfo {
+            position: Duration::from_millis(w.position_ms),
+            update_time,
+            duration: Duration::from_millis(w.duration_ms),
+            rate: w.rate,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint types
+// ---------------------------------------------------------------------------
 
 enum EndpointDefinitionType {
     Path(String),
@@ -65,25 +110,29 @@ enum EndpointDefinitionType {
 pub struct IpcServer {
     endpoint: EndpointDefinitionType,
     driver: Arc<dyn FsctDriver>,
-    // Container of per-connection services for cooperative shutdown
     connections: Arc<Mutex<MultiJoinableTaskHandle>>,
 }
 
 impl IpcServer {
-    /// Create with an explicit socket path (useful for tests).
     pub fn with_socket_path(driver: Arc<dyn FsctDriver>, endpoint: &str) -> Self {
-        Self { endpoint: EndpointDefinitionType::Path(endpoint.into()), driver, connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())) }
+        Self {
+            endpoint: EndpointDefinitionType::Path(endpoint.into()),
+            driver,
+            connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())),
+        }
     }
 
     #[cfg(unix)]
     pub fn with_socket_fd(driver: Arc<dyn FsctDriver>, endpoint: OwnedFd) -> Self {
-        Self { endpoint: EndpointDefinitionType::Fd(Some(endpoint)), driver, connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())) }
+        Self {
+            endpoint: EndpointDefinitionType::Fd(Some(endpoint)),
+            driver,
+            connections: Arc::new(Mutex::new(MultiJoinableTaskHandle::new())),
+        }
     }
 
-    /// Start serving and block until the accept loop terminates (e.g., due to unrecoverable error or shutdown signal via drop).
     pub async fn serve(&mut self) -> anyhow::Result<()> {
         let listener = self.init_listener().await?;
-
         let incoming = listener.listen()?;
         tokio::pin!(incoming);
         loop {
@@ -102,28 +151,25 @@ impl IpcServer {
                 }
             }
         }
-
         Ok(())
     }
 
     async fn init_listener(&mut self) -> anyhow::Result<transport::EndpointListener> {
-        let listener = match &mut self.endpoint {
+        match &mut self.endpoint {
             EndpointDefinitionType::Path(path) => {
                 info!("FSCT IPC server listening on: {}", path);
-                let listener = transport::EndpointListener::from_path(path.clone()).await
-                                                                                   .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-                listener
+                transport::EndpointListener::from_path(path.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
             }
             #[cfg(unix)]
             EndpointDefinitionType::Fd(fd) => {
                 let fd = fd.take().expect("IPC server already initialized with a socket fd");
                 info!("FSCT IPC server listening on fd: {}", fd.as_raw_fd());
-                let listener = transport::EndpointListener::from_fd(fd)
-                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))?;
-                listener
+                transport::EndpointListener::from_fd(fd)
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
             }
-        };
-        Ok(listener)
+        }
     }
 
     pub async fn shutdown(&self) {
@@ -137,32 +183,99 @@ impl IpcServer {
         }
     }
 
-    fn start_connection_service(&self,
-                                stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> JoinableTaskHandle {
+    fn start_connection_service(
+        &self,
+        stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    ) -> JoinableTaskHandle {
         let driver = self.driver.clone();
         spawn_service(move |mut stop| async move {
             let connection_id = Uuid::new_v4();
             info!("New IPC client connected, id = {}", connection_id);
-            let service = FsctRpcService::new(driver.clone(), connection_id);
-            let players = service.conn_players_arc();
-            let mut compat_stream = stream.compat();
-            let endpoint = msgpack_rpc::Endpoint::new(&mut compat_stream, service);
-            if let Err(e) = start_device_changes_task(driver.clone(), endpoint.client()).await {
-                error!("Failed to start device changes task: {}", e);
-            }
-            select! {
-                res = endpoint => {
-                    if let Err(e) = res {
-                        warn!("IPC connection (id = {}) handler ended with error: {}",connection_id, e);
+
+            let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> =
+                Arc::new(Mutex::new(HashSet::new()));
+
+            let (read_half, write_half) = tokio::io::split(stream);
+            let reader = FramedRead::new(read_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
+            let writer = Arc::new(tokio::sync::Mutex::new(FramedWrite::new(
+                write_half,
+                LinesCodec::new_with_max_length(MAX_LINE_BYTES),
+            )));
+
+            // Spawn notification forwarder
+            let notify_writer = writer.clone();
+            let notify_driver = driver.clone();
+            let notify_task = tokio::spawn(async move {
+                match notify_driver.subscribe_device_changes().await {
+                    Err(e) => warn!("subscribe_device_changes failed: {}", e),
+                    Ok(mut rx) => {
+                        loop {
+                            match rx.recv().await {
+                                Ok(event) => {
+                                    let notif = device_event_to_notification(event);
+                                    match serde_json::to_string(&notif) {
+                                        Ok(line) => {
+                                            let mut w = notify_writer.lock().await;
+                                            if let Err(e) = w.send(line).await {
+                                                warn!("notification send error: {}", e);
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => warn!("notification serialize error: {}", e),
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                    warn!("device change receiver lagged by {} events", n);
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
                     }
                 }
+            });
+
+            let handler = ConnectionHandler {
+                driver: driver.clone(),
+                conn_players: conn_players.clone(),
+                connection_id,
+            };
+
+            tokio::pin!(reader);
+            select! {
+                _ = async {
+                    while let Some(line_result) = reader.next().await {
+                        match line_result {
+                            Err(e) => {
+                                warn!("IPC read error (id={}): {}", connection_id, e);
+                                break;
+                            }
+                            Ok(line) => {
+                                let response = handler.handle_line(&line).await;
+                                match serde_json::to_string(&response) {
+                                    Ok(resp_line) => {
+                                        let mut w = writer.lock().await;
+                                        if let Err(e) = w.send(resp_line).await {
+                                            warn!("IPC write error (id={}): {}", connection_id, e);
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to serialize response: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } => {}
                 _ = stop.signaled() => {
                     info!("IPC connection stop requested, id = {}", connection_id);
-                    drop(compat_stream); // dropping compat_stream will close the connection
                 }
             }
-            // After either completion or stop: unregister all players tied to this connection
-            let ids = std::mem::take(players.lock().unwrap().deref_mut());
+
+            notify_task.abort();
+
+            // Auto-unregister all players from this connection
+            let ids = std::mem::take(conn_players.lock().unwrap().deref_mut());
             for pid in ids {
                 if let Err(e) = driver.unregister_player(pid).await {
                     warn!("auto-unregister_player failed for {}: {}", pid, e);
@@ -173,11 +286,19 @@ impl IpcServer {
     }
 }
 
+fn device_event_to_notification(event: DeviceChangeEvent) -> RpcNotification {
+    let (event_str, device_id) = match event {
+        DeviceChangeEvent::Added(id) => ("added", id),
+        DeviceChangeEvent::Removed(id) => ("removed", id),
+    };
+    RpcNotification::new(
+        "device_changed",
+        json!({ "event": event_str, "device_id": device_id.to_string() }),
+    )
+}
 
 fn run_ipc_server(mut server: IpcServer) -> JoinableTaskHandle {
     spawn_service(move |mut stop| async move {
-        // Reuse IpcServer::serve instead of duplicating accept-loop logic
-
         select!(
             res = server.serve() => {
                 if let Err(e) = res {
@@ -186,24 +307,18 @@ fn run_ipc_server(mut server: IpcServer) -> JoinableTaskHandle {
             }
             _ = stop.signaled() => {}
         );
-
         server.shutdown().await;
-
         info!("IPC server stopped");
     })
 }
 
-/// Run the IPC server as a background service and return a ServiceHandle for cooperative shutdown.
 pub fn run_ipc_server_with_endpoint_path(driver: Arc<dyn FsctDriver>, endpoint: String) -> JoinableTaskHandle {
-    let server = IpcServer::with_socket_path(driver, &endpoint);
-    run_ipc_server(server)
+    run_ipc_server(IpcServer::with_socket_path(driver, &endpoint))
 }
 
-/// Run an IPC (Inter-Process Communication) server using a provided file descriptor.
 #[cfg(unix)]
 pub fn run_ipc_server_with_fd(driver: Arc<dyn FsctDriver>, fd: OwnedFd) -> JoinableTaskHandle {
-    let server = IpcServer::with_socket_fd(driver, fd);
-    return run_ipc_server(server);
+    run_ipc_server(IpcServer::with_socket_fd(driver, fd))
 }
 
 #[cfg(not(unix))]
@@ -211,527 +326,276 @@ pub fn run_ipc_server_with_fd(_driver: Arc<dyn FsctDriver>, _fd: i32) -> Joinabl
     panic!("IPC running from file descriptor not supported on this platform");
 }
 
-#[derive(Clone)]
-struct FsctRpcService {
+// ---------------------------------------------------------------------------
+// Per-connection request handler
+// ---------------------------------------------------------------------------
+
+struct ConnectionHandler {
     driver: Arc<dyn FsctDriver>,
-    // Set of player IDs registered via this connection
     conn_players: Arc<Mutex<HashSet<NonZeroU32>>>,
-    connection_id: uuid::Uuid,
+    connection_id: Uuid,
 }
 
-// Request future type alias used by per-method handlers
-type RequestFut = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
-
-// Small helper to produce an immediate error future without an async block
-fn fut_err<V: Into<Value>>(v: V) -> RequestFut {
-    Box::pin(std::future::ready(Err(v.into())))
-}
-
-
-trait IntoValue {
-    fn into_value(self) -> Value;
-}
-
-impl IntoValue for ProtocolVersion {
-    fn into_value(self) -> Value {
-        Value::Map(vec![
-            ("major".into(), self.major.into()),
-            ("minor".into(), self.minor.into()),
-        ])
-    }
-}
-
-impl IntoValue for fsct::definitions::DeviceInfo {
-    fn into_value(self) -> Value {
-        let mut map = vec![
-            ("id".into(), Value::Binary(self.id.as_bytes().to_vec())),
-            ("vendor_id".into(), Value::from(self.vendor_id as u64)),
-            ("product_id".into(), Value::from(self.product_id as u64)),
-        ];
-
-        if let Some(name) = self.name {
-            map.push(("name".into(), Value::from(name)));
-        } else {
-            map.push(("name".into(), Value::Nil));
-        }
-
-        if let Some(manufacturer) = self.manufacturer {
-            map.push(("manufacturer".into(), Value::from(manufacturer)));
-        } else {
-            map.push(("manufacturer".into(), Value::Nil));
-        }
-
-        if let Some(serial) = self.serial_number {
-            map.push(("serial_number".into(), Value::from(serial)));
-        } else {
-            map.push(("serial_number".into(), Value::Nil));
-        }
-
-        Value::Map(map)
-    }
-}
-
-struct Nil;
-
-impl Into<Value> for Nil {
-    fn into(self) -> Value {
-        Value::Nil
-    }
-}
-
-fn parse_player_id(param: &Value) -> Result<std::num::NonZeroU32, anyhow::Error> {
-    let pid_u64 = param.as_u64()
-                       .with_context(|| "invalid param: player_id must be integer")?;
-    let pid = std::num::NonZeroU32::new(pid_u64 as u32)
-        .with_context(|| "invalid player_id: must be non-zero")?;
-    Ok(pid)
-}
-
-fn parse_device_id(param: &Value) -> Result<Uuid, anyhow::Error> {
-    let did_bytes = param.as_slice()
-                         .with_context(|| "invalid param: device_id must be binary")?;
-    if did_bytes.len() != 16 {
-        bail!("invalid device_id: uuid binary must be 16 bytes");
-    }
-    let did = Uuid::from_slice(did_bytes)
-        .with_context(|| "invalid device_id: must be valid 16-byte uuid")?;
-    Ok(did)
-}
-
-fn expect_params(params: &[Value], expected_len: usize, expected_params_names: &str) -> Result<(), anyhow::Error> {
-    if params.len() != expected_len {
-        return Err(anyhow!("expected {} param{}{}{}",
-                           expected_len,
-                           if expected_len == 1 { "" } else { "s" },
-                           if expected_params_names.is_empty() { "" } else { ": " },
-                           expected_params_names));
-    }
-    Ok(())
-}
-
-async fn start_device_changes_task(driver: Arc<dyn FsctDriver>, client: Client) -> anyhow::Result<()>{
-    let mut rx = driver.subscribe_device_changes().await?;
-    tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
-            let args = match event {
-                DeviceChangeEvent::Added(id) => [Value::String("Added".into()), Value::Binary(id.as_bytes().into())],
-                DeviceChangeEvent::Removed(id) => [Value::String("Removed".into()), Value::Binary(id.as_bytes().into())]
-            };
-            client.notify("device_changed", &args);
-            log::debug!("Device change event: {:?}", event);
-        }
-    });
-    Ok(())
-}
-
-impl FsctRpcService {
-    fn new(driver: Arc<dyn FsctDriver>, connection_id: Uuid) -> Self {
-        Self {
-            driver,
-            conn_players: Arc::new(Mutex::new(HashSet::new())),
-            connection_id,
-        }
-    }
-    fn conn_players_arc(&self) -> Arc<Mutex<HashSet<NonZeroU32>>> {
-        self.conn_players.clone()
-    }
-    fn ensure_player_for_connection(&self, pid: NonZeroU32) -> Result<(), anyhow::Error> {
-        let guard = self.conn_players.lock().unwrap();
-        if guard.contains(&pid) { Ok(()) } else { bail!("player_id {} not registered for this connection", pid) }
-    }
-    fn parse_status(&self, v: &Value) -> Result<FsctStatus, anyhow::Error> {
-        let code = v.as_u64().with_context(|| "invalid FsctStatus: expected integer")? as u8;
-        let s = match code {
-            0x00 => FsctStatus::Stopped,
-            0x01 => FsctStatus::Playing,
-            0x02 => FsctStatus::Paused,
-            0x03 => FsctStatus::Seeking,
-            0x04 => FsctStatus::Buffering,
-            0x05 => FsctStatus::Error,
-            0x0F => FsctStatus::Unknown,
-            _ => bail!("invalid status code: {}", code),
+impl ConnectionHandler {
+    async fn handle_line(&self, line: &str) -> RpcResponse {
+        let req: RpcRequest = match serde_json::from_str(line) {
+            Ok(r) => r,
+            Err(e) => {
+                return RpcResponse::err(
+                    JsonValue::Null,
+                    fsct_ipc::ERR_PARSE_ERROR,
+                    format!("parse error: {}", e),
+                );
+            }
         };
-        Ok(s)
-    }
-    fn parse_timeline_opt(&self, v: &Value) -> Result<Option<TimelineInfo>, anyhow::Error> {
-        if v.is_nil() { return Ok(None); }
-        let m = v.as_map().with_context(|| "invalid TimelineInfo: expected map or nil")?;
-        let mut position_ms: Option<u128> = None;
-        let mut update_unix_ms: Option<i128> = None;
-        let mut duration_ms: Option<u128> = None;
-        let mut rate: Option<f64> = None;
-        for (k, val) in m.iter() {
-            if let Value::String(s) = k {
-                if let Some(key) = s.as_str() {
-                    match key {
-                        "position_ms" => { position_ms = val.as_u64().map(|v| v as u128); }
-                        "update_unix_ms" => { update_unix_ms = val.as_i64().map(|v| v as i128); }
-                        "duration_ms" => { duration_ms = val.as_u64().map(|v| v as u128); }
-                        "rate" => { rate = val.as_f64(); }
-                        _ => bail!("invalid timeline key: {}", key),
-                    }
-                }
+        let id = req.id.clone();
+        match self.dispatch(&req.method, &req.params).await {
+            Ok(result) => RpcResponse::ok(id, result),
+            Err(e) => {
+                let code = if e.to_string().starts_with("unknown method") {
+                    ERR_METHOD_NOT_FOUND
+                } else {
+                    ERR_APPLICATION
+                };
+                RpcResponse::err(id, code, e.to_string())
             }
         }
-        let pos = position_ms.with_context(|| "timeline missing position_ms")?;
-        let upd = update_unix_ms.with_context(|| "timeline missing update_unix_ms")?;
-        let dur = duration_ms.with_context(|| "timeline missing duration_ms")?;
-        let r = rate.with_context(|| "timeline missing rate")?;
-        let position = Duration::from_millis(pos as u64);
-        let duration = Duration::from_millis(dur as u64);
-        let update_time = if upd >= 0 { UNIX_EPOCH + Duration::from_millis(upd as u64) } else { UNIX_EPOCH - Duration::from_millis((-upd) as u64) };
-        Ok(Some(TimelineInfo { position, update_time, duration, rate: r }))
     }
-    fn parse_text_metadata_id(&self, v: &Value) -> Result<FsctTextMetadata, anyhow::Error> {
-        let code = v.as_u64().with_context(|| "invalid FsctTextMetadata: expected integer")? as u8;
-        let m = match code {
-            0x01 => FsctTextMetadata::CurrentTitle,
-            0x02 => FsctTextMetadata::CurrentAuthor,
-            0x03 => FsctTextMetadata::CurrentAlbum,
-            0x04 => FsctTextMetadata::CurrentGenre,
-            0x31 => FsctTextMetadata::QueueTitle,
-            0x32 => FsctTextMetadata::QueueAuthor,
-            0x33 => FsctTextMetadata::QueueAlbum,
-            0x34 => FsctTextMetadata::QueueGenre,
-            _ => bail!("invalid text metadata id: {}", code),
-        };
-        Ok(m)
+
+    async fn dispatch(&self, method: &str, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        match method {
+            "get_protocol_version" => self.req_get_protocol_version(params).await,
+            "register_player" => self.req_register_player(params).await,
+            "unregister_player" => self.req_unregister_player(params).await,
+            "assign_player_to_device" => self.req_assign_player_to_device(params).await,
+            "unassign_player_from_device" => self.req_unassign_player_from_device(params).await,
+            "update_player_state" => self.req_update_player_state(params).await,
+            "update_player_status" => self.req_update_player_status(params).await,
+            "update_player_timeline" => self.req_update_player_timeline(params).await,
+            "update_player_metadata" => self.req_update_player_metadata(params).await,
+            "get_player_assigned_device" => self.req_get_player_assigned_device(params).await,
+            "get_detected_devices" => self.req_get_detected_devices(params).await,
+            "get_device_info" => self.req_get_device_info(params).await,
+            _ => Err(anyhow::anyhow!("unknown method: {}", method)),
+        }
     }
-    fn parse_player_state_map(&self, v: &Value) -> Result<PlayerState, anyhow::Error> {
-        let m = v.as_map().with_context(|| "invalid PlayerState: expected map")?;
-        let mut status: Option<FsctStatus> = None;
-        let mut timeline: Option<Option<TimelineInfo>> = None;
-        let mut title: Option<Option<String>> = None;
-        let mut artist: Option<Option<String>> = None;
-        let mut album: Option<Option<String>> = None;
-        let mut genre: Option<Option<String>> = None;
-        let mut texts_found = false;
-        for (k, val) in m.iter() {
-            if let Value::String(s) = k {
-                if let Some(key) = s.as_str() {
-                    match key {
-                        "status" => { status = Some(self.parse_status(val)?); }
-                        "timeline" => { timeline = Some(self.parse_timeline_opt(val)?); }
-                        "texts" => {
-                            texts_found = true;
-                            let tm = val.as_map().with_context(|| "texts must be map")?;
-                            for (tk, tv) in tm.iter() {
-                                if let Value::String(ts) = tk {
-                                    if let Some(tkey) = ts.as_str() {
-                                        match tkey {
-                                            "title" => { if tv.is_nil() { title = Some(None); } else { title = Some(Some(tv.as_str().with_context(|| "text 'title' must be string or nil")?.to_string())); } }
-                                            "artist" => { if tv.is_nil() { artist = Some(None); } else { artist = Some(Some(tv.as_str().with_context(|| "text 'artist' must be string or nil")?.to_string())); } }
-                                            "album" => { if tv.is_nil() { album = Some(None); } else { album = Some(Some(tv.as_str().with_context(|| "text 'album' must be string or nil")?.to_string())); } }
-                                            "genre" => { if tv.is_nil() { genre = Some(None); } else { genre = Some(Some(tv.as_str().with_context(|| "text 'genre' must be string or nil")?.to_string())); } }
-                                            _ => bail!("invalid text key: {}", tkey),
-                                        }
-                                    }
+
+    // -----------------------------------------------------------------------
+    // Parameter helpers
+    // -----------------------------------------------------------------------
+
+    fn ensure_player_for_connection(&self, pid: NonZeroU32) -> anyhow::Result<()> {
+        if self.conn_players.lock().unwrap().contains(&pid) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("player_id {} not registered for this connection", pid))
+        }
+    }
+
+    fn parse_player_id(params: &JsonValue) -> anyhow::Result<NonZeroU32> {
+        let v = &params["player_id"];
+        let n = v.as_u64().with_context(|| "player_id must be a non-zero integer")?;
+        NonZeroU32::new(n as u32).with_context(|| "player_id must be non-zero")
+    }
+
+    fn parse_device_id(params: &JsonValue) -> anyhow::Result<Uuid> {
+        let s = params["device_id"].as_str()
+            .with_context(|| "device_id must be a UUID string")?;
+        Uuid::parse_str(s).with_context(|| format!("invalid device_id UUID: {}", s))
+    }
+
+    fn parse_status(params: &JsonValue) -> anyhow::Result<FsctStatus> {
+        serde_json::from_value(params["status"].clone())
+            .with_context(|| "invalid status value")
+    }
+
+    fn parse_text_metadata_id(params: &JsonValue) -> anyhow::Result<FsctTextMetadata> {
+        serde_json::from_value(params["metadata_id"].clone())
+            .with_context(|| "invalid metadata_id value")
+    }
+
+    fn parse_timeline_opt(v: &JsonValue) -> anyhow::Result<Option<TimelineInfo>> {
+        if v.is_null() {
+            return Ok(None);
+        }
+        let wire: TimelineWire = serde_json::from_value(v.clone())
+            .with_context(|| "invalid timeline object")?;
+        Ok(Some(wire.try_into()?))
+    }
+
+    fn parse_player_state(params: &JsonValue) -> anyhow::Result<PlayerState> {
+        let state_val = &params["state"];
+        if !state_val.is_object() {
+            anyhow::bail!("state must be an object");
+        }
+
+        // Validate no unknown keys
+        if let Some(obj) = state_val.as_object() {
+            for key in obj.keys() {
+                match key.as_str() {
+                    "status" | "timeline" | "texts" => {}
+                    other => anyhow::bail!("invalid player state key: {}", other),
+                }
+            }
+
+            // Validate texts sub-object if present
+            if let Some(texts_val) = obj.get("texts") {
+                if !texts_val.is_object() {
+                    anyhow::bail!("texts must be an object");
+                }
+                if let Some(texts_obj) = texts_val.as_object() {
+                    for key in texts_obj.keys() {
+                        match key.as_str() {
+                            "title" | "artist" | "album" | "genre" => {
+                                let v = &texts_obj[key];
+                                if !v.is_null() && !v.is_string() {
+                                    anyhow::bail!("text '{}' must be string or null", key);
                                 }
                             }
+                            other => anyhow::bail!("invalid text key: {}", other),
                         }
-                        _ => bail!("invalid player state key: {}", key),
                     }
                 }
             }
+
+            // Validate status if present
+            if let Some(status_val) = obj.get("status") {
+                serde_json::from_value::<FsctStatus>(status_val.clone())
+                    .with_context(|| "invalid status value")?;
+            }
+
+            // Validate timeline if present
+            if let Some(timeline_val) = obj.get("timeline") {
+                Self::parse_timeline_opt(timeline_val)?;
+            }
         }
-        let mut ps = PlayerState::default();
-        ps.status = status.unwrap_or_default();
-        ps.timeline = timeline.unwrap_or(None);
-        let mut tm = TrackMetadata::default();
-        if texts_found {
-            if let Some(t) = title { tm.title = t; }
-            if let Some(a) = artist { tm.artist = a; }
-            if let Some(a2) = album { tm.album = a2; }
-            if let Some(g) = genre { tm.genre = g; }
-        }
-        ps.texts = tm;
-        Ok(ps)
+
+        let status: FsctStatus = if state_val["status"].is_null() || state_val.get("status").is_none() {
+            FsctStatus::default()
+        } else {
+            serde_json::from_value(state_val["status"].clone())
+                .with_context(|| "invalid status value")?
+        };
+
+        let timeline = Self::parse_timeline_opt(&state_val["timeline"])?;
+
+        let texts = if let Some(texts_val) = state_val.get("texts") {
+            serde_json::from_value(texts_val.clone())
+                .with_context(|| "invalid texts object")?
+        } else {
+            TrackMetadata::default()
+        };
+
+        Ok(PlayerState { status, timeline, texts })
     }
-    fn handle_function<Params, Return, RequestAsyncOnDriver, ParseParamsFn, RequestFn>(
-        &self,
-        params: &[Value],
-        parse_params: ParseParamsFn,
-        request_async_on_driver: RequestFn,
-    ) -> RequestFut
-    where
-        Params: Send + 'static,
-        Return: Into<Value>,
-        RequestAsyncOnDriver: Future<Output=Result<Return, anyhow::Error>> + Send + 'static,
-        ParseParamsFn: FnOnce(&FsctRpcService, &[Value]) -> Result<Params, anyhow::Error>,
-        RequestFn: FnOnce(Arc<dyn FsctDriver>, Params) -> RequestAsyncOnDriver + Send + 'static,
-    {
-        let parsed_params = parse_params(self, params);
-        if let Err(e) = parsed_params {
-            return fut_err(e.to_string());
+
+    // -----------------------------------------------------------------------
+    // Method handlers
+    // -----------------------------------------------------------------------
+
+    async fn req_get_protocol_version(&self, _params: &JsonValue) -> anyhow::Result<JsonValue> {
+        Ok(serde_json::to_value(FSCT_PROTOCOL_VERSION)?)
+    }
+
+    async fn req_register_player(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let self_id = params["self_id"].as_str()
+            .with_context(|| "self_id must be a string")?
+            .to_string();
+        let pid = self.driver.register_player(self_id).await
+            .with_context(|| "register_player error")?;
+        {
+            let mut guard = self.conn_players.lock().unwrap();
+            guard.insert(pid);
         }
-        let parsed_params = parsed_params.unwrap();
-        let d = self.driver.clone();
-        Box::pin(async move {
-            let ret = request_async_on_driver(d, parsed_params)
-                .await
-                .map_err(|e| Value::from(e.to_string()))?;
-            Ok(ret.into())
+        info!("Registered player {} for connection {}", pid.get(), self.connection_id);
+        Ok(json!(pid.get()))
+    }
+
+    async fn req_unregister_player(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        self.driver.unregister_player(pid).await
+            .with_context(|| "unregister_player error")?;
+        {
+            let mut guard = self.conn_players.lock().unwrap();
+            guard.remove(&pid);
+        }
+        info!("Unregistered player {} for connection {}", pid.get(), self.connection_id);
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_assign_player_to_device(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let did = Self::parse_device_id(params)?;
+        self.driver.assign_player_to_device(pid, did).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_unassign_player_from_device(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let did = Self::parse_device_id(params)?;
+        self.driver.unassign_player_from_device(pid, did).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_update_player_state(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let state = Self::parse_player_state(params)?;
+        self.driver.update_player_state(pid, state).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_update_player_status(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let status = Self::parse_status(params)?;
+        self.driver.update_player_status(pid, status).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_update_player_timeline(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let timeline = Self::parse_timeline_opt(&params["timeline"])?;
+        self.driver.update_player_timeline(pid, timeline).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_update_player_metadata(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let meta = Self::parse_text_metadata_id(params)?;
+        let text = match &params["text"] {
+            JsonValue::Null => None,
+            JsonValue::String(s) => Some(s.clone()),
+            _ => anyhow::bail!("text must be string or null"),
+        };
+        self.driver.update_player_metadata(pid, meta, text).await?;
+        Ok(JsonValue::Null)
+    }
+
+    async fn req_get_player_assigned_device(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let pid = Self::parse_player_id(params)?;
+        self.ensure_player_for_connection(pid)?;
+        let opt = self.driver.get_player_assigned_device(pid).await?;
+        Ok(match opt {
+            Some(uuid) => json!(uuid.to_string()),
+            None => JsonValue::Null,
         })
     }
-    fn req_get_protocol_version(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |_, params|
-                {
-                    expect_params(params, 0, "")
-                },
-            async |_driver, _params|
-                {
-                    Ok(FSCT_PROTOCOL_VERSION.into_value())
-                })
+
+    async fn req_get_detected_devices(&self, _params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let ids = self.driver.get_detected_devices().await?;
+        let arr: Vec<JsonValue> = ids.iter().map(|id| json!(id.to_string())).collect();
+        Ok(json!(arr))
     }
 
-    fn req_register_player(&self, params: &[Value]) -> RequestFut {
-        // Custom to capture conn_players and insert on success
-        let parse = (|| -> Result<String, anyhow::Error> {
-            expect_params(params, 1, "self_id")?;
-            params[0]
-                .as_str()
-                .map(String::from)
-                .with_context(|| "invalid param: self_id must be string")
-        })();
-        if let Err(e) = parse { return fut_err(e.to_string()); }
-        let self_id = parse.unwrap();
-        let driver = self.driver.clone();
-        let conn_players = self.conn_players.clone();
-        let connection_id = self.connection_id.clone();
-        Box::pin(async move {
-            let pid = match driver
-                .register_player(self_id)
-                .await
-                .with_context(|| "register_player error")
-            {
-                Ok(pid) => pid,
-                Err(e) => return Err(Value::from(e.to_string())),
-            };
-            info!("Registered player {} for connection {}", pid.get(), connection_id);
-            {
-                let mut guard = conn_players.lock().unwrap();
-                guard.insert(pid);
-            }
-            Ok(Value::from(pid.get() as u64))
-        })
-    }
-
-    fn req_unregister_player(&self, params: &[Value]) -> RequestFut {
-        let parse = (|| -> Result<NonZeroU32, anyhow::Error> {
-            expect_params(params, 1, "player_id")?;
-            let pid = parse_player_id(&params[0])?;
-            self.ensure_player_for_connection(pid)?;
-            Ok(pid)
-        })();
-        if let Err(e) = parse { return fut_err(e.to_string()); }
-        let pid = parse.unwrap();
-        let driver = self.driver.clone();
-        let conn_players = self.conn_players.clone();
-        let connection_id = self.connection_id.clone();
-        Box::pin(async move {
-            if let Err(e) = driver.unregister_player(pid).await.with_context(|| "unregister_player error") {
-                return Err(Value::from(e.to_string()));
-            }
-            {
-                let mut guard = conn_players.lock().unwrap();
-                guard.remove(&pid);
-            }
-            info!("Unregistered player {} for connection {}", pid.get(), connection_id);
-            Ok(Nil.into())
-        })
-    }
-
-    fn parse_assign_player_to_device_params(&self, params: &[Value]) -> Result<(std::num::NonZeroU32, Uuid), anyhow::Error> {
-        expect_params(params, 2, "player_id, device_id")?;
-        let pid = parse_player_id(&params[0])?;
-        self.ensure_player_for_connection(pid)?;
-        let did = parse_device_id(&params[1])?;
-        Ok((pid, did))
-    }
-
-    fn req_assign_player_to_device(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_assign_player_to_device_params,
-            async |driver, (pid, did)| {
-                driver
-                    .assign_player_to_device(pid, did)
-                    .await?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn req_unassign_player_from_device(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_assign_player_to_device_params,
-            async |driver, (pid, did)| {
-                driver
-                    .unassign_player_from_device(pid, did)
-                    .await
-                    .with_context(|| "unassign_player_from_device error")?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn parse_update_player_state_params(&self, params: &[Value]) -> Result<(NonZeroU32, PlayerState), anyhow::Error> {
-        expect_params(params, 2, "player_id, state")?;
-        let pid = parse_player_id(&params[0])?;
-        self.ensure_player_for_connection(pid)?;
-        let state = self.parse_player_state_map(&params[1])?;
-        Ok((pid, state))
-    }
-
-    fn req_update_player_state(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_update_player_state_params,
-            async |driver, (pid, state)| {
-                driver.update_player_state(pid, state).await?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn parse_update_player_status_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctStatus), anyhow::Error> {
-        expect_params(params, 2, "player_id, status")?;
-        let pid = parse_player_id(&params[0])?;
-        self.ensure_player_for_connection(pid)?;
-        let status = self.parse_status(&params[1])?;
-        Ok((pid, status))
-    }
-
-    fn req_update_player_status(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_update_player_status_params,
-            async |driver, (pid, status)| {
-                driver.update_player_status(pid, status).await?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn parse_update_player_timeline_params(&self, params: &[Value]) -> Result<(NonZeroU32, Option<TimelineInfo>), anyhow::Error> {
-        expect_params(params, 2, "player_id, timeline")?;
-        let pid = parse_player_id(&params[0])?;
-        self.ensure_player_for_connection(pid)?;
-        let timeline = self.parse_timeline_opt(&params[1])?;
-        Ok((pid, timeline))
-    }
-
-    fn req_update_player_timeline(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_update_player_timeline_params,
-            async |driver, (pid, timeline)| {
-                driver.update_player_timeline(pid, timeline).await?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn parse_update_player_metadata_params(&self, params: &[Value]) -> Result<(NonZeroU32, FsctTextMetadata, Option<String>), anyhow::Error> {
-        expect_params(params, 3, "player_id, metadata_id, text")?;
-        let pid = parse_player_id(&params[0])?;
-        self.ensure_player_for_connection(pid)?;
-        let meta = self.parse_text_metadata_id(&params[1])?;
-        let text = if params[2].is_nil() { None } else { Some(params[2].as_str().with_context(|| "text must be string or nil")?.to_string()) };
-        Ok((pid, meta, text))
-    }
-
-    fn req_update_player_metadata(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            Self::parse_update_player_metadata_params,
-            async |driver, (pid, meta, text)| {
-                driver.update_player_metadata(pid, meta, text).await?;
-                Ok(Nil)
-            },
-        )
-    }
-
-    fn req_get_player_assigned_device(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |s, params| {
-                expect_params(params, 1, "player_id")?;
-                let pid = parse_player_id(&params[0])?;
-                s.ensure_player_for_connection(pid)?;
-                Ok(pid)
-            },
-            async |driver, pid| {
-                let opt = driver.get_player_assigned_device(pid).await?;
-                let val = match opt {
-                    Some(uuid) => Value::Binary(uuid.as_bytes().to_vec()),
-                    None => Value::Nil
-                };
-                Ok(val)
-            },
-        )
-    }
-
-    fn req_get_detected_devices(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |_, params| {
-                expect_params(params, 0, "")?;
-                Ok(())
-            },
-            async |driver, _| {
-                let ids = driver.get_detected_devices().await?;
-                let values: Vec<Value> = ids.into_iter()
-                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
-                    .collect();
-                Ok(Value::Array(values))
-            },
-        )
-    }
-
-    fn req_get_device_info(&self, params: &[Value]) -> RequestFut {
-        self.handle_function(
-            params,
-            |_, params| {
-                expect_params(params, 1, "device_id")?;
-                let did = parse_device_id(&params[0])?;
-                Ok(did)
-            },
-            async |driver, did| {
-                let info = driver.get_device_info(did).await?;
-                Ok(info.into_value())
-            },
-        )
+    async fn req_get_device_info(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let did = Self::parse_device_id(params)?;
+        let info: DeviceInfo = self.driver.get_device_info(did).await?;
+        Ok(serde_json::to_value(info)?)
     }
 }
-
-impl ServiceWithClient for FsctRpcService {
-    type RequestFuture = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
-
-    fn handle_request(&mut self, _client: &mut Client, method: &str, params: &[Value]) -> Self::RequestFuture {
-        let m = method.to_string();
-        match m.as_str() {
-            "get_protocol_version" => self.req_get_protocol_version(params),
-            "register_player" => self.req_register_player(params),
-            "unregister_player" => self.req_unregister_player(params),
-            "assign_player_to_device" => self.req_assign_player_to_device(params),
-            "unassign_player_from_device" => self.req_unassign_player_from_device(params),
-            "update_player_state" => self.req_update_player_state(params),
-            "update_player_status" => self.req_update_player_status(params),
-            "update_player_timeline" => self.req_update_player_timeline(params),
-            "update_player_metadata" => self.req_update_player_metadata(params),
-            "get_player_assigned_device" => self.req_get_player_assigned_device(params),
-            "get_detected_devices" => self.req_get_detected_devices(params),
-            "get_device_info" => self.req_get_device_info(params),
-            _ => fut_err(format!("unknown method: {}", m)),
-        }
-    }
-
-    fn handle_notification(&mut self, _client: &mut Client, _method: &str, _params: &[Value]) {
-        // No-op for now
-    }
-}
-

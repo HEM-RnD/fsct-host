@@ -17,9 +17,10 @@
 
 use crate::definitions::FsctStatus;
 use crate::definitions::*;
+use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TrackMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,

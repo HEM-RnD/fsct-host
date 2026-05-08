@@ -17,385 +17,380 @@
 
 //! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 
-use std::pin::Pin;
-use std::sync::Arc;
-use anyhow::Error;
+use std::collections::HashMap;
+use std::time::{Duration, UNIX_EPOCH};
+
+use anyhow::Context;
 use async_trait::async_trait;
-use tokio_util::compat::TokioAsyncReadCompatExt;
-
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimelineInfo};
+use fsct::player_state::PlayerState;
 use fsct::{default_endpoint_path, DeviceChangeEvent, FsctDriver};
-use fsct::PlayerState;
-use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo, ManagedPlayerId, ProtocolVersion};
-
-use msgpack_rpc::{Client, Endpoint, Value};
-use tokio::sync::broadcast::Receiver;
+use fsct_ipc::{RpcNotification, RpcRequest, RpcResponse, MAX_LINE_BYTES};
 use log::warn;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as JsonValue};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+use futures::{SinkExt, StreamExt};
 
-fn encode_status(s: FsctStatus) -> Value { Value::from(s as u64) }
+// ---------------------------------------------------------------------------
+// Wire-format helpers (mirrors ipc.rs server-side)
+// ---------------------------------------------------------------------------
 
-fn encode_timeline_opt(t: &Option<TimelineInfo>) -> Value {
-    match t {
-        None => Value::Nil,
-        Some(tl) => {
-            let mut map = Vec::new();
-            map.push((Value::from("position_ms"), Value::from(tl.position.as_millis() as u64)));
-            let update_ms = tl.update_time.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_else(|e| -(e.duration().as_millis() as i64));
-            map.push((Value::from("update_unix_ms"), Value::from(update_ms)));
-            map.push((Value::from("duration_ms"), Value::from(tl.duration.as_millis() as u64)));
-            map.push((Value::from("rate"), Value::from(tl.rate)));
-            Value::Map(map)
+#[derive(Debug, Serialize, Deserialize)]
+struct TimelineWire {
+    position_ms: u64,
+    update_unix_ms: i64,
+    duration_ms: u64,
+    rate: f64,
+}
+
+impl From<&TimelineInfo> for TimelineWire {
+    fn from(t: &TimelineInfo) -> Self {
+        let update_unix_ms = t.update_time
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+        Self {
+            position_ms: t.position.as_millis() as u64,
+            update_unix_ms,
+            duration_ms: t.duration.as_millis() as u64,
+            rate: t.rate,
         }
     }
 }
 
-fn encode_text_metadata_id(m: FsctTextMetadata) -> Value { Value::from(m as u64) }
-
-fn encode_optional<V: Into<Value>>(v: Option<V>) -> Value {
-    match v {
-        None => Value::Nil,
-        Some(v) => v.into()
+impl TryFrom<TimelineWire> for TimelineInfo {
+    type Error = anyhow::Error;
+    fn try_from(w: TimelineWire) -> Result<Self, Self::Error> {
+        let update_time = if w.update_unix_ms >= 0 {
+            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
+        } else {
+            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
+        };
+        Ok(TimelineInfo {
+            position: Duration::from_millis(w.position_ms),
+            update_time,
+            duration: Duration::from_millis(w.duration_ms),
+            rate: w.rate,
+        })
     }
 }
 
-fn encode_optional_string(v: &Option<String>) -> Value {
-    encode_optional(v.as_ref().map(|s| s.as_str()))
-}
-
-fn encode_optional_field(name: &str, v: &Option<String>) -> (Value, Value) {
-    (Value::from(name), encode_optional_string(v))
-}
-
-fn encode_player_state(ps: &PlayerState) -> Value {
-    let mut map = Vec::new();
-    map.push((Value::from("status"), encode_status(ps.status)));
-    map.push((Value::from("timeline"), encode_timeline_opt(&ps.timeline)));
-    let mut texts = Vec::new();
-    texts.push(encode_optional_field("title", &ps.texts.title));
-    texts.push(encode_optional_field("artist", &ps.texts.artist));
-    texts.push(encode_optional_field("album", &ps.texts.album));
-    texts.push(encode_optional_field("genre", &ps.texts.genre));
-    map.push((Value::from("texts"), Value::Map(texts)));
-    Value::Map(map)
-}
-
-fn encode_player_id(pid: ManagedPlayerId) -> Value { Value::from(pid.get() as u64) }
-pub struct IpcDriverServer {
-    tx: tokio::sync::broadcast::Sender<DeviceChangeEvent>,
-}
-
-impl msgpack_rpc::ServiceWithClient for IpcDriverServer {
-    type RequestFuture = Pin<Box<dyn Future<Output=Result<Value, Value>> + Send>>;
-
-    fn handle_request(&mut self, _client: &mut Client, _method: &str, _params: &[Value]) -> Self::RequestFuture {
-        Box::pin(async move {Err(Value::from("not implemented"))})
+fn encode_timeline_opt(t: &Option<TimelineInfo>) -> JsonValue {
+    match t {
+        None => JsonValue::Null,
+        Some(tl) => serde_json::to_value(TimelineWire::from(tl)).unwrap(),
     }
+}
 
-    fn handle_notification(&mut self, _client: &mut Client, method: &str, params: &[Value]) {
-        match method {
-            "device_changed" => {
-                if params.len() != 2 {
-                    warn!("invalid device_changed notification: expected 2 parameters");
-                    return;
-                }
-                let event = match (&params[0], &params[1]) {
-                    (Value::String(name), Value::Binary(id)) => {
-                        if let Ok(uuid) = uuid::Uuid::from_slice(id.as_slice()) {
-                            match name.as_str() {
-                                Some("Added") => DeviceChangeEvent::Added(uuid),
-                                Some("Removed") => DeviceChangeEvent::Removed(uuid),
-                                _ => {
-                                    warn!("invalid device_changed notification: unknown event type");
-                                    return;
-                                }
-                            }
-                        } else {
-                            warn!("invalid device_changed notification: invalid device id");
-                            return;
+fn encode_player_state(ps: &PlayerState) -> JsonValue {
+    json!({
+        "status": ps.status,
+        "timeline": encode_timeline_opt(&ps.timeline),
+        "texts": ps.texts,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Multiplexer background task
+// ---------------------------------------------------------------------------
+
+struct OutboundCall {
+    method: String,
+    params: JsonValue,
+    reply: oneshot::Sender<Result<JsonValue, String>>,
+}
+
+async fn run_mux<R, W>(
+    mut reader: FramedRead<R, LinesCodec>,
+    mut writer: FramedWrite<W, LinesCodec>,
+    mut rx: mpsc::Receiver<OutboundCall>,
+    device_tx: broadcast::Sender<DeviceChangeEvent>,
+)
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut pending: HashMap<u64, oneshot::Sender<Result<JsonValue, String>>> = HashMap::new();
+    let mut next_id: u64 = 1;
+
+    loop {
+        tokio::select! {
+            // Outbound: caller wants to send a request
+            call = rx.recv() => {
+                let Some(call) = call else { break };
+                let id = next_id;
+                next_id += 1;
+                let req = RpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: json!(id),
+                    method: call.method,
+                    params: call.params,
+                };
+                match serde_json::to_string(&req) {
+                    Ok(line) => {
+                        if writer.send(line).await.is_err() {
+                            let _ = call.reply.send(Err("connection closed".into()));
+                            break;
                         }
+                        pending.insert(id, call.reply);
                     }
-                    _ => {
-                        warn!("invalid device_changed notification: expected string and binary");
-                        return;
+                    Err(e) => {
+                        let _ = call.reply.send(Err(format!("serialize error: {}", e)));
+                    }
+                }
+            }
+            // Inbound: a line arrived from the server
+            line = reader.next() => {
+                let Some(line) = line else {
+                    // Connection closed — fail all pending
+                    for (_, tx) in pending.drain() {
+                        let _ = tx.send(Err("connection closed".into()));
+                    }
+                    break;
+                };
+                let line = match line {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("IPC read error: {}", e);
+                        for (_, tx) in pending.drain() {
+                            let _ = tx.send(Err(format!("read error: {}", e)));
+                        }
+                        break;
                     }
                 };
-                let _ = self.tx.send(event); // ignore error, because receivers can be attached at any time
-            }
-            name => {
-                warn!("unknown notification {}", name);
+                // Try to parse as response (has "id"), else as notification
+                if let Ok(resp) = serde_json::from_str::<RpcResponse>(&line) {
+                    if let Some(id_u64) = resp.id.as_u64() {
+                        if let Some(tx) = pending.remove(&id_u64) {
+                            let result = if let Some(err) = resp.error {
+                                Err(err.message)
+                            } else {
+                                Ok(resp.result.unwrap_or(JsonValue::Null))
+                            };
+                            let _ = tx.send(result);
+                        }
+                    }
+                } else if let Ok(notif) = serde_json::from_str::<RpcNotification>(&line) {
+                    handle_notification(&notif, &device_tx);
+                } else {
+                    warn!("IPC: unrecognized message: {}", &line[..line.len().min(200)]);
+                }
             }
         }
     }
 }
 
-/// IPC-backed implementation of FsctDriver.
+fn handle_notification(notif: &RpcNotification, tx: &broadcast::Sender<DeviceChangeEvent>) {
+    if notif.method != "device_changed" {
+        warn!("unknown notification: {}", notif.method);
+        return;
+    }
+    let event_str = notif.params["event"].as_str().unwrap_or("");
+    let device_id_str = notif.params["device_id"].as_str().unwrap_or("");
+    let uuid = match uuid::Uuid::parse_str(device_id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("invalid device_id in notification: {}", device_id_str);
+            return;
+        }
+    };
+    let event = match event_str {
+        "added" => DeviceChangeEvent::Added(uuid),
+        "removed" => DeviceChangeEvent::Removed(uuid),
+        _ => {
+            warn!("unknown device_changed event: {}", event_str);
+            return;
+        }
+    };
+    let _ = tx.send(event);
+}
+
+// ---------------------------------------------------------------------------
+// IpcDriver
+// ---------------------------------------------------------------------------
+
 pub struct IpcDriver {
-    // Underlying msgpack-rpc client bound to a persistent IPC stream
-    client: msgpack_rpc::Client,
-    tx: tokio::sync::broadcast::Sender<DeviceChangeEvent>,
+    call_tx: mpsc::Sender<OutboundCall>,
+    device_tx: broadcast::Sender<DeviceChangeEvent>,
     negotiated_version: ProtocolVersion,
-    notification_task_handle: tokio::task::JoinHandle<()>,
+    _task: tokio::task::JoinHandle<()>,
 }
 
 impl Drop for IpcDriver {
     fn drop(&mut self) {
-        self.notification_task_handle.abort();
+        self._task.abort();
     }
 }
 
 impl IpcDriver {
-    /// Connect to the default endpoint and verify protocol compatibility.
-    pub async fn connect() -> Result<Self, Error>
-    {
+    pub async fn connect() -> anyhow::Result<Self> {
         Self::connect_to_endpoint(default_endpoint_path().to_string()).await
     }
 
-    /// Connect to a specific endpoint and verify protocol compatibility.
-    pub async fn connect_to_endpoint(endpoint: String) -> Result<Self, Error> {
-        // Establish persistent connection
-        let stream = transport::EndpointClient::connect(endpoint.clone()).await
-                                                                         .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
-        let compat_stream = stream.compat();
-        let (tx, _rx) = tokio::sync::broadcast::channel(100);
-        let server = IpcDriverServer { tx: tx.clone() };
-        let endpoint = Endpoint::new(compat_stream, server);
-        let client = endpoint.client();
+    pub async fn connect_to_endpoint(endpoint: String) -> anyhow::Result<Self> {
+        let stream = transport::EndpointClient::connect(endpoint)
+            .await
+            .map_err(|e| anyhow::anyhow!("IPC connect error: {e}"))?;
+        Self::from_stream(stream).await
+    }
 
-        let notification_task_handle = tokio::spawn(async move {
-            let res = endpoint.await;
-            if let Err(e) = res {
-                warn!("IPC endpoint error: {e}");
-            } else {
-                warn!("IPC endpoint closed");
-            }
+    async fn from_stream<S>(stream: S) -> anyhow::Result<Self>
+    where
+        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let (read_half, write_half) = tokio::io::split(stream);
+        let reader = FramedRead::new(read_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
+        let writer = FramedWrite::new(write_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
+
+        let (call_tx, call_rx) = mpsc::channel::<OutboundCall>(64);
+        let (device_tx, _) = broadcast::channel::<DeviceChangeEvent>(100);
+        let device_tx_task = device_tx.clone();
+
+        let task = tokio::spawn(async move {
+            run_mux(reader, writer, call_rx, device_tx_task).await;
         });
 
-        // Handshake: fetch remote protocol version
-        let response: Value = client
-            .request("get_protocol_version", &[])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+        // Handshake: send get_protocol_version before constructing Self (avoids Drop conflicts)
+        let (reply_tx, reply_rx) = oneshot::channel();
+        call_tx.send(OutboundCall {
+            method: "get_protocol_version".into(),
+            params: json!({}),
+            reply: reply_tx,
+        }).await.map_err(|_| { task.abort(); anyhow::anyhow!("IPC connection closed") })?;
+        let resp = reply_rx.await
+            .map_err(|_| { task.abort(); anyhow::anyhow!("IPC connection closed") })?
+            .map_err(|e| { task.abort(); anyhow::anyhow!("{}", e) })?;
 
-        // Parse result map { major, minor }
-        let map = response.as_map().ok_or_else(|| anyhow::anyhow!("invalid response: expected map"))?;
-        let major = map
-            .iter()
-            .find_map(|(k, v)| match k {
-                Value::String(s) if s.as_str() == Some("major") => v.as_u64(),
-                _ => None
-            })
-            .ok_or_else(|| anyhow::anyhow!("missing major"))?;
-        let minor = map
-            .iter()
-            .find_map(|(k, v)| match k {
-                Value::String(s) if s.as_str() == Some("minor") => v.as_u64(),
-                _ => None
-            })
-            .ok_or_else(|| anyhow::anyhow!("missing minor"))?;
-        let negotiated_version = ProtocolVersion { major: major as u16, minor: minor as u16 };
+        let major = resp["major"].as_u64()
+            .with_context(|| "missing major in protocol version")? as u16;
+        let minor = resp["minor"].as_u64()
+            .with_context(|| "missing minor in protocol version")? as u16;
+        let negotiated_version = ProtocolVersion { major, minor };
 
-        // Verify compatibility: major must match our supported major
         if negotiated_version.major != fsct::FSCT_PROTOCOL_VERSION.major {
+            task.abort();
             return Err(anyhow::anyhow!(
                 "incompatible protocol version: remote {}.{} != local {}.{}",
-                negotiated_version.major,
-                negotiated_version.minor,
+                major, minor,
                 fsct::FSCT_PROTOCOL_VERSION.major,
                 fsct::FSCT_PROTOCOL_VERSION.minor
             ));
         }
 
-        Ok(Self { client, tx, negotiated_version, notification_task_handle })
+        Ok(Self { call_tx, device_tx, negotiated_version, _task: task })
     }
 
-    /// Returns the negotiated protocol version obtained during creation.
-    pub async fn get_protocol_version(&self) -> Result<ProtocolVersion, Error> {
+    async fn rpc_call(&self, method: &str, params: JsonValue) -> anyhow::Result<JsonValue> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.call_tx
+            .send(OutboundCall { method: method.into(), params, reply: reply_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("IPC connection closed"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("IPC connection closed"))?
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn get_protocol_version(&self) -> anyhow::Result<ProtocolVersion> {
         Ok(self.negotiated_version)
     }
 }
 
 #[async_trait]
 impl FsctDriver for IpcDriver {
-    async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error> {
-        let response: Value = self
-            .client
-            .request("register_player", &[Value::from(self_id)])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
-        let id64 = response
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("invalid response for register_player: expected integer"))?;
-        let id_u32 = id64 as u32;
-        let nz = std::num::NonZeroU32::new(id_u32)
-            .ok_or_else(|| anyhow::anyhow!("server returned invalid zero player id"))?;
-        Ok(nz)
+    async fn register_player(&self, self_id: String) -> anyhow::Result<ManagedPlayerId> {
+        let resp = self.rpc_call("register_player", json!({ "self_id": self_id })).await?;
+        let id = resp.as_u64()
+            .with_context(|| "invalid response for register_player: expected integer")? as u32;
+        std::num::NonZeroU32::new(id)
+            .with_context(|| "server returned zero player id")
     }
 
-    async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request("unregister_player", &[encode_player_id(player_id)])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn unregister_player(&self, player_id: ManagedPlayerId) -> anyhow::Result<()> {
+        self.rpc_call("unregister_player", json!({ "player_id": player_id.get() })).await?;
         Ok(())
     }
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request(
-                "assign_player_to_device",
-                &[encode_player_id(player_id), Value::Binary(device_id.as_bytes().to_vec())],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+        self.rpc_call("assign_player_to_device", json!({
+            "player_id": player_id.get(),
+            "device_id": device_id.to_string(),
+        })).await?;
         Ok(())
     }
 
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request(
-                "unassign_player_from_device",
-                &[encode_player_id(player_id), Value::Binary(device_id.as_bytes().to_vec())],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+        self.rpc_call("unassign_player_from_device", json!({
+            "player_id": player_id.get(),
+            "device_id": device_id.to_string(),
+        })).await?;
         Ok(())
     }
 
-    async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
-        let state_val = encode_player_state(&new_state);
-        let _response: Value = self
-            .client
-            .request(
-                "update_player_state",
-                &[encode_player_id(player_id), state_val],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<()> {
+        self.rpc_call("update_player_state", json!({
+            "player_id": player_id.get(),
+            "state": encode_player_state(&new_state),
+        })).await?;
         Ok(())
     }
 
-    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request(
-                "update_player_status",
-                &[encode_player_id(player_id), encode_status(new_status)],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> anyhow::Result<()> {
+        self.rpc_call("update_player_status", json!({
+            "player_id": player_id.get(),
+            "status": new_status,
+        })).await?;
         Ok(())
     }
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request(
-                "update_player_timeline",
-                &[encode_player_id(player_id), encode_timeline_opt(&new_timeline)],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
+        self.rpc_call("update_player_timeline", json!({
+            "player_id": player_id.get(),
+            "timeline": encode_timeline_opt(&new_timeline),
+        })).await?;
         Ok(())
     }
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
-        let _response: Value = self
-            .client
-            .request(
-                "update_player_metadata",
-                &[
-                    encode_player_id(player_id),
-                    encode_text_metadata_id(metadata_id),
-                    encode_optional_string(&new_text),
-                ],
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
+    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> anyhow::Result<()> {
+        self.rpc_call("update_player_metadata", json!({
+            "player_id": player_id.get(),
+            "metadata_id": metadata_id,
+            "text": new_text,
+        })).await?;
         Ok(())
     }
 
-    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
-        let resp: Value = self
-            .client
-            .request("get_player_assigned_device", &[encode_player_id(player_id)])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
-        if resp.is_nil() { return Ok(None); }
-        let bytes = resp.as_slice().ok_or_else(|| anyhow::anyhow!("invalid response for get_player_assigned_device: expected binary or nil"))?;
-        if bytes.len() != 16 { return Err(anyhow::anyhow!("invalid uuid length")); }
-        let uuid = uuid::Uuid::from_slice(bytes).map_err(|e| anyhow::anyhow!("invalid uuid: {e}"))?;
-        Ok(Some(uuid))
+    async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>> {
+        let resp = self.rpc_call("get_player_assigned_device", json!({ "player_id": player_id.get() })).await?;
+        if resp.is_null() { return Ok(None); }
+        let s = resp.as_str()
+            .with_context(|| "get_player_assigned_device: expected UUID string or null")?;
+        Ok(Some(uuid::Uuid::parse_str(s)?))
     }
 
-    async fn get_detected_devices(&self) -> Result<Vec<ManagedDeviceId>, Error> {
-        let resp: Value = self
-            .client
-            .request("get_detected_devices", &[])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
-
+    async fn get_detected_devices(&self) -> anyhow::Result<Vec<ManagedDeviceId>> {
+        let resp = self.rpc_call("get_detected_devices", json!({})).await?;
         let arr = resp.as_array()
-            .ok_or_else(|| anyhow::anyhow!("invalid response for get_detected_devices: expected array"))?;
-
-        let mut ids = Vec::new();
-        for v in arr.iter() {
-            let bytes = v.as_slice().ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
-            if bytes.len() != 16 { return Err(anyhow::anyhow!("device id must be 16 bytes")); }
-            ids.push(uuid::Uuid::from_slice(bytes)?);
-        }
-        Ok(ids)
+            .with_context(|| "get_detected_devices: expected array")?;
+        arr.iter()
+            .map(|v| {
+                let s = v.as_str().with_context(|| "device id must be a string")?;
+                uuid::Uuid::parse_str(s).with_context(|| format!("invalid UUID: {}", s))
+            })
+            .collect()
     }
 
-    async fn get_device_info(&self, device_id: ManagedDeviceId) -> Result<DeviceInfo, Error> {
-        let resp: Value = self
-            .client
-            .request("get_device_info", &[Value::Binary(device_id.as_bytes().to_vec())])
-            .await
-            .map_err(|e| anyhow::anyhow!("rpc request error: {e}"))?;
-
-        let map = resp.as_map().ok_or_else(|| anyhow::anyhow!("invalid response for get_device_info: expected map"))?;
-
-        let mut id: Option<uuid::Uuid> = None;
-        let mut name: Option<String> = None;
-        let mut manufacturer: Option<String> = None;
-        let mut vendor_id: Option<u16> = None;
-        let mut product_id: Option<u16> = None;
-        let mut serial_number: Option<String> = None;
-
-        for (k, v) in map.iter() {
-            if let Value::String(s) = k {
-                if let Some(key) = s.as_str() {
-                    match key {
-                        "id" => {
-                            let bytes = v.as_slice().ok_or_else(|| anyhow::anyhow!("device id must be binary"))?;
-                            if bytes.len() != 16 { return Err(anyhow::anyhow!("device id must be 16 bytes")); }
-                            id = Some(uuid::Uuid::from_slice(bytes)?);
-                        }
-                        "name" => { name = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("name must be string or nil"))?.to_string()) }; }
-                        "manufacturer" => { manufacturer = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("manufacturer must be string or nil"))?.to_string()) }; }
-                        "vendor_id" => { vendor_id = Some(v.as_u64().ok_or_else(|| anyhow::anyhow!("vendor_id must be integer"))? as u16); }
-                        "product_id" => { product_id = Some(v.as_u64().ok_or_else(|| anyhow::anyhow!("product_id must be integer"))? as u16); }
-                        "serial_number" => { serial_number = if v.is_nil() { None } else { Some(v.as_str().ok_or_else(|| anyhow::anyhow!("serial_number must be string or nil"))?.to_string()) }; }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        Ok(DeviceInfo {
-            id: id.ok_or_else(|| anyhow::anyhow!("missing device id"))?,
-            name,
-            manufacturer,
-            vendor_id: vendor_id.ok_or_else(|| anyhow::anyhow!("missing vendor_id"))?,
-            product_id: product_id.ok_or_else(|| anyhow::anyhow!("missing product_id"))?,
-            serial_number,
-        })
+    async fn get_device_info(&self, device_id: ManagedDeviceId) -> anyhow::Result<DeviceInfo> {
+        let resp = self.rpc_call("get_device_info", json!({ "device_id": device_id.to_string() })).await?;
+        serde_json::from_value(resp).with_context(|| "failed to deserialize DeviceInfo")
     }
 
-    async fn subscribe_device_changes(&self) -> Result<Receiver<DeviceChangeEvent>, Error> {
-        Ok(self.tx.subscribe())
+    async fn subscribe_device_changes(&self) -> anyhow::Result<broadcast::Receiver<DeviceChangeEvent>> {
+        Ok(self.device_tx.subscribe())
     }
 }
 
@@ -406,7 +401,6 @@ mod transport {
         #[cfg(unix)]
         pub async fn connect(path: String) -> anyhow::Result<tokio::net::UnixStream> {
             use anyhow::Context;
-
             tokio::net::UnixStream::connect(path).await.context("unix client connect failed")
         }
 
@@ -418,7 +412,6 @@ mod transport {
             use winapi::shared::winerror::ERROR_PIPE_BUSY;
 
             const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
-
             let attempt_start = Instant::now();
             let client = loop {
                 match named_pipe::ClientOptions::new()
@@ -438,7 +431,6 @@ mod transport {
                     Err(e) => return Err(e.into()),
                 }
             };
-
             Ok(client)
         }
     }

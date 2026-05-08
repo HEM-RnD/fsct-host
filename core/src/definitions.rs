@@ -18,6 +18,7 @@
 use std::fmt::Display;
 use std::num::NonZeroU32;
 use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 bitflags! {
@@ -31,7 +32,8 @@ bitflags! {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FsctTextMetadata {
     #[default]
     CurrentTitle = 0x01,
@@ -86,7 +88,8 @@ pub struct TimelineInfo {
 /// in FSCT-enabled devices. It facilitates precise communication of playback conditions between a USB-connected
 /// device and a host system.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[allow(non_snake_case)]
 #[allow(unused)]
 pub enum FsctStatus {
@@ -113,7 +116,7 @@ impl Default for FsctStatus {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion {
     pub major: u16,
     pub minor: u16,
@@ -139,7 +142,7 @@ pub type ManagedDeviceId = Uuid;
 pub type ManagedPlayerId = NonZeroU32;
 
 /// Information about a detected FSCT device
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
     /// Unique identifier for the device (UUID computed from VID, PID, serial number)
     pub id: ManagedDeviceId,

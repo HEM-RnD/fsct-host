@@ -22,13 +22,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use msgpack_rpc::Value;
 use fsct_client::IpcDriver;
 use fsct_driver::IpcServer;
 use fsct::FsctDriver;
 use fsct::definitions::ManagedPlayerId;
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
+use serde_json::json;
 
 fn test_endpoint() -> String {
     #[cfg(windows)]
@@ -45,13 +45,74 @@ fn test_endpoint() -> String {
     }
 }
 
-// Shared test helpers for mocks: unified configurable mock
-mod helpers {
+// ---------------------------------------------------------------------------
+// Raw JSON-RPC client for error-path tests
+// ---------------------------------------------------------------------------
+
+mod raw_client {
+    #[cfg(unix)]
     use anyhow::Context;
+    use fsct_ipc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
+    use futures::{SinkExt, StreamExt};
+    use serde_json::{json, Value as JsonValue};
+    use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+
+    pub struct RawJsonRpcClient {
+        reader: FramedRead<tokio::io::ReadHalf<RawStream>, LinesCodec>,
+        writer: FramedWrite<tokio::io::WriteHalf<RawStream>, LinesCodec>,
+        next_id: u64,
+    }
+
+    #[cfg(unix)]
+    type RawStream = tokio::net::UnixStream;
+    #[cfg(windows)]
+    type RawStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+    impl RawJsonRpcClient {
+        pub async fn connect(endpoint: String) -> anyhow::Result<Self> {
+            #[cfg(unix)]
+            let stream = tokio::net::UnixStream::connect(&endpoint).await
+                .with_context(|| format!("connect to {}", endpoint))?;
+            #[cfg(windows)]
+            let stream = tokio::net::windows::named_pipe::ClientOptions::new()
+                .read(true).write(true).open(&endpoint)?;
+
+            let (r, w) = tokio::io::split(stream);
+            Ok(Self {
+                reader: FramedRead::new(r, LinesCodec::new_with_max_length(MAX_LINE_BYTES)),
+                writer: FramedWrite::new(w, LinesCodec::new_with_max_length(MAX_LINE_BYTES)),
+                next_id: 1,
+            })
+        }
+
+        /// Send a request and return `Ok(result)` or `Err(error_message)`.
+        pub async fn request(&mut self, method: &str, params: JsonValue) -> Result<JsonValue, String> {
+            let id = self.next_id;
+            self.next_id += 1;
+            let req = RpcRequest { jsonrpc: "2.0".into(), id: json!(id), method: method.into(), params };
+            let line = serde_json::to_string(&req).unwrap();
+            self.writer.send(line).await.map_err(|e| e.to_string())?;
+            let resp_line = self.reader.next().await
+                .ok_or("connection closed".to_string())?
+                .map_err(|e| e.to_string())?;
+            let resp: RpcResponse = serde_json::from_str(&resp_line).map_err(|e| e.to_string())?;
+            if let Some(err) = resp.error {
+                Err(err.message)
+            } else {
+                Ok(resp.result.unwrap_or(JsonValue::Null))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+mod helpers {
     use fsct_driver::{spawn_service, JoinableTaskHandle};
     use super::*;
 
-    // Common helper used by both connect helpers: spawns server and retries connection via provided connector
     async fn start_server_and_connect_common<T, C, Fut>(
         driver: Arc<dyn FsctDriver>,
         connector: C,
@@ -87,24 +148,21 @@ mod helpers {
         (client, server_task)
     }
 
-    // Unified helper to start server and connect client with retry
     pub async fn start_server_and_connect(driver: Arc<dyn FsctDriver>) -> (IpcDriver, JoinableTaskHandle) {
-        start_server_and_connect_common(driver, |endpoint: String| async move {
+        start_server_and_connect_common(driver, |endpoint| async move {
             IpcDriver::connect_to_endpoint(endpoint).await
         }).await
     }
 
-    // Unified helper to start server and connect a raw msgpack-rpc Client (for parsing error tests)
-    pub async fn start_server_and_connect_raw(driver: Arc<dyn FsctDriver>) -> (msgpack_rpc::Client, JoinableTaskHandle) {
-        use parity_tokio_ipc::Endpoint;
-        use tokio_util::compat::TokioAsyncReadCompatExt;
-        start_server_and_connect_common(driver, |endpoint: String| async move {
-            Endpoint::connect(endpoint).await.map(|stream| msgpack_rpc::Client::new(stream.compat())).with_context(|| "Failed to connect to IPC server at {}")
+    pub async fn start_server_and_connect_raw(
+        driver: Arc<dyn FsctDriver>,
+    ) -> (super::raw_client::RawJsonRpcClient, JoinableTaskHandle) {
+        start_server_and_connect_common(driver, |endpoint| async move {
+            super::raw_client::RawJsonRpcClient::connect(endpoint).await
         }).await
     }
 
     pub struct FsctDriverMock {
-        // enable flags per method
         pub enable_register: bool,
         pub enable_unregister: bool,
         pub enable_assign: bool,
@@ -117,27 +175,21 @@ mod helpers {
         pub enable_get_detected_devices: bool,
         pub enable_subscribe_device_changes: bool,
 
-        // register/unregister captures
         pub register_calls: Mutex<Vec<String>>,
         pub unregister_calls: Mutex<Vec<u32>>,
         pub fixed_id: ManagedPlayerId,
 
-        // assign/unassign captures
         pub assign_calls: Mutex<Vec<(u32, uuid::Uuid)>>,
         pub unassign_calls: Mutex<Vec<(u32, uuid::Uuid)>>,
-        pub assigned_device: Mutex<Option<uuid::Uuid>>, // response storage for getter
+        pub assigned_device: Mutex<Option<uuid::Uuid>>,
         pub last_assigned_query: Mutex<Vec<u32>>,
 
-        // updates captures
         pub state_calls: Mutex<Vec<(u32, PlayerState)>>,
         pub status_calls: Mutex<Vec<(u32, FsctStatus)>>,
         pub timeline_calls: Mutex<Vec<(u32, Option<TimelineInfo>)>>,
         pub metadata_calls: Mutex<Vec<(u32, FsctTextMetadata, Option<String>)>>,
 
-        // devices
         pub detected_devices: Mutex<Vec<DeviceInfo>>,
-
-        // device change subscription
         pub device_changes_tx: tokio::sync::broadcast::Sender<fsct::DeviceChangeEvent>,
     }
 
@@ -175,62 +227,63 @@ mod helpers {
 
     #[async_trait]
     impl FsctDriver for FsctDriverMock {
-        async fn register_player(&self, self_id: String) -> anyhow::Result<ManagedPlayerId, anyhow::Error> {
+        async fn register_player(&self, self_id: String) -> anyhow::Result<ManagedPlayerId> {
             if !self.enable_register { return Err(anyhow::anyhow!("not used")); }
             self.register_calls.lock().unwrap().push(self_id);
             Ok(self.fixed_id)
         }
-        async fn unregister_player(&self, player_id: ManagedPlayerId) -> anyhow::Result<(), anyhow::Error> {
+        async fn unregister_player(&self, player_id: ManagedPlayerId) -> anyhow::Result<()> {
             if !self.enable_unregister { return Err(anyhow::anyhow!("not used")); }
             self.unregister_calls.lock().unwrap().push(player_id.get());
             Ok(())
         }
-        async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<(), anyhow::Error> {
+        async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
             if !self.enable_assign { return Err(anyhow::anyhow!("not used")); }
             self.assign_calls.lock().unwrap().push((player_id.get(), device_id));
             Ok(())
         }
-        async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<(), anyhow::Error> {
+        async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
             if !self.enable_unassign { return Err(anyhow::anyhow!("not used")); }
             self.unassign_calls.lock().unwrap().push((player_id.get(), device_id));
             Ok(())
         }
-        async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<(), anyhow::Error> {
+        async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<()> {
             if !self.enable_update_state { return Err(anyhow::anyhow!("not used")); }
             self.state_calls.lock().unwrap().push((player_id.get(), new_state));
             Ok(())
         }
-        async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> anyhow::Result<(), anyhow::Error> {
+        async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> anyhow::Result<()> {
             if !self.enable_update_status { return Err(anyhow::anyhow!("not used")); }
             self.status_calls.lock().unwrap().push((player_id.get(), new_status));
             Ok(())
         }
-        async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<(), anyhow::Error> {
+        async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
             if !self.enable_update_timeline { return Err(anyhow::anyhow!("not used")); }
             self.timeline_calls.lock().unwrap().push((player_id.get(), new_timeline));
             Ok(())
         }
-        async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> anyhow::Result<(), anyhow::Error> {
+        async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> anyhow::Result<()> {
             if !self.enable_update_metadata { return Err(anyhow::anyhow!("not used")); }
             self.metadata_calls.lock().unwrap().push((player_id.get(), metadata_id, new_text));
             Ok(())
         }
-        async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>, anyhow::Error> {
+        async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>> {
             if !self.enable_get_assigned_device { return Err(anyhow::anyhow!("not used")); }
             self.last_assigned_query.lock().unwrap().push(player_id.get());
             Ok(*self.assigned_device.lock().unwrap())
         }
-        async fn get_detected_devices(&self) -> anyhow::Result<Vec<ManagedDeviceId>, anyhow::Error> {
+        async fn get_detected_devices(&self) -> anyhow::Result<Vec<ManagedDeviceId>> {
             if !self.enable_get_detected_devices { return Err(anyhow::anyhow!("not used")); }
             Ok(self.detected_devices.lock().unwrap().iter().map(|d| d.id).collect())
         }
-        async fn subscribe_device_changes(&self) -> anyhow::Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, anyhow::Error> {
+        async fn subscribe_device_changes(&self) -> anyhow::Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>> {
             if !self.enable_subscribe_device_changes { return Err(anyhow::anyhow!("not used")); }
             Ok(self.device_changes_tx.subscribe())
         }
-        async fn get_device_info(&self, device_id: ManagedDeviceId) -> anyhow::Result<DeviceInfo, anyhow::Error> {
+        async fn get_device_info(&self, device_id: ManagedDeviceId) -> anyhow::Result<DeviceInfo> {
             let list = self.detected_devices.lock().unwrap();
-            list.iter().find(|d| d.id == device_id).cloned().ok_or_else(|| anyhow::anyhow!("not found"))
+            list.iter().find(|d| d.id == device_id).cloned()
+                .ok_or_else(|| anyhow::anyhow!("not found"))
         }
     }
 }
@@ -283,7 +336,6 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
     let mock = Arc::new(um);
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // register player for this connection (required by server validation)
     let _ = client.register_player("p42".to_string()).await?;
     let player_id = std::num::NonZeroU32::new(42).unwrap();
     let device_id = uuid::Uuid::new_v4();
@@ -306,11 +358,10 @@ async fn ipc_assign_and_unassign_player() -> anyhow::Result<()> {
 
     let device2 = uuid::Uuid::new_v4();
     *mock.assigned_device.lock().unwrap() = Some(device2);
-    let q = player_id;
-    let dev = client.get_player_assigned_device(q).await?;
+    let dev = client.get_player_assigned_device(player_id).await?;
     assert_eq!(dev, Some(device2));
     let queries = mock.last_assigned_query.lock().unwrap().clone();
-    assert_eq!(queries.last().copied(), Some(q.get()));
+    assert_eq!(queries.last().copied(), Some(player_id.get()));
 
     server_task.shutdown().await?;
     Ok(())
@@ -331,7 +382,6 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // register player for this connection (required by server validation)
     let player_id = client.register_player("p7".to_string()).await?;
 
     // status
@@ -344,7 +394,12 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
     }
 
     // timeline
-    let timeline = TimelineInfo { position: Duration::from_millis(12345), update_time: SystemTime::now(), duration: Duration::from_millis(54321), rate: 1.0 };
+    let timeline = TimelineInfo {
+        position: Duration::from_millis(12345),
+        update_time: SystemTime::now(),
+        duration: Duration::from_millis(54321),
+        rate: 1.0,
+    };
     client.update_player_timeline(player_id, Some(timeline.clone())).await?;
     {
         let calls = mock.timeline_calls.lock().unwrap();
@@ -406,180 +461,146 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let driver = Arc::new(helpers::FsctDriverMock::new());
-    let (client, server_task) = helpers::start_server_and_connect_raw(driver).await;
+    let (mut client, server_task) = helpers::start_server_and_connect_raw(driver).await;
 
     // ---- update_player_state ----
-    // wrong param counts
-    assert!(client.request("update_player_state", &[]).await.is_err());
-    assert!(client.request("update_player_state", &[Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_state", &[Value::from(1u64), Value::Map(vec![]), Value::Nil]).await.is_err());
+    // missing player_id
+    assert!(client.request("update_player_state", json!({})).await.is_err());
+    // missing state
+    assert!(client.request("update_player_state", json!({"player_id": 1})).await.is_err());
+    // extra params (actually not an error in JSON, but invalid player_id types)
+    assert!(client.request("update_player_state", json!({"player_id": "1", "state": {}})).await.is_err());
+    assert!(client.request("update_player_state", json!({"player_id": 0, "state": {}})).await.is_err());
 
-    // invalid player_id types
-    assert!(client.request("update_player_state", &[Value::from("1"), Value::Map(vec![])]).await.is_err());
-    assert!(client.request("update_player_state", &[Value::from(0u64), Value::Map(vec![])]).await.is_err());
-
-    // wrong key name in state map
-    let bad_state = Value::Map(vec![
-        (Value::from("statsu"), Value::from(1u64)),
-        (Value::from("texts"), Value::Map(vec![])),
-        (Value::from("timeline"), Value::Nil),
-    ]);
-    assert!(client.request("update_player_state", &[Value::from(1u64), bad_state]).await.is_err());
+    // wrong key name in state
+    assert!(client.request("update_player_state", json!({
+        "player_id": 1,
+        "state": {"statsu": "playing", "texts": {}, "timeline": null}
+    })).await.is_err());
 
     // unknown texts sub-key
-    let bad_state2 = Value::Map(vec![
-        (Value::from("status"), Value::from(1u64)),
-        (Value::from("texts"), Value::Map(vec![(Value::from("titl"), Value::from("X"))])),
-        (Value::from("timeline"), Value::Nil),
-    ]);
-    assert!(client.request("update_player_state", &[Value::from(2u64), bad_state2]).await.is_err());
+    assert!(client.request("update_player_state", json!({
+        "player_id": 2,
+        "state": {"status": "playing", "texts": {"titl": "X"}, "timeline": null}
+    })).await.is_err());
 
     // texts wrong value type
-    let bad_state3 = Value::Map(vec![
-        (Value::from("status"), Value::from(1u64)),
-        (Value::from("texts"), Value::Map(vec![(Value::from("title"), Value::from(123u64))])),
-        (Value::from("timeline"), Value::Nil),
-    ]);
-    assert!(client.request("update_player_state", &[Value::from(3u64), bad_state3]).await.is_err());
+    assert!(client.request("update_player_state", json!({
+        "player_id": 3,
+        "state": {"status": "playing", "texts": {"title": 123}, "timeline": null}
+    })).await.is_err());
 
-    // timeline present but not a map
-    let bad_state4 = Value::Map(vec![(Value::from("timeline"), Value::from(1u64))]);
-    assert!(client.request("update_player_state", &[Value::from(4u64), bad_state4]).await.is_err());
+    // timeline wrong type (not null and not object)
+    assert!(client.request("update_player_state", json!({
+        "player_id": 4,
+        "state": {"timeline": 1}
+    })).await.is_err());
 
-    // status wrong type
-    let bad_state5 = Value::Map(vec![(Value::from("status"), Value::from("x"))]);
-    assert!(client.request("update_player_state", &[Value::from(5u64), bad_state5]).await.is_err());
+    // status wrong type (integer instead of string)
+    assert!(client.request("update_player_state", json!({
+        "player_id": 5,
+        "state": {"status": 1}
+    })).await.is_err());
 
-    // status invalid code
-    let bad_state6 = Value::Map(vec![(Value::from("status"), Value::from(255u64))]);
-    assert!(client.request("update_player_state", &[Value::from(6u64), bad_state6]).await.is_err());
+    // status invalid string
+    assert!(client.request("update_player_state", json!({
+        "player_id": 6,
+        "state": {"status": "invalid_status_value"}
+    })).await.is_err());
 
-    // timeline inside state missing fields
-    let bad_state7 = Value::Map(vec![(Value::from("timeline"), Value::Map(vec![(Value::from("position_ms"), Value::from(1u64))]))]);
-    assert!(client.request("update_player_state", &[Value::from(7u64), bad_state7]).await.is_err());
+    // timeline missing required fields
+    assert!(client.request("update_player_state", json!({
+        "player_id": 7,
+        "state": {"timeline": {"position_ms": 1}}
+    })).await.is_err());
 
-    // texts not a map
-    let bad_state8 = Value::Map(vec![(Value::from("texts"), Value::from(5u64))]);
-    assert!(client.request("update_player_state", &[Value::from(8u64), bad_state8]).await.is_err());
+    // texts not an object
+    assert!(client.request("update_player_state", json!({
+        "player_id": 8,
+        "state": {"texts": 5}
+    })).await.is_err());
 
-    // non-map state
-    assert!(client.request("update_player_state", &[Value::from(9u64), Value::from(1u64)]).await.is_err());
+    // state not an object
+    assert!(client.request("update_player_state", json!({"player_id": 9, "state": 1})).await.is_err());
 
     // ---- update_player_status ----
-    // wrong param counts
-    assert!(client.request("update_player_status", &[]).await.is_err());
-    assert!(client.request("update_player_status", &[Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_status", &[Value::from(1u64), Value::from(1u64), Value::Nil]).await.is_err());
-
-    // invalid player_id
-    assert!(client.request("update_player_status", &[Value::from("1"), Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_status", &[Value::from(0u64), Value::from(1u64)]).await.is_err());
-
-    // wrong type for status
-    assert!(client.request("update_player_status", &[Value::from(10u64), Value::from("1")]).await.is_err());
-    // out of range status code
-    assert!(client.request("update_player_status", &[Value::from(10u64), Value::from(255u64)]).await.is_err());
+    assert!(client.request("update_player_status", json!({})).await.is_err());
+    assert!(client.request("update_player_status", json!({"player_id": 1})).await.is_err());
+    assert!(client.request("update_player_status", json!({"player_id": "1", "status": "playing"})).await.is_err());
+    assert!(client.request("update_player_status", json!({"player_id": 0, "status": "playing"})).await.is_err());
+    // status wrong type
+    assert!(client.request("update_player_status", json!({"player_id": 10, "status": 1})).await.is_err());
+    // status invalid string
+    assert!(client.request("update_player_status", json!({"player_id": 10, "status": "invalid"})).await.is_err());
 
     // ---- update_player_timeline ----
-    // wrong param counts
-    assert!(client.request("update_player_timeline", &[]).await.is_err());
-    assert!(client.request("update_player_timeline", &[Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_timeline", &[Value::from(1u64), Value::Map(vec![]), Value::Nil]).await.is_err());
-
-    // invalid player_id
-    assert!(client.request("update_player_timeline", &[Value::from("1"), Value::Nil]).await.is_err());
-    assert!(client.request("update_player_timeline", &[Value::from(0u64), Value::Nil]).await.is_err());
-
-    // timeline wrong type (int)
-    assert!(client.request("update_player_timeline", &[Value::from(11u64), Value::from(5u64)]).await.is_err());
-
+    assert!(client.request("update_player_timeline", json!({})).await.is_err());
+    assert!(client.request("update_player_timeline", json!({"player_id": 1})).await.is_err());
+    assert!(client.request("update_player_timeline", json!({"player_id": "1", "timeline": null})).await.is_err());
+    assert!(client.request("update_player_timeline", json!({"player_id": 0, "timeline": null})).await.is_err());
+    // timeline wrong type
+    assert!(client.request("update_player_timeline", json!({"player_id": 11, "timeline": 5})).await.is_err());
     // timeline unknown key
-    let bad_timeline2 = Value::Map(vec![(Value::from("pos"), Value::from(1u64))]);
-    assert!(client.request("update_player_timeline", &[Value::from(11u64), bad_timeline2]).await.is_err());
-
-    // timeline missing each required field
-    let t_missing_pos = Value::Map(vec![
-        (Value::from("update_unix_ms"), Value::from(0i64)),
-        (Value::from("duration_ms"), Value::from(2000u64)),
-        (Value::from("rate"), Value::from(1.0f64)),
-    ]);
-    assert!(client.request("update_player_timeline", &[Value::from(12u64), t_missing_pos]).await.is_err());
-
-    let t_missing_update = Value::Map(vec![
-        (Value::from("position_ms"), Value::from(1000u64)),
-        (Value::from("duration_ms"), Value::from(2000u64)),
-        (Value::from("rate"), Value::from(1.0f64)),
-    ]);
-    assert!(client.request("update_player_timeline", &[Value::from(13u64), t_missing_update]).await.is_err());
-
-    let t_missing_duration = Value::Map(vec![
-        (Value::from("position_ms"), Value::from(1000u64)),
-        (Value::from("update_unix_ms"), Value::from(0i64)),
-        (Value::from("rate"), Value::from(1.0f64)),
-    ]);
-    assert!(client.request("update_player_timeline", &[Value::from(14u64), t_missing_duration]).await.is_err());
-
-    let t_missing_rate = Value::Map(vec![
-        (Value::from("position_ms"), Value::from(1000u64)),
-        (Value::from("update_unix_ms"), Value::from(0i64)),
-        (Value::from("duration_ms"), Value::from(2000u64)),
-    ]);
-    assert!(client.request("update_player_timeline", &[Value::from(15u64), t_missing_rate]).await.is_err());
-
-    // wrong types in fields
-    let t_bad_types = Value::Map(vec![
-        (Value::from("position_ms"), Value::from("1000")),
-        (Value::from("update_unix_ms"), Value::from("0")),
-        (Value::from("duration_ms"), Value::from("2000")),
-        (Value::from("rate"), Value::from("1.0")),
-    ]);
-    assert!(client.request("update_player_timeline", &[Value::from(16u64), t_bad_types]).await.is_err());
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 11,
+        "timeline": {"pos": 1}
+    })).await.is_err());
+    // timeline missing position_ms
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 12,
+        "timeline": {"update_unix_ms": 0, "duration_ms": 2000, "rate": 1.0}
+    })).await.is_err());
+    // timeline missing update_unix_ms
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 13,
+        "timeline": {"position_ms": 1000, "duration_ms": 2000, "rate": 1.0}
+    })).await.is_err());
+    // timeline missing duration_ms
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 14,
+        "timeline": {"position_ms": 1000, "update_unix_ms": 0, "rate": 1.0}
+    })).await.is_err());
+    // timeline missing rate
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 15,
+        "timeline": {"position_ms": 1000, "update_unix_ms": 0, "duration_ms": 2000}
+    })).await.is_err());
+    // timeline wrong field types
+    assert!(client.request("update_player_timeline", json!({
+        "player_id": 16,
+        "timeline": {"position_ms": "1000", "update_unix_ms": "0", "duration_ms": "2000", "rate": "1.0"}
+    })).await.is_err());
 
     // ---- update_player_metadata ----
-    // wrong param counts
-    assert!(client.request("update_player_metadata", &[]).await.is_err());
-    assert!(client.request("update_player_metadata", &[Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(1u64)]).await.is_err());
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(1u64), Value::Nil, Value::Nil]).await.is_err());
-
+    assert!(client.request("update_player_metadata", json!({})).await.is_err());
+    assert!(client.request("update_player_metadata", json!({"player_id": 1})).await.is_err());
+    assert!(client.request("update_player_metadata", json!({"player_id": 1, "metadata_id": "current_title"})).await.is_err());
     // invalid player_id
-    assert!(client.request("update_player_metadata", &[Value::from(0u64), Value::from(0x01u64), Value::Nil]).await.is_err());
-    assert!(client.request("update_player_metadata", &[Value::from("1"), Value::from(0x01u64), Value::Nil]).await.is_err());
-
-    // invalid metadata id code
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0u64), Value::Nil]).await.is_err());
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0xFFu64), Value::Nil]).await.is_err());
-
-    // metadata id wrong type
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from("title"), Value::Nil]).await.is_err());
-
+    assert!(client.request("update_player_metadata", json!({"player_id": 0, "metadata_id": "current_title", "text": null})).await.is_err());
+    assert!(client.request("update_player_metadata", json!({"player_id": "1", "metadata_id": "current_title", "text": null})).await.is_err());
+    // invalid metadata_id
+    assert!(client.request("update_player_metadata", json!({"player_id": 1, "metadata_id": "invalid_meta", "text": null})).await.is_err());
+    // metadata_id wrong type
+    assert!(client.request("update_player_metadata", json!({"player_id": 1, "metadata_id": 1, "text": null})).await.is_err());
     // text wrong type
-    assert!(client.request("update_player_metadata", &[Value::from(1u64), Value::from(0x01u64), Value::from(123u64)]).await.is_err());
+    assert!(client.request("update_player_metadata", json!({"player_id": 1, "metadata_id": "current_title", "text": 123})).await.is_err());
 
-    // ---- set_preferred_player ----
-    // wrong param counts
-    assert!(client.request("set_preferred_player", &[]).await.is_err());
-    assert!(client.request("set_preferred_player", &[Value::from(1u64), Value::Nil]).await.is_err());
-    // wrong type
-    assert!(client.request("set_preferred_player", &[Value::from("1")]).await.is_err());
-    // zero id invalid
-    assert!(client.request("set_preferred_player", &[Value::from(0u64)]).await.is_err());
+    // ---- set_preferred_player (unknown method → error) ----
+    assert!(client.request("set_preferred_player", json!({})).await.is_err());
+    assert!(client.request("set_preferred_player", json!({"player_id": 0})).await.is_err());
+    assert!(client.request("set_preferred_player", json!({"player_id": "1"})).await.is_err());
 
-    // ---- get_preferred_player ----
-    // wrong param counts
-    assert!(client.request("get_preferred_player", &[Value::from(1u64)]).await.is_err());
+    // ---- get_preferred_player (unknown method → error) ----
+    assert!(client.request("get_preferred_player", json!({"player_id": 1})).await.is_err());
 
     // ---- get_player_assigned_device ----
-    // wrong param counts
-    assert!(client.request("get_player_assigned_device", &[]).await.is_err());
-    assert!(client.request("get_player_assigned_device", &[Value::from(1u64), Value::from(2u64)]).await.is_err());
-    // invalid player_id types
-    assert!(client.request("get_player_assigned_device", &[Value::from("1")]).await.is_err());
-    assert!(client.request("get_player_assigned_device", &[Value::Nil]).await.is_err());
-    assert!(client.request("get_player_assigned_device", &[Value::from(0u64)]).await.is_err());
+    assert!(client.request("get_player_assigned_device", json!({})).await.is_err());
+    assert!(client.request("get_player_assigned_device", json!({"player_id": "1"})).await.is_err());
+    assert!(client.request("get_player_assigned_device", json!({"player_id": null})).await.is_err());
+    assert!(client.request("get_player_assigned_device", json!({"player_id": 0})).await.is_err());
 
-    // shared: invalid player_id type (nil)
-    assert!(client.request("update_player_status", &[Value::Nil, Value::from(1u64)]).await.is_err());
+    // nil/null player_id
+    assert!(client.request("update_player_status", json!({"player_id": null, "status": "playing"})).await.is_err());
 
     server_task.shutdown().await?;
     Ok(())
@@ -590,8 +611,6 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
 async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
-    // Create a mock driver that only allows registration (so we can get a valid, registered id).
-    // All other methods remain disabled and must NOT be called due to server-side validation.
     let mut um = helpers::FsctDriverMock::new();
     um.enable_register = true;
     um.fixed_id = std::num::NonZeroU32::new(50).unwrap();
@@ -599,36 +618,25 @@ async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // Register a player to activate connection; we'll use a different, unregistered id for tests
     let _registered = client.register_player("p50".to_string()).await?;
     let bad_pid = std::num::NonZeroU32::new(999).unwrap();
 
-    // 1) unregister_player should fail for unregistered id
     assert!(client.unregister_player(bad_pid).await.is_err());
-
-    // 2) assign_player_to_device should fail
     let dev = uuid::Uuid::new_v4();
     assert!(client.assign_player_to_device(bad_pid, dev).await.is_err());
-
-    // 3) unassign_player_from_device should fail
     assert!(client.unassign_player_from_device(bad_pid, dev).await.is_err());
-
-    // 4) update_player_status should fail
     assert!(client.update_player_status(bad_pid, FsctStatus::Playing).await.is_err());
-
-    // 5) update_player_timeline should fail
-    let tl = TimelineInfo { position: std::time::Duration::from_millis(1), update_time: std::time::SystemTime::now(), duration: std::time::Duration::from_millis(2), rate: 1.0 };
+    let tl = TimelineInfo {
+        position: std::time::Duration::from_millis(1),
+        update_time: std::time::SystemTime::now(),
+        duration: std::time::Duration::from_millis(2),
+        rate: 1.0,
+    };
     assert!(client.update_player_timeline(bad_pid, Some(tl)).await.is_err());
-
-    // 6) update_player_metadata should fail
     assert!(client.update_player_metadata(bad_pid, FsctTextMetadata::CurrentTitle, Some("X".into())).await.is_err());
-
-    // 7) update_player_state should fail
     let mut st = PlayerState::default();
     st.status = FsctStatus::Paused;
     assert!(client.update_player_state(bad_pid, st).await.is_err());
-
-    // 8) get_player_assigned_device should fail
     assert!(client.get_player_assigned_device(bad_pid).await.is_err());
 
     server_task.shutdown().await?;
@@ -645,23 +653,16 @@ async fn ipc_auto_unregister_on_disconnect() -> anyhow::Result<()> {
     um.fixed_id = std::num::NonZeroU32::new(201).unwrap();
     let mock = std::sync::Arc::new(um);
 
-    // Scope the client so dropping ends the connection
     let server_task;
     {
         let (client_local, st) = helpers::start_server_and_connect(mock.clone()).await;
         server_task = st;
-
-        // register one player over the connection
         let p1 = client_local.register_player("p201".to_string()).await?;
         assert_eq!(p1.get(), 201);
-
-        // drop client_local here at end of scope -> triggers connection close
     }
 
-    // Allow some time for the server to process the disconnect and auto-unregister
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-    // Validate that unregister was called for the registered id
     let calls = mock.unregister_calls.lock().unwrap().clone();
     assert_eq!(calls, vec![201]);
 
@@ -673,7 +674,6 @@ async fn ipc_auto_unregister_on_disconnect() -> anyhow::Result<()> {
 async fn ipc_get_detected_devices() -> anyhow::Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
-    // Create test devices
     let device1 = DeviceInfo {
         id: uuid::Uuid::parse_str("12345678-1234-5678-1234-567812345678").unwrap(),
         name: Some("Test Device 1".to_string()),
@@ -682,7 +682,6 @@ async fn ipc_get_detected_devices() -> anyhow::Result<()> {
         product_id: 0x5678,
         serial_number: Some("SN001".to_string()),
     };
-
     let device2 = DeviceInfo {
         id: uuid::Uuid::parse_str("87654321-4321-8765-4321-876543218765").unwrap(),
         name: None,
@@ -699,16 +698,11 @@ async fn ipc_get_detected_devices() -> anyhow::Result<()> {
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // Get detected device IDs
     let device_ids = client.get_detected_devices().await?;
-
-    // Verify we got 2 device IDs
     assert_eq!(device_ids.len(), 2);
 
-    // Fetch full info for each ID and verify
     let d1 = client.get_device_info(device_ids[0]).await?;
     assert_eq!(d1, device1);
-
     let d2 = client.get_device_info(device_ids[1]).await?;
     assert_eq!(d2, device2);
 
@@ -726,21 +720,17 @@ async fn ipc_subscribe_device_changes() -> anyhow::Result<()> {
 
     let (client, server_task) = helpers::start_server_and_connect(mock.clone()).await;
 
-    // Subscribe on client side
     let mut rx = client.subscribe_device_changes().await?;
 
-    // Emit Added
     let dev = uuid::Uuid::new_v4();
     let _ = mock.device_changes_tx.send(fsct::DeviceChangeEvent::Added(dev));
 
-    // Receive and assert
     let evt = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await??;
     match evt {
         fsct::DeviceChangeEvent::Added(id) => assert_eq!(id, dev),
         _ => panic!("expected Added"),
     }
 
-    // Emit Removed
     let _ = mock.device_changes_tx.send(fsct::DeviceChangeEvent::Removed(dev));
     let evt2 = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await??;
     match evt2 {
