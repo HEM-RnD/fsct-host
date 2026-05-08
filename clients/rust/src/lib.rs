@@ -27,11 +27,12 @@ use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceI
 use fsct::player_state::PlayerState;
 use fsct::{default_endpoint_path, DeviceChangeEvent, FsctDriver};
 use log::warn;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{json, Value as JsonValue, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use futures::{SinkExt, StreamExt};
+use tokio::sync::oneshot::Sender;
 use crate::rpc::{RpcNotification, RpcRequest, RpcResponse, MAX_LINE_BYTES};
 
 // ---------------------------------------------------------------------------
@@ -129,17 +130,21 @@ fn dispatch_inbound(
     device_tx: &broadcast::Sender<DeviceChangeEvent>,
 ) {
     if let Ok(resp) = serde_json::from_str::<RpcResponse>(line) {
-        if let Some(id_u64) = resp.id.as_u64() {
-            if let Some(tx) = pending.remove(&id_u64) {
-                let result = resp.error.map(|e| Err(e.message))
-                    .unwrap_or_else(|| Ok(resp.result.unwrap_or(JsonValue::Null)));
-                let _ = tx.send(result);
-            }
-        }
+        handle_response(pending, resp);
     } else if let Ok(notif) = serde_json::from_str::<RpcNotification>(line) {
         handle_notification(&notif, device_tx);
     } else {
         warn!("IPC: unrecognized message: {}", &line[..line.len().min(200)]);
+    }
+}
+
+fn handle_response(pending: &mut HashMap<u64, Sender<Result<Value, String>>>, resp: RpcResponse) {
+    if let Some(id_u64) = resp.id.as_u64() {
+        if let Some(tx) = pending.remove(&id_u64) {
+            let result = resp.error.map(|e| Err(e.message))
+                .unwrap_or_else(|| Ok(resp.result.unwrap_or(JsonValue::Null)));
+            let _ = tx.send(result);
+        }
     }
 }
 
