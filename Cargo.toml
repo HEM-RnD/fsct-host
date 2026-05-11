@@ -18,13 +18,15 @@ tokio = { version = "1.44", features = ["full"] }
 futures = "0.3"
 env_logger = "0.11"
 fsct-core = { path = "core" }
-fsct-client = {path = "clients/rust"}
-fsct-driver = {path = "driver"}
+fsct-client = { path = "clients/rust" }
+fsct-driver = { path = "driver" }
 log = "0.4.25"
 thiserror = "2.0.12"
 anyhow = "1.0.98"
-uuid = { version = "1.17.0", features = ["v4", "v5"] }
-msgpack-rpc = { git = "https://github.com/HEM-RnD/msgpack-rpc.git", rev = "75f6ba69820c8a99c01a0dc9a5471b565ce3b2e3" }
+uuid = { version = "1.17.0", features = ["v4", "v5", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
 
 [profile.release]
 lto = true

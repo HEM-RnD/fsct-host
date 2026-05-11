@@ -17,7 +17,9 @@
 
 use std::fmt::Display;
 use std::num::NonZeroU32;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 bitflags! {
@@ -31,7 +33,8 @@ bitflags! {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FsctTextMetadata {
     #[default]
     CurrentTitle = 0x01,
@@ -72,12 +75,53 @@ pub enum FsctTextEncoding {
     Utf32 = 3,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TimelineWire {
+    position_ms: u64,
+    update_unix_ms: i64,
+    duration_ms: u64,
+    rate: f64,
+}
+
+impl From<TimelineInfo> for TimelineWire {
+    fn from(t: TimelineInfo) -> Self {
+        let update_unix_ms = t.update_time
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+        Self {
+            position_ms: t.position.as_millis() as u64,
+            update_unix_ms,
+            duration_ms: t.duration.as_millis() as u64,
+            rate: t.rate,
+        }
+    }
+}
+
+impl From<TimelineWire> for TimelineInfo {
+    fn from(w: TimelineWire) -> Self {
+        let update_time = if w.update_unix_ms >= 0 {
+            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
+        } else {
+            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
+        };
+        Self {
+            position: Duration::from_millis(w.position_ms),
+            update_time,
+            duration: Duration::from_millis(w.duration_ms),
+            rate: w.rate,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "TimelineWire", into = "TimelineWire")]
 pub struct TimelineInfo {
-    pub position: std::time::Duration,                      // current position in seconds
-    pub update_time: std::time::SystemTime, // when the position was last updated
-    pub duration: std::time::Duration,                      // total duration in seconds
-    pub rate: f64,                          // playback rate
+    pub position: Duration,
+    pub update_time: SystemTime,
+    pub duration: Duration,
+    pub rate: f64,
 }
 
 /// Represents the various playback states within the Ferrum Streaming Control Technology (FSCT) system.
@@ -86,7 +130,8 @@ pub struct TimelineInfo {
 /// in FSCT-enabled devices. It facilitates precise communication of playback conditions between a USB-connected
 /// device and a host system.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[allow(non_snake_case)]
 #[allow(unused)]
 pub enum FsctStatus {
@@ -113,7 +158,7 @@ impl Default for FsctStatus {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion {
     pub major: u16,
     pub minor: u16,
@@ -139,7 +184,7 @@ pub type ManagedDeviceId = Uuid;
 pub type ManagedPlayerId = NonZeroU32;
 
 /// Information about a detected FSCT device
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
     /// Unique identifier for the device (UUID computed from VID, PID, serial number)
     pub id: ManagedDeviceId,

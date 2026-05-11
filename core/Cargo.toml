@@ -13,9 +13,10 @@ repository.workspace = true
 name = "fsct"
 
 [dependencies]
-uuid = { version = "1.17.0", features = ["v4", "v5"] }
+uuid.workspace = true
 bitflags = "2.8.0"
 async-trait.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
+serde.workspace = true
 

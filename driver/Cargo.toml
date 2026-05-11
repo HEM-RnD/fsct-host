@@ -24,10 +24,10 @@ log = "0.4"
 log4rs = "1.2"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
-tokio-util = { version = "0.7.12", features = ["compat"] }
-uuid = { version = "1.10", features = ["v4"] }
+tokio-util.workspace = true
+uuid.workspace = true
 fsct-client.workspace = true
-msgpack-rpc.workspace = true
+serde_json.workspace = true
 futures.workspace = true
 nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
 bitflags = "2.8.0"
@@ -58,6 +58,5 @@ async-stream = "0.3"
 
 [dev-dependencies]
 nix = { version = "0.29", default-features = false, features = ["signal", "poll", "fs"] }
-msgpack-rpc.workspace = true
-tokio-util = { version = "0.7.12", features = ["compat"] }
-parity-tokio-ipc = "0.9.0"
+serde_json.workspace = true
+tokio-util.workspace = true
