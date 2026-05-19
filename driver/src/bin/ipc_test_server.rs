@@ -19,14 +19,21 @@
 //!
 //! Usage: ipc_test_server <socket-path>
 //!
-//! Starts the IPC server on the given socket path and runs until killed.
-//! The first client connection triggers a device_changed notification after 200ms.
+//! Stdio protocol (NDJSON):
+//!   stdout → test harness:
+//!     {"type":"ready"}                              — socket is bound and accepting
+//!     {"type":"received","method":"update_player_status","playerId":N,"status":"..."}
+//!     {"type":"received","method":"update_player_timeline","playerId":N,"timeline":{...}|null}
+//!     {"type":"received","method":"update_player_metadata","playerId":N,"metadataId":"...","text":"..."|null}
+//!     {"type":"received","method":"update_player_state","playerId":N,"state":{...}}
+//!   stdin ← test harness:
+//!     {"type":"emit_device_changed","event":"added"|"removed","deviceId":"UUID"}
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Once};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
@@ -39,11 +46,17 @@ use uuid::Uuid;
 const DEVICE_ID_1: Uuid = uuid::uuid!("11111111-0000-0000-0000-000000000001");
 const DEVICE_ID_2: Uuid = uuid::uuid!("22222222-0000-0000-0000-000000000002");
 
+fn emit_received(value: serde_json::Value) {
+    if let Ok(line) = serde_json::to_string(&value) {
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+    }
+}
+
 struct MockFsctDriver {
     next_id: AtomicU32,
     assignments: Mutex<HashMap<NonZeroU32, Uuid>>,
     device_changes_tx: broadcast::Sender<DeviceChangeEvent>,
-    event_once: Once,
 }
 
 impl MockFsctDriver {
@@ -53,7 +66,6 @@ impl MockFsctDriver {
             next_id: AtomicU32::new(1),
             assignments: Mutex::new(HashMap::new()),
             device_changes_tx: tx,
-            event_once: Once::new(),
         }
     }
 }
@@ -83,24 +95,49 @@ impl FsctDriver for MockFsctDriver {
         Ok(())
     }
 
-    async fn update_player_state(&self, _player_id: ManagedPlayerId, _new_state: PlayerState) -> anyhow::Result<()> {
+    async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<()> {
+        emit_received(serde_json::json!({
+            "type": "received",
+            "method": "update_player_state",
+            "playerId": player_id.get(),
+            "state": new_state,
+        }));
         Ok(())
     }
 
-    async fn update_player_status(&self, _player_id: ManagedPlayerId, _new_status: FsctStatus) -> anyhow::Result<()> {
+    async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> anyhow::Result<()> {
+        emit_received(serde_json::json!({
+            "type": "received",
+            "method": "update_player_status",
+            "playerId": player_id.get(),
+            "status": new_status,
+        }));
         Ok(())
     }
 
-    async fn update_player_timeline(&self, _player_id: ManagedPlayerId, _new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
+    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
+        emit_received(serde_json::json!({
+            "type": "received",
+            "method": "update_player_timeline",
+            "playerId": player_id.get(),
+            "timeline": new_timeline,
+        }));
         Ok(())
     }
 
     async fn update_player_metadata(
         &self,
-        _player_id: ManagedPlayerId,
-        _metadata_id: FsctTextMetadata,
-        _new_text: Option<String>,
+        player_id: ManagedPlayerId,
+        metadata_id: FsctTextMetadata,
+        new_text: Option<String>,
     ) -> anyhow::Result<()> {
+        emit_received(serde_json::json!({
+            "type": "received",
+            "method": "update_player_metadata",
+            "playerId": player_id.get(),
+            "metadataId": metadata_id,
+            "text": new_text,
+        }));
         Ok(())
     }
 
@@ -135,17 +172,45 @@ impl FsctDriver for MockFsctDriver {
     }
 
     async fn subscribe_device_changes(&self) -> anyhow::Result<broadcast::Receiver<DeviceChangeEvent>> {
-        let rx = self.device_changes_tx.subscribe();
-        // On the first subscription (first client connection), emit an Added event after 200ms.
-        // This gives Node.js tests time to attach event listeners before the notification fires.
-        let tx = self.device_changes_tx.clone();
-        self.event_once.call_once(|| {
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                let _ = tx.send(DeviceChangeEvent::Added(DEVICE_ID_1));
-            });
-        });
-        Ok(rx)
+        Ok(self.device_changes_tx.subscribe())
+    }
+}
+
+async fn stdin_command_loop(tx: broadcast::Sender<DeviceChangeEvent>) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let cmd: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("ipc_test_server: invalid stdin command: {e}");
+                continue;
+            }
+        };
+        match cmd["type"].as_str() {
+            Some("emit_device_changed") => {
+                let event_str = cmd["event"].as_str().unwrap_or("");
+                let device_id_str = cmd["deviceId"].as_str().unwrap_or("");
+                let device_id = match Uuid::parse_str(device_id_str) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("ipc_test_server: invalid deviceId: {e}");
+                        continue;
+                    }
+                };
+                let event = match event_str {
+                    "added" => DeviceChangeEvent::Added(device_id),
+                    "removed" => DeviceChangeEvent::Removed(device_id),
+                    _ => {
+                        eprintln!("ipc_test_server: unknown event type: {event_str}");
+                        continue;
+                    }
+                };
+                let _ = tx.send(event);
+            }
+            Some(t) => eprintln!("ipc_test_server: unknown command type: {t}"),
+            None => eprintln!("ipc_test_server: invalid command (no type field)"),
+        }
     }
 }
 
@@ -156,10 +221,18 @@ async fn main() -> anyhow::Result<()> {
         .expect("Usage: ipc_test_server <socket-path>");
 
     let driver = Arc::new(MockFsctDriver::new());
+    let tx = driver.device_changes_tx.clone();
+
+    tokio::spawn(stdin_command_loop(tx));
+
     let mut server = IpcServer::with_socket_path(driver, &endpoint);
 
+    let listener = server.init_listener().await?;
+    println!("{}", serde_json::json!({"type": "ready"}));
+    let _ = std::io::stdout().flush();
+
     tokio::select! {
-        res = server.serve() => {
+        res = server.accept_listener(listener) => {
             if let Err(e) = res {
                 eprintln!("ipc_test_server: server error: {e}");
             }

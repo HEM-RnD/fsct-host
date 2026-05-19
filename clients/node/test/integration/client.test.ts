@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { FsctIpcClient, FsctError } from '../../src/client.js';
-import type { DeviceChangeEvent } from '../../src/types.js';
+import type { DeviceChangeEvent, PlayerState } from '../../src/types.js';
 import { startTestServer, serverBin } from './helpers.js';
 import type { TestServer } from './helpers.js';
 
@@ -42,44 +42,101 @@ describe.skipIf(!serverBin)('FsctIpcClient integration', () => {
     expect(await client.getPlayerAssignedDevice(playerId)).toBeNull();
   });
 
-  it('update player status resolves for all statuses', async () => {
+  it('update player status resolves and server receives correct value', async () => {
     const playerId = await client.registerPlayer('status-test');
-    await expect(client.updatePlayerStatus(playerId, 'playing')).resolves.toBeUndefined();
-    await expect(client.updatePlayerStatus(playerId, 'paused')).resolves.toBeUndefined();
-    await expect(client.updatePlayerStatus(playerId, 'stopped')).resolves.toBeUndefined();
+
+    const [, event1] = await Promise.all([
+      client.updatePlayerStatus(playerId, 'playing'),
+      server.waitForReceived('update_player_status'),
+    ]);
+    expect(event1.playerId).toBe(playerId);
+    expect(event1['status']).toBe('playing');
+
+    const [, event2] = await Promise.all([
+      client.updatePlayerStatus(playerId, 'paused'),
+      server.waitForReceived('update_player_status'),
+    ]);
+    expect(event2['status']).toBe('paused');
+
+    const [, event3] = await Promise.all([
+      client.updatePlayerStatus(playerId, 'stopped'),
+      server.waitForReceived('update_player_status'),
+    ]);
+    expect(event3['status']).toBe('stopped');
   });
 
-  it('update player timeline with value and null', async () => {
+  it('update player timeline and server receives snake_case fields', async () => {
     const playerId = await client.registerPlayer('timeline-test');
-    await expect(
+
+    const [, event1] = await Promise.all([
       client.updatePlayerTimeline(playerId, {
         positionMs: 30_000,
         updateUnixMs: Date.now(),
         durationMs: 240_000,
         rate: 1.0,
       }),
-    ).resolves.toBeUndefined();
-    await expect(client.updatePlayerTimeline(playerId, null)).resolves.toBeUndefined();
+      server.waitForReceived('update_player_timeline'),
+    ]);
+    expect(event1.playerId).toBe(playerId);
+    expect(event1['timeline']).toMatchObject({
+      position_ms: 30_000,
+      duration_ms: 240_000,
+      rate: 1.0,
+    });
+
+    const [, event2] = await Promise.all([
+      client.updatePlayerTimeline(playerId, null),
+      server.waitForReceived('update_player_timeline'),
+    ]);
+    expect(event2['timeline']).toBeNull();
   });
 
-  it('update player metadata for all text slots', async () => {
+  it('update player metadata and server receives correct slot and value', async () => {
     const playerId = await client.registerPlayer('metadata-test');
-    await expect(client.updatePlayerMetadata(playerId, 'current_title', 'My Song')).resolves.toBeUndefined();
-    await expect(client.updatePlayerMetadata(playerId, 'current_author', 'My Artist')).resolves.toBeUndefined();
-    await expect(client.updatePlayerMetadata(playerId, 'current_album', 'My Album')).resolves.toBeUndefined();
-    await expect(client.updatePlayerMetadata(playerId, 'current_genre', 'Jazz')).resolves.toBeUndefined();
-    await expect(client.updatePlayerMetadata(playerId, 'current_title', null)).resolves.toBeUndefined();
+
+    async function checkMeta(metadataId: string, text: string | null) {
+      const [, event] = await Promise.all([
+        client.updatePlayerMetadata(playerId, metadataId as Parameters<typeof client.updatePlayerMetadata>[1], text),
+        server.waitForReceived('update_player_metadata'),
+      ]);
+      expect(event.playerId).toBe(playerId);
+      expect(event['metadataId']).toBe(metadataId);
+      expect(event['text']).toBe(text);
+    }
+
+    await checkMeta('current_title', 'My Song');
+    await checkMeta('current_author', 'My Artist');
+    await checkMeta('current_album', 'My Album');
+    await checkMeta('current_genre', 'Jazz');
+    await checkMeta('current_title', null);
   });
 
-  it('update full player state', async () => {
+  it('update full player state and server receives complete structure', async () => {
     const playerId = await client.registerPlayer('state-test');
-    await expect(
-      client.updatePlayerState(playerId, {
-        status: 'playing',
-        timeline: { positionMs: 1000, updateUnixMs: Date.now(), durationMs: 5000, rate: 1.0 },
-        texts: { title: 'Track', artist: 'Artist', album: null, genre: null },
-      }),
-    ).resolves.toBeUndefined();
+    const state: PlayerState = {
+      status: 'playing',
+      timeline: { positionMs: 1000, updateUnixMs: Date.now(), durationMs: 5000, rate: 1.0 },
+      texts: { title: 'Track', artist: 'Artist', album: null, genre: null },
+    };
+
+    const [, event] = await Promise.all([
+      client.updatePlayerState(playerId, state),
+      server.waitForReceived('update_player_state'),
+    ]);
+    expect(event.playerId).toBe(playerId);
+    const received = event['state'] as Record<string, unknown>;
+    expect(received['status']).toBe('playing');
+    expect(received['timeline']).toMatchObject({
+      position_ms: 1000,
+      duration_ms: 5000,
+      rate: 1.0,
+    });
+    expect(received['texts']).toEqual({
+      title: 'Track',
+      artist: 'Artist',
+      album: null,
+      genre: null,
+    });
   });
 
   it('get player assigned device returns null before assignment', async () => {
@@ -109,16 +166,26 @@ describe.skipIf(!serverBin)('FsctIpcClient integration', () => {
     expect(info2.serialNumber).toBeNull();
   });
 
-  it('emits deviceChanged notification from server', async () => {
-    // The mock emits Added(DEVICE_ID_1) 200ms after the first subscribe_device_changes call.
-    // startTestServer's probe connection triggered that first call, so the timer is already running.
-    const received: DeviceChangeEvent[] = [];
-    client.on('deviceChanged', (e: DeviceChangeEvent) => received.push(e));
+  it('emits deviceChanged notification triggered via stdin command', async () => {
+    const eventPromise = new Promise<DeviceChangeEvent>((resolve) => {
+      client.once('deviceChanged', (e: DeviceChangeEvent) => resolve(e));
+    });
 
-    await new Promise<void>((r) => setTimeout(r, 500));
+    server.emitDeviceChanged('added', DEVICE_ID_1);
 
-    expect(received).toHaveLength(1);
-    expect(received[0]).toEqual({ event: 'added', deviceId: DEVICE_ID_1 });
+    const event = await eventPromise;
+    expect(event).toEqual({ event: 'added', deviceId: DEVICE_ID_1 });
+  });
+
+  it('emits deviceChanged removed notification', async () => {
+    const eventPromise = new Promise<DeviceChangeEvent>((resolve) => {
+      client.once('deviceChanged', (e: DeviceChangeEvent) => resolve(e));
+    });
+
+    server.emitDeviceChanged('removed', DEVICE_ID_2);
+
+    const event = await eventPromise;
+    expect(event).toEqual({ event: 'removed', deviceId: DEVICE_ID_2 });
   });
 
   it('rejects with FsctError(-32000) for unknown device', async () => {
