@@ -29,6 +29,11 @@ import {
 } from './protocol.js';
 import type { DeviceChangeEvent } from './types.js';
 
+/** Default per-call timeout for Mux.call (ms). IPC calls hit in-memory state on the driver
+ * and should return in milliseconds; anything past this points to a stuck driver. Pass 0
+ * explicitly to disable. */
+export const DEFAULT_CALL_TIMEOUT_MS = 5000;
+
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -65,8 +70,9 @@ export class Mux extends EventEmitter {
     return this.#destroyed;
   }
 
-  /** Send an RPC call and return a Promise that resolves with the result value. */
-  call<T>(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  /** Send an RPC call and return a Promise that resolves with the result value.
+   *  When `timeoutMs` is omitted, `DEFAULT_CALL_TIMEOUT_MS` is used. Pass `0` to disable. */
+  call<T>(method: string, params: Record<string, unknown>, timeoutMs: number = DEFAULT_CALL_TIMEOUT_MS): Promise<T> {
     if (this.#destroyed) {
       return Promise.reject(new Error('IPC connection closed'));
     }
@@ -100,7 +106,7 @@ export class Mux extends EventEmitter {
         }
       });
 
-      if (timeoutMs !== undefined && timeoutMs > 0) {
+      if (timeoutMs > 0) {
         entry.timer = setTimeout(() => {
           const cb = this.pending.get(id);
           if (!cb) return;

@@ -194,4 +194,18 @@ describe('Mux', () => {
     mux.destroy();
     await expect(mux.call<unknown>('any', {})).rejects.toThrow('IPC connection closed');
   });
+
+  it('passing timeoutMs: 0 disables the timeout', async () => {
+    // With timeoutMs: 0, the call must NOT reject on its own; only socket close should reject it.
+    const p = mux.call<unknown>('never_responds', {}, 0);
+    // Race against a short delay; the call should still be pending.
+    const winner = await Promise.race([
+      p.then(() => 'resolved').catch(() => 'rejected'),
+      new Promise<string>((r) => setTimeout(() => r('pending'), 100)),
+    ]);
+    expect(winner).toBe('pending');
+    // Cleanup: closing the socket rejects the still-pending call.
+    p.catch(() => {});
+    serverSocket.destroy();
+  });
 });
