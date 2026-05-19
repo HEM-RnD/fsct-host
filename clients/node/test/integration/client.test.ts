@@ -7,7 +7,7 @@ import type { TestServer } from './helpers.js';
 const DEVICE_ID_1 = '11111111-0000-0000-0000-000000000001';
 const DEVICE_ID_2 = '22222222-0000-0000-0000-000000000002';
 
-describe.skipIf(!serverBin)('FsctIpcClient integration', () => {
+describe('FsctIpcClient integration', () => {
   let server: TestServer;
   let client: FsctIpcClient;
 
