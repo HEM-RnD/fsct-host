@@ -78,7 +78,14 @@ export class Mux extends EventEmitter {
       });
 
       const request: RpcRequest = { jsonrpc: '2.0', id, method, params };
-      const line = JSON.stringify(request) + '\n';
+      const serialized = JSON.stringify(request);
+      if (Buffer.byteLength(serialized, 'utf8') > MAX_LINE_BYTES) {
+        this.pending.delete(id);
+        reject(new Error('IPC request exceeds maximum line size'));
+        return;
+      }
+
+      const line = serialized + '\n';
 
       this.socket.write(line, (err) => {
         if (err) {
@@ -93,7 +100,7 @@ export class Mux extends EventEmitter {
   }
 
   private dispatchLine(line: string): void {
-    if (line.length > MAX_LINE_BYTES) {
+    if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
       this.failAll(new Error('IPC message exceeds maximum line size'));
       this.socket.destroy();
       return;
@@ -112,7 +119,13 @@ export class Mux extends EventEmitter {
 
     if (isRpcResponse(parsed)) {
       const id = typeof parsed.id === 'number' ? parsed.id : null;
-      if (id === null) return;
+      if (id === null) {
+        if (parsed.error) {
+          this.failAll(new FsctError(parsed.error.code, parsed.error.message));
+          this.socket.destroy();
+        }
+        return;
+      }
 
       const cb = this.pending.get(id);
       if (!cb) return;

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as net from 'node:net';
 import { Mux } from '../../src/mux.js';
-import { FsctError } from '../../src/protocol.js';
+import { FsctError, MAX_LINE_BYTES } from '../../src/protocol.js';
 import type { DeviceChangeEvent } from '../../src/types.js';
 
 // Creates an in-process connected socket pair via a loopback TCP server.
@@ -120,6 +120,24 @@ describe('Mux', () => {
     await new Promise<void>((r) => setImmediate(r));
     writeResponse(serverSocket, { jsonrpc: '2.0', id: 1, result: 99 });
     expect(await promise).toBe(99);
+  });
+
+  it('rejects pending calls when an incoming line exceeds the byte limit', async () => {
+    const promise = mux.call<unknown>('slow', {});
+    await new Promise<void>((r) => setImmediate(r));
+
+    const oversizedByBytes = '€'.repeat(Math.floor(MAX_LINE_BYTES / 3) + 1);
+    serverSocket.write(oversizedByBytes + '\n');
+
+    await expect(promise).rejects.toThrow('IPC message exceeds maximum line size');
+  });
+
+  it('rejects pending calls on a parse-error response without an ID', async () => {
+    const promise = mux.call<unknown>('bad_json', {});
+    await new Promise<void>((r) => setImmediate(r));
+    writeResponse(serverSocket, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } });
+
+    await expect(promise).rejects.toSatisfy((e) => e instanceof FsctError && e.code === -32700);
   });
 
   it('ignores a response with an unknown ID', async () => {

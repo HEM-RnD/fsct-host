@@ -23,8 +23,8 @@ export function testSocketPath(): string {
 }
 
 function buildTestServer(): void {
-  console.log('ipc_test_server not found, running: cargo build --bin ipc_test_server');
-  const result = child_process.spawnSync('cargo', ['build', '--bin', 'ipc_test_server'], {
+  console.log('ipc_test_server not found, running: cargo build --bin ipc_test_server --features test-utils');
+  const result = child_process.spawnSync('cargo', ['build', '--bin', 'ipc_test_server', '--features', 'test-utils'], {
     cwd: repoRoot,
     stdio: 'inherit',
   });
@@ -32,7 +32,7 @@ function buildTestServer(): void {
     throw new Error(`Failed to run cargo: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error('cargo build --bin ipc_test_server failed');
+    throw new Error('cargo build --bin ipc_test_server --features test-utils failed');
   }
 }
 

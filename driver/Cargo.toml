@@ -33,6 +33,14 @@ nusb = { git = "https://github.com/HEM-RnD/nusb.git", tag = "v0.1.14-hem" }
 bitflags = "2.8.0"
 thiserror.workspace = true
 
+[features]
+test-utils = []
+
+[[bin]]
+name = "ipc_test_server"
+path = "src/bin/ipc_test_server.rs"
+required-features = ["test-utils"]
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61.3", features = [
     "Media_Control",

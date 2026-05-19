@@ -53,8 +53,17 @@ async function openSocket(path: string): Promise<net.Socket> {
   const attempt = (): Promise<net.Socket> =>
     new Promise((resolve, reject) => {
       const socket = net.createConnection({ path });
-      socket.once('connect', () => resolve(socket));
-      socket.once('error', reject);
+      const onConnect = () => {
+        socket.off('error', onError);
+        resolve(socket);
+      };
+      const onError = (err: Error) => {
+        socket.off('connect', onConnect);
+        socket.destroy();
+        reject(err);
+      };
+      socket.once('connect', onConnect);
+      socket.once('error', onError);
     });
 
   if (process.platform !== 'win32') {
@@ -144,7 +153,8 @@ function playerStateToWire(s: PlayerState): PlayerStateWire {
  *
  * Emits:
  * - 'deviceChanged' (DeviceChangeEvent) — device added/removed notifications
- * - 'error' (Error) — connection errors
+ * - 'error' (Error) — connection errors; attach a listener to avoid Node.js
+ *   treating emitted errors as uncaught exceptions
  * - 'close' () — connection closed
  */
 export class FsctIpcClient extends EventEmitter {
@@ -259,7 +269,7 @@ export class FsctIpcClient extends EventEmitter {
 
   async getPlayerAssignedDevice(playerId: PlayerId): Promise<DeviceId | null> {
     const result = await this.mux.call<string | null>('get_player_assigned_device', { player_id: playerId });
-    return result ?? null;
+    return result;
   }
 
   async getDetectedDevices(): Promise<DeviceId[]> {
@@ -275,4 +285,3 @@ export class FsctIpcClient extends EventEmitter {
     return deviceInfoFromWire(result);
   }
 }
-
