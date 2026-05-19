@@ -22,14 +22,18 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "LICENSE-FSCT.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
-    "test:integration": "vitest run test/integration"
+    "test:integration": "vitest run test/integration",
+    "prepack": "node scripts/copy-licenses.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
