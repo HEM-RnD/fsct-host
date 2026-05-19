@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-// Internal module: JSON-RPC 2.0 message types and NDJSON framing helpers.
+// Internal module: JSON-RPC 2.0 message types and framing constants.
 
 /** Maximum allowed line length in bytes (matches server-side MAX_LINE_BYTES) */
 export const MAX_LINE_BYTES = 1 << 20; // 1 MiB
@@ -84,38 +84,4 @@ export class FsctError extends Error {
     super(message);
     this.name = 'FsctError';
   }
-}
-
-/**
- * Appends a new data chunk to the existing line buffer, extracts complete NDJSON lines,
- * and returns the remaining partial line.
- *
- * Returns `oversized: true` if any line (including the current accumulation) exceeds
- * MAX_LINE_BYTES, in which case `lines` and `remainder` are unreliable and the caller
- * should close the connection.
- */
-export function parseNdjsonChunk(
-  buffer: string,
-  chunk: string,
-): { lines: string[]; remainder: string; oversized: boolean } {
-  const combined = buffer + chunk;
-
-  if (combined.length > MAX_LINE_BYTES) {
-    return { lines: [], remainder: '', oversized: true };
-  }
-
-  const parts = combined.split('\n');
-  const lines: string[] = [];
-
-  // All parts except the last are complete lines.
-  for (let i = 0; i < parts.length - 1; i++) {
-    const line = parts[i] as string;
-    if (line.length > MAX_LINE_BYTES) {
-      return { lines, remainder: '', oversized: true };
-    }
-    lines.push(line);
-  }
-
-  const remainder = parts[parts.length - 1] ?? '';
-  return { lines, remainder, oversized: false };
 }

@@ -18,13 +18,13 @@
 // Internal module: NDJSON read loop, request/response multiplexer, notification dispatch.
 
 import { EventEmitter } from 'node:events';
+import { createInterface } from 'node:readline';
 import type { Socket } from 'node:net';
 import {
   FsctError,
   isRpcNotification,
   isRpcResponse,
   MAX_LINE_BYTES,
-  parseNdjsonChunk,
   type RpcRequest,
 } from './protocol.js';
 import type { DeviceChangeEvent } from './types.js';
@@ -45,24 +45,28 @@ interface PendingCall {
  */
 export class Mux extends EventEmitter {
   private readonly pending = new Map<number, PendingCall>();
+  private readonly rl: ReturnType<typeof createInterface>;
   private nextId = 1;
-  private lineBuffer = '';
-  private _destroyed = false;
+  #destroyed = false;
 
   constructor(private readonly socket: Socket) {
     super();
-    socket.on('data', (chunk: Buffer) => this.onData(chunk));
     socket.on('error', (err: Error) => this.onError(err));
     socket.on('close', () => this.onClose());
+    this.rl = createInterface({ input: socket, crlfDelay: Infinity });
+    // Node.js readline re-emits socket errors on the Interface; suppress to avoid
+    // double-handling since the socket 'error' listener below already handles them.
+    this.rl.on('error', () => {});
+    this.rl.on('line', (line: string) => this.dispatchLine(line));
   }
 
   get destroyed(): boolean {
-    return this._destroyed;
+    return this.#destroyed;
   }
 
   /** Send an RPC call and return a Promise that resolves with the result value. */
-  call<T>(method: string, params: object): Promise<T> {
-    if (this._destroyed) {
+  call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    if (this.#destroyed) {
       return Promise.reject(new Error('IPC connection closed'));
     }
 
@@ -88,22 +92,13 @@ export class Mux extends EventEmitter {
     });
   }
 
-  private onData(chunk: Buffer): void {
-    const result = parseNdjsonChunk(this.lineBuffer, chunk.toString('utf8'));
-    this.lineBuffer = result.remainder;
-
-    if (result.oversized) {
+  private dispatchLine(line: string): void {
+    if (line.length > MAX_LINE_BYTES) {
       this.failAll(new Error('IPC message exceeds maximum line size'));
       this.socket.destroy();
       return;
     }
 
-    for (const line of result.lines) {
-      this.dispatchLine(line);
-    }
-  }
-
-  private dispatchLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) return;
 
@@ -155,24 +150,28 @@ export class Mux extends EventEmitter {
   }
 
   private onError(err: Error): void {
+    this.rl.close();
+    this.socket.destroy();
     this.failAll(err);
     this.emit('error', err);
   }
 
   private onClose(): void {
+    this.rl.close();
     this.failAll(new Error('IPC connection closed'));
     this.emit('close');
   }
 
   /** Destroy the underlying socket, rejecting all pending calls. */
   destroy(): void {
+    this.rl.close();
     this.failAll(new Error('IPC connection closed'));
     this.socket.destroy();
   }
 
   private failAll(err: Error): void {
-    if (this._destroyed) return;
-    this._destroyed = true;
+    if (this.#destroyed) return;
+    this.#destroyed = true;
     for (const cb of this.pending.values()) {
       cb.reject(err);
     }
