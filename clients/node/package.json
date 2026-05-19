@@ -1,6 +1,6 @@
 {
   "name": "@hemspzoo/fsct-client",
-  "version": "0.1.0",
+  "version": "0.2.13",
   "description": "Node.js IPC client for the FSCT driver",
   "author": "HEM Sp. z o.o.",
   "license": "Apache-2.0",
