@@ -133,11 +133,51 @@ describe('Mux', () => {
   });
 
   it('rejects pending calls on a parse-error response without an ID', async () => {
+    mux.on('error', () => {});
     const promise = mux.call<unknown>('bad_json', {});
     await new Promise<void>((r) => setImmediate(r));
     writeResponse(serverSocket, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } });
 
     await expect(promise).rejects.toSatisfy((e) => e instanceof FsctError && e.code === -32700);
+  });
+
+  it('emits error exactly once on a parse-error response without an ID', async () => {
+    const errors: Error[] = [];
+    mux.on('error', (e: Error) => errors.push(e));
+    const promise = mux.call<unknown>('bad_json', {});
+    await new Promise<void>((r) => setImmediate(r));
+    writeResponse(serverSocket, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } });
+
+    await expect(promise).rejects.toThrow();
+    await new Promise<void>((r) => setTimeout(r, 20));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(FsctError);
+    expect((errors[0] as FsctError).code).toBe(-32700);
+  });
+
+  it('rejects a call when the per-call timeout fires', async () => {
+    const promise = mux.call<unknown>('never_responds', {}, 50);
+    await expect(promise).rejects.toThrow(/timed out/);
+
+    // Late response with same id must not cause a spurious rejection.
+    writeResponse(serverSocket, { jsonrpc: '2.0', id: 1, result: 'late' });
+    await new Promise<void>((r) => setTimeout(r, 20));
+
+    // A subsequent normal call should still work fine.
+    const p2 = mux.call<number>('ping', {});
+    await new Promise<void>((r) => setImmediate(r));
+    writeResponse(serverSocket, { jsonrpc: '2.0', id: 2, result: 5 });
+    expect(await p2).toBe(5);
+  });
+
+  it('clears the timeout when the response arrives in time', async () => {
+    const promise = mux.call<number>('quick', {}, 1000);
+    await new Promise<void>((r) => setImmediate(r));
+    writeResponse(serverSocket, { jsonrpc: '2.0', id: 1, result: 11 });
+    expect(await promise).toBe(11);
+
+    // Wait past a hypothetical short timeout window; no orphan rejection should fire.
+    await new Promise<void>((r) => setTimeout(r, 50));
   });
 
   it('ignores a response with an unknown ID', async () => {

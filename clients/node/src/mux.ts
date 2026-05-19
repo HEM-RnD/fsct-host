@@ -32,6 +32,7 @@ import type { DeviceChangeEvent } from './types.js';
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+  timer?: NodeJS.Timeout;
 }
 
 /**
@@ -65,17 +66,18 @@ export class Mux extends EventEmitter {
   }
 
   /** Send an RPC call and return a Promise that resolves with the result value. */
-  call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  call<T>(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T> {
     if (this.#destroyed) {
       return Promise.reject(new Error('IPC connection closed'));
     }
 
     return new Promise<T>((resolve, reject) => {
       const id = this.nextId++;
-      this.pending.set(id, {
+      const entry: PendingCall = {
         resolve: resolve as (value: unknown) => void,
         reject,
-      });
+      };
+      this.pending.set(id, entry);
 
       const request: RpcRequest = { jsonrpc: '2.0', id, method, params };
       const serialized = JSON.stringify(request);
@@ -92,10 +94,20 @@ export class Mux extends EventEmitter {
           const cb = this.pending.get(id);
           if (cb) {
             this.pending.delete(id);
+            if (cb.timer) clearTimeout(cb.timer);
             cb.reject(err);
           }
         }
       });
+
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        entry.timer = setTimeout(() => {
+          const cb = this.pending.get(id);
+          if (!cb) return;
+          this.pending.delete(id);
+          cb.reject(new Error(`IPC request timed out after ${timeoutMs}ms: method=${method}`));
+        }, timeoutMs);
+      }
     });
   }
 
@@ -121,7 +133,9 @@ export class Mux extends EventEmitter {
       const id = typeof parsed.id === 'number' ? parsed.id : null;
       if (id === null) {
         if (parsed.error) {
-          this.failAll(new FsctError(parsed.error.code, parsed.error.message));
+          const err = new FsctError(parsed.error.code, parsed.error.message);
+          this.emit('error', err);
+          this.failAll(err);
           this.socket.destroy();
         }
         return;
@@ -130,6 +144,7 @@ export class Mux extends EventEmitter {
       const cb = this.pending.get(id);
       if (!cb) return;
       this.pending.delete(id);
+      if (cb.timer) clearTimeout(cb.timer);
 
       if (parsed.error) {
         cb.reject(new FsctError(parsed.error.code, parsed.error.message));
@@ -186,6 +201,7 @@ export class Mux extends EventEmitter {
     if (this.#destroyed) return;
     this.#destroyed = true;
     for (const cb of this.pending.values()) {
+      if (cb.timer) clearTimeout(cb.timer);
       cb.reject(err);
     }
     this.pending.clear();
