@@ -34,7 +34,23 @@ ESCAPED_VERSION=$(printf '%s' "$VERSION" | sed 's/[&|\/\\]/\\&/g')
 sed -i.bak -E "s|^version = \"0\\.0\\.0-dev\"$|version = \"$ESCAPED_VERSION\"|" Cargo.toml
 rm -f Cargo.toml.bak
 
-cargo update -p fsct-core -p fsct-driver -p fsct-client --offline
+awk -v version="$VERSION" '
+  /^name = "fsct-(client|core|driver)"$/ {
+    in_workspace_package = 1
+    print
+    next
+  }
+  in_workspace_package && /^version = / {
+    print "version = \"" version "\""
+    in_workspace_package = 0
+    next
+  }
+  /^\[\[package\]\]$/ {
+    in_workspace_package = 0
+  }
+  { print }
+' Cargo.lock > Cargo.lock.tmp
+mv Cargo.lock.tmp Cargo.lock
 
 # package.json — `npm version` is the canonical tool; it also updates package-lock.json.
 # Linux .deb cross-build containers do not have npm — skip there.
