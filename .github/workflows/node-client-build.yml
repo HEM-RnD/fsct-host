@@ -1,0 +1,106 @@
+name: Node Client Build
+
+on:
+  push:
+    branches: [ '**' ]
+    tags: [ 'v*' ]
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - '.github/workflows/build-cross-images.yml'
+  pull_request:
+    branches: [ main, develop, 'release/*', 'hotfix/*' ]
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - '.github/workflows/build-cross-images.yml'
+  release:
+    types: [ created ]
+  workflow_dispatch:
+
+concurrency:
+  group: node-client-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build @hemspzoo/fsct-client
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: clients/node/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-node-client-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-node-client-
+            ${{ runner.os }}-cargo-
+
+      - name: Build ipc_test_server (for integration tests)
+        run: cargo build --bin ipc_test_server --features test-utils
+
+      - name: Install npm dependencies
+        working-directory: clients/node
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: clients/node
+        run: npm run typecheck
+
+      - name: Build package
+        working-directory: clients/node
+        run: npm run build
+
+      - name: Run unit tests
+        working-directory: clients/node
+        run: npm run test:unit
+
+      - name: Run integration tests
+        working-directory: clients/node
+        run: npm run test:integration
+
+      - name: Pack npm tarball
+        working-directory: clients/node
+        run: npm pack
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fsct-client-node-${{ matrix.os }}-${{ github.run_number }}
+          path: clients/node/hemspzoo-fsct-client-*.tgz
+          retention-days: 30
+
+      - name: Upload to Release
+        if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')) && matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            clients/node/hemspzoo-fsct-client-*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

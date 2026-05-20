@@ -13,7 +13,7 @@ Rust workspace implementing Ferrum Streaming Control Technology™ (FSCT) — a 
 | `core/` | `fsct-core` (lib: `fsct`) | Platform-agnostic domain types, protocol definitions, and the `FsctDriver` trait |
 | `driver/` | `fsct-driver` | Long-running service/daemon: USB management, player management, IPC server |
 | `clients/rust/` | `fsct-client` | Rust IPC client SDK wrapping `FsctDriver` over named pipes / Unix sockets |
-| `bindings/node/` | `fsct-node` (napi) | Node.js bindings (built separately with npm) — **deprecated, subject to change** |
+| `clients/node/` | `@hemspzoo/fsct-client` | TypeScript IPC client SDK for Node.js applications |
 
 ## Build Commands
 
@@ -30,8 +30,11 @@ cross build --target aarch64-unknown-linux-gnu --release
 cross build --target armv7-unknown-linux-gnueabihf --release
 cross build --target x86_64-unknown-linux-gnu --release
 
-# Node.js bindings
+# Legacy native Node.js bindings
 cd bindings/node && npm install && npm run build
+
+# Node.js IPC client
+cd clients/node && npm install && npm run build
 ```
 
 ## Testing

@@ -87,6 +87,28 @@ impl IpcServer {
 
     pub async fn serve(&mut self) -> anyhow::Result<()> {
         let listener = self.init_listener().await?;
+        self.accept_listener(listener).await
+    }
+
+    pub async fn init_listener(&mut self) -> anyhow::Result<transport::EndpointListener> {
+        match &mut self.endpoint {
+            EndpointDefinitionType::Path(path) => {
+                info!("FSCT IPC server listening on: {}", path);
+                transport::EndpointListener::from_path(path.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
+            }
+            #[cfg(unix)]
+            EndpointDefinitionType::Fd(fd) => {
+                let fd = fd.take().expect("IPC server already initialized with a socket fd");
+                info!("FSCT IPC server listening on fd: {}", fd.as_raw_fd());
+                transport::EndpointListener::from_fd(fd)
+                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
+            }
+        }
+    }
+
+    pub async fn accept_listener(&self, listener: transport::EndpointListener) -> anyhow::Result<()> {
         let incoming = listener.listen()?;
         tokio::pin!(incoming);
         loop {
@@ -106,24 +128,6 @@ impl IpcServer {
             }
         }
         Ok(())
-    }
-
-    async fn init_listener(&mut self) -> anyhow::Result<transport::EndpointListener> {
-        match &mut self.endpoint {
-            EndpointDefinitionType::Path(path) => {
-                info!("FSCT IPC server listening on: {}", path);
-                transport::EndpointListener::from_path(path.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
-            }
-            #[cfg(unix)]
-            EndpointDefinitionType::Fd(fd) => {
-                let fd = fd.take().expect("IPC server already initialized with a socket fd");
-                info!("FSCT IPC server listening on fd: {}", fd.as_raw_fd());
-                transport::EndpointListener::from_fd(fd)
-                    .map_err(|e| anyhow::anyhow!("Failed to start IPC endpoint: {e}"))
-            }
-        }
     }
 
     pub async fn shutdown(&self) {
