@@ -1,0 +1,154 @@
+name: Compute Version
+
+on:
+  workflow_call:
+    inputs:
+      publish_target_override:
+        description: 'Override publish target: none / dev / next / latest. Empty = auto from ref.'
+        type: string
+        required: false
+        default: ''
+      create_release_override:
+        description: 'Force create a GitHub Release. Only effective via workflow_dispatch.'
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      version:
+        description: 'Full SemVer (e.g. 0.2.14-alpha.5, 0.2.14-rc.1, 0.2.14).'
+        value: ${{ jobs.compute.outputs.version }}
+      cargo_version:
+        description: 'Version string for cargo set-version (same as version).'
+        value: ${{ jobs.compute.outputs.cargo_version }}
+      msi_version:
+        description: '4-part numeric version for Windows MSI ProductVersion (X.Y.Z.B).'
+        value: ${{ jobs.compute.outputs.msi_version }}
+      npm_tag:
+        description: 'npm dist-tag: latest / next / dev / skip.'
+        value: ${{ jobs.compute.outputs.npm_tag }}
+      is_release:
+        description: 'true when ref is a final release tag (vX.Y.Z).'
+        value: ${{ jobs.compute.outputs.is_release }}
+      is_prerelease:
+        description: 'true when ref is an rc tag (vX.Y.Z-rc.N).'
+        value: ${{ jobs.compute.outputs.is_prerelease }}
+      should_publish_npm:
+        description: 'true when this build should publish to npm.'
+        value: ${{ jobs.compute.outputs.should_publish_npm }}
+      should_create_release:
+        description: 'true when this build should create a GitHub Release.'
+        value: ${{ jobs.compute.outputs.should_create_release }}
+
+jobs:
+  compute:
+    name: GitVersion
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.final.outputs.version }}
+      cargo_version: ${{ steps.final.outputs.cargo_version }}
+      msi_version: ${{ steps.final.outputs.msi_version }}
+      npm_tag: ${{ steps.final.outputs.npm_tag }}
+      is_release: ${{ steps.final.outputs.is_release }}
+      is_prerelease: ${{ steps.final.outputs.is_prerelease }}
+      should_publish_npm: ${{ steps.final.outputs.should_publish_npm }}
+      should_create_release: ${{ steps.final.outputs.should_create_release }}
+    steps:
+      - name: Checkout (full history for GitVersion)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3
+        with:
+          versionSpec: '6.x'
+
+      - name: Run GitVersion
+        id: gv
+        uses: gittools/actions/gitversion/execute@v3
+        with:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      - name: Compute final outputs
+        id: final
+        shell: bash
+        env:
+          GITVERSION_SEMVER: ${{ steps.gv.outputs.semVer }}
+          GH_REF: ${{ github.ref }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_RUN_NUMBER: ${{ github.run_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PUBLISH_TARGET_OVERRIDE: ${{ inputs.publish_target_override }}
+          CREATE_RELEASE_OVERRIDE: ${{ inputs.create_release_override }}
+        run: |
+          set -euo pipefail
+          VERSION="$GITVERSION_SEMVER"
+
+          # PR fallback: patch the version if GitVersion's {Number} placeholder did not expand.
+          if [[ "$GH_EVENT_NAME" == "pull_request" && -n "${PR_NUMBER:-}" ]]; then
+            if [[ "$VERSION" != *"-pr.${PR_NUMBER}."* ]]; then
+              echo "::warning::GitVersion did not expand {Number} ('$VERSION'); patching PR version."
+              BASE="${VERSION%%-*}"
+              COMMITS="${VERSION##*.}"
+              VERSION="${BASE}-pr.${PR_NUMBER}.${COMMITS}"
+            fi
+          fi
+
+          # Detect tag kind from the ref.
+          IS_RELEASE=false
+          IS_PRERELEASE=false
+          NPM_TAG=skip
+          if [[ "$GH_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            IS_RELEASE=true
+            NPM_TAG=latest
+          elif [[ "$GH_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            IS_PRERELEASE=true
+            NPM_TAG=next
+          fi
+
+          SHOULD_PUBLISH_NPM=false
+          SHOULD_CREATE_RELEASE=false
+          if [[ "$IS_RELEASE" == "true" || "$IS_PRERELEASE" == "true" ]]; then
+            SHOULD_PUBLISH_NPM=true
+            SHOULD_CREATE_RELEASE=true
+          fi
+
+          # workflow_dispatch overrides.
+          if [[ -n "$PUBLISH_TARGET_OVERRIDE" && "$PUBLISH_TARGET_OVERRIDE" != "none" ]]; then
+            NPM_TAG="$PUBLISH_TARGET_OVERRIDE"
+            SHOULD_PUBLISH_NPM=true
+          fi
+          if [[ "$CREATE_RELEASE_OVERRIDE" == "true" ]]; then
+            SHOULD_CREATE_RELEASE=true
+          fi
+
+          # MSI version: X.Y.Z.B (Windows MSI cannot encode SemVer prerelease).
+          BASE_NUM="${VERSION%%-*}"
+          MSI_VERSION="${BASE_NUM}.${GH_RUN_NUMBER}"
+
+          {
+            echo "version=$VERSION"
+            echo "cargo_version=$VERSION"
+            echo "msi_version=$MSI_VERSION"
+            echo "npm_tag=$NPM_TAG"
+            echo "is_release=$IS_RELEASE"
+            echo "is_prerelease=$IS_PRERELEASE"
+            echo "should_publish_npm=$SHOULD_PUBLISH_NPM"
+            echo "should_create_release=$SHOULD_CREATE_RELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Computed version"
+            echo ""
+            echo "| Output | Value |"
+            echo "|--------|-------|"
+            echo "| version | \`$VERSION\` |"
+            echo "| cargo_version | \`$VERSION\` |"
+            echo "| msi_version | \`$MSI_VERSION\` |"
+            echo "| npm_tag | \`$NPM_TAG\` |"
+            echo "| is_release | \`$IS_RELEASE\` |"
+            echo "| is_prerelease | \`$IS_PRERELEASE\` |"
+            echo "| should_publish_npm | \`$SHOULD_PUBLISH_NPM\` |"
+            echo "| should_create_release | \`$SHOULD_CREATE_RELEASE\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

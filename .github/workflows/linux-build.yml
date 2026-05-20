@@ -1,26 +1,16 @@
 name: Build Debian packages
 
 on:
-  push:
-    branches: [ '*' ]
-    tags: [ 'v*' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - 'build-cross-images.yml'
-  pull_request:
-    branches: [ develop, main, 'release/**', 'hotfix/**' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - 'build-cross-images.yml'
-  release:
-    types: [ created ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Full SemVer (e.g. 0.2.14-alpha.5).'
+        type: string
+        required: true
+      cargo_version:
+        description: 'Version string passed to cargo set-version (usually identical to version).'
+        type: string
+        required: true
 
 concurrency:
   group: build-deb-${{ github.ref }}
@@ -58,6 +48,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache cargo
         uses: actions/cache@v4

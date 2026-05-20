@@ -1,26 +1,20 @@
 name: Windows Build
 
 on:
-  push:
-    branches: [ '*' ]
-    tags: [ 'v*' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  pull_request:
-    branches: [ main, develop, 'release/*', 'hotfix/*' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  release:
-    types: [ created ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Full SemVer (e.g. 0.2.14-rc.1).'
+        type: string
+        required: true
+      cargo_version:
+        description: 'Version string passed to cargo set-version.'
+        type: string
+        required: true
+      msi_version:
+        description: '4-part numeric version for WiX ProductVersion (X.Y.Z.B).'
+        type: string
+        required: true
 
 jobs:
   build-windows:
@@ -35,6 +29,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -79,27 +77,18 @@ jobs:
       - name: Build Windows Installer (with Azure Key Vault signing)
         if: ${{ env.AZURE_KEY_VAULT_URL != '' && env.AZURE_CERTIFICATE_NAME != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != '' && env.AZURE_CLIENT_SECRET != '' }}
         run: |
-          .\script\build_windows_installer.ps1 -UseAzureKeyVault -AzureKeyVaultUrl "${{ env.AZURE_KEY_VAULT_URL }}" -AzureCertificateName "${{ env.AZURE_CERTIFICATE_NAME }}" -AzureTenantId "${{ env.AZURE_TENANT_ID }}" -AzureClientId "${{ env.AZURE_CLIENT_ID }}" -AzureClientSecret "${{ env.AZURE_CLIENT_SECRET }}" -BuildNumber ${{ github.run_number }}
+          .\script\build_windows_installer.ps1 -UseAzureKeyVault -AzureKeyVaultUrl "${{ env.AZURE_KEY_VAULT_URL }}" -AzureCertificateName "${{ env.AZURE_CERTIFICATE_NAME }}" -AzureTenantId "${{ env.AZURE_TENANT_ID }}" -AzureClientId "${{ env.AZURE_CLIENT_ID }}" -AzureClientSecret "${{ env.AZURE_CLIENT_SECRET }}" -MsiVersion "${{ inputs.msi_version }}"
         shell: powershell
 
       - name: Build Windows Installer (unsigned)
         if: ${{ env.AZURE_KEY_VAULT_URL == '' || env.AZURE_CERTIFICATE_NAME == '' || env.AZURE_TENANT_ID == '' || env.AZURE_CLIENT_ID == '' || env.AZURE_CLIENT_SECRET == '' }}
         run: |
-          .\script\build_windows_installer.ps1 -NoSign -BuildNumber ${{ github.run_number }}
+          .\script\build_windows_installer.ps1 -NoSign -MsiVersion "${{ inputs.msi_version }}"
         shell: powershell
 
       - name: Upload EXE Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fsct-driver-installer-exe-${{ github.run_number }}
+          name: fsct-driver-installer-windows
           path: target\wix_build\FSCTDriverInstaller.exe
           retention-days: 30
-
-      - name: Upload to Release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            target\wix_build\FSCTDriverInstaller.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

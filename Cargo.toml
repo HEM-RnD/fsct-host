@@ -3,7 +3,8 @@ resolver = "3"
 members = ["clients/rust", "core", "driver"]
 
 [workspace.package]
-version = "0.2.13"
+# Placeholder. Real version is injected by CI from GitVersion (see GitVersion.yml).
+version = "0.0.0-dev"
 authors = ["Paweł Gorgoń", "HEM Sp. z o.o."]
 description = "Host implementation of Ferrum Streaming Control Technology™ (FSCT). Additional licensing terms apply as described in LICENSE-FSCT.md."
 license = "Apache-2.0"

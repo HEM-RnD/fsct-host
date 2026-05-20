@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - '.github/workflows/build-cross-images.yml'
+  pull_request:
+    branches: [main, develop, 'release/**', 'hotfix/**']
+    paths-ignore:
+      - '.cross/**'
+      - 'Cross.toml'
+      - '.github/workflows/build-cross-images.yml'
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: 'Publish dist-tag (none = build only, dev/next/latest = publish to npm).'
+        type: choice
+        options: [none, dev, next, latest]
+        default: 'none'
+      create_release:
+        description: 'Force-create a GitHub Release for this build.'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  version:
+    uses: ./.github/workflows/version.yml
+    with:
+      publish_target_override: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_target || '' }}
+      create_release_override: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release || false }}
+
+  build-linux:
+    needs: version
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      cargo_version: ${{ needs.version.outputs.cargo_version }}
+
+  build-windows:
+    needs: version
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      cargo_version: ${{ needs.version.outputs.cargo_version }}
+      msi_version: ${{ needs.version.outputs.msi_version }}
+    secrets: inherit
+
+  build-macos:
+    needs: version
+    uses: ./.github/workflows/macos-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      cargo_version: ${{ needs.version.outputs.cargo_version }}
+      is_release_or_prerelease: ${{ needs.version.outputs.is_release == 'true' || needs.version.outputs.is_prerelease == 'true' }}
+    secrets: inherit
+
+  build-node:
+    needs: version
+    uses: ./.github/workflows/node-client-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      cargo_version: ${{ needs.version.outputs.cargo_version }}
+
+  publish:
+    needs: [version, build-linux, build-windows, build-macos, build-node]
+    if: ${{ needs.version.outputs.should_publish_npm == 'true' || needs.version.outputs.should_create_release == 'true' }}
+    uses: ./.github/workflows/publish.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      npm_tag: ${{ needs.version.outputs.npm_tag }}
+      is_release: ${{ needs.version.outputs.is_release == 'true' }}
+      should_publish_npm: ${{ needs.version.outputs.should_publish_npm == 'true' }}
+      should_create_release: ${{ needs.version.outputs.should_create_release == 'true' }}
+    secrets: inherit
