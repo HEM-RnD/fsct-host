@@ -103,9 +103,14 @@ jobs:
             echo "::error::NPM_TOKEN secret is not set in the repository."
             exit 1
           fi
-          TARBALL=$(ls dist/hemspzoo-fsct-client-*.tgz | head -n1)
+          TARBALL=$(find dist -maxdepth 1 -name 'hemspzoo-fsct-client-*.tgz' -print -quit)
           if [[ -z "$TARBALL" ]]; then
             echo "::error::No npm tarball found in dist/."
+            exit 1
+          fi
+          TARBALL_VERSION=$(tar -xzOf "$TARBALL" package/package.json | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).version)')
+          if [[ "$TARBALL_VERSION" != "${{ inputs.version }}" ]]; then
+            echo "::error::Tarball version ($TARBALL_VERSION) != expected (${{ inputs.version }})"
             exit 1
           fi
           echo "Publishing $TARBALL with --tag ${{ inputs.npm_tag }}"

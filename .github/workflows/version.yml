@@ -38,6 +38,9 @@ on:
       should_create_release:
         description: 'true when this build should create a GitHub Release.'
         value: ${{ jobs.compute.outputs.should_create_release }}
+      should_notarize:
+        description: 'true when macOS artifacts should be notarized.'
+        value: ${{ jobs.compute.outputs.should_notarize }}
 
 jobs:
   compute:
@@ -52,6 +55,7 @@ jobs:
       is_prerelease: ${{ steps.final.outputs.is_prerelease }}
       should_publish_npm: ${{ steps.final.outputs.should_publish_npm }}
       should_create_release: ${{ steps.final.outputs.should_create_release }}
+      should_notarize: ${{ steps.final.outputs.should_notarize }}
     steps:
       - name: Checkout (full history for GitVersion)
         uses: actions/checkout@v4
@@ -88,6 +92,10 @@ jobs:
           # PR fallback: patch the version if GitVersion's {Number} placeholder did not expand.
           if [[ "$GH_EVENT_NAME" == "pull_request" && -n "${PR_NUMBER:-}" ]]; then
             if [[ "$VERSION" != *"-pr.${PR_NUMBER}."* ]]; then
+              if [[ "$VERSION" != *-* ]]; then
+                echo "::error::Unexpected GitVersion output for PR: '$VERSION'"
+                exit 1
+              fi
               echo "::warning::GitVersion did not expand {Number} ('$VERSION'); patching PR version."
               BASE="${VERSION%%-*}"
               COMMITS="${VERSION##*.}"
@@ -114,8 +122,22 @@ jobs:
             SHOULD_CREATE_RELEASE=true
           fi
 
+          SHOULD_NOTARIZE=false
+          if [[ "$IS_RELEASE" == "true" || "$IS_PRERELEASE" == "true" ]]; then
+            SHOULD_NOTARIZE=true
+          elif [[ "$GH_REF" == "refs/heads/develop" || \
+                  "$GH_REF" == "refs/heads/main" || \
+                  "$GH_REF" =~ ^refs/heads/release/.* || \
+                  "$GH_REF" =~ ^refs/heads/hotfix/.* ]]; then
+            SHOULD_NOTARIZE=true
+          fi
+
           # workflow_dispatch overrides.
           if [[ -n "$PUBLISH_TARGET_OVERRIDE" && "$PUBLISH_TARGET_OVERRIDE" != "none" ]]; then
+            if [[ "$PUBLISH_TARGET_OVERRIDE" == "latest" && "$IS_RELEASE" != "true" ]]; then
+              echo "::error::publish_target=latest is only allowed on vX.Y.Z tag refs"
+              exit 1
+            fi
             NPM_TAG="$PUBLISH_TARGET_OVERRIDE"
             SHOULD_PUBLISH_NPM=true
           fi
@@ -136,6 +158,7 @@ jobs:
             echo "is_prerelease=$IS_PRERELEASE"
             echo "should_publish_npm=$SHOULD_PUBLISH_NPM"
             echo "should_create_release=$SHOULD_CREATE_RELEASE"
+            echo "should_notarize=$SHOULD_NOTARIZE"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -151,4 +174,5 @@ jobs:
             echo "| is_prerelease | \`$IS_PRERELEASE\` |"
             echo "| should_publish_npm | \`$SHOULD_PUBLISH_NPM\` |"
             echo "| should_create_release | \`$SHOULD_CREATE_RELEASE\` |"
+            echo "| should_notarize | \`$SHOULD_NOTARIZE\` |"
           } >> "$GITHUB_STEP_SUMMARY"

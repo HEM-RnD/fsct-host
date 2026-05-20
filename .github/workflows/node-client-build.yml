@@ -3,10 +3,6 @@ name: Node Client Build
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Full SemVer for the npm package.'
-        type: string
-        required: true
       cargo_version:
         description: 'Version string passed to cargo set-version (for the ipc_test_server binary).'
         type: string
@@ -37,14 +33,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: clients/node/package-lock.json
 
-      - name: Inject computed version
-        shell: bash
-        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4

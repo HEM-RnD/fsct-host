@@ -41,14 +41,12 @@ jobs:
     needs: version
     uses: ./.github/workflows/linux-build.yml
     with:
-      version: ${{ needs.version.outputs.version }}
       cargo_version: ${{ needs.version.outputs.cargo_version }}
 
   build-windows:
     needs: version
     uses: ./.github/workflows/windows-build.yml
     with:
-      version: ${{ needs.version.outputs.version }}
       cargo_version: ${{ needs.version.outputs.cargo_version }}
       msi_version: ${{ needs.version.outputs.msi_version }}
     secrets: inherit
@@ -57,16 +55,14 @@ jobs:
     needs: version
     uses: ./.github/workflows/macos-build.yml
     with:
-      version: ${{ needs.version.outputs.version }}
       cargo_version: ${{ needs.version.outputs.cargo_version }}
-      is_release_or_prerelease: ${{ needs.version.outputs.is_release == 'true' || needs.version.outputs.is_prerelease == 'true' }}
+      should_notarize: ${{ needs.version.outputs.should_notarize == 'true' }}
     secrets: inherit
 
   build-node:
     needs: version
     uses: ./.github/workflows/node-client-build.yml
     with:
-      version: ${{ needs.version.outputs.version }}
       cargo_version: ${{ needs.version.outputs.cargo_version }}
 
   publish:

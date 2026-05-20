@@ -3,16 +3,12 @@ name: macOS Build
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Full SemVer.'
-        type: string
-        required: true
       cargo_version:
         description: 'Version string passed to cargo set-version.'
         type: string
         required: true
-      is_release_or_prerelease:
-        description: 'true when this build maps to a release/prerelease tag — enables notarization.'
+      should_notarize:
+        description: 'true when macOS artifacts should be notarized.'
         type: boolean
         required: false
         default: false
@@ -33,15 +29,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Inject computed version
-        shell: bash
-        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: x86_64-apple-darwin, aarch64-apple-darwin
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -91,25 +87,13 @@ jobs:
             --team-id "${{ env.APPLE_TEAM_ID }}" \
             --password "${{ env.APPLE_APP_PASSWORD }}"
 
-      # Notarize on release/prerelease tags and on integration branches (develop, release/*, hotfix/*).
-      - name: Set notarization flag
-        id: set_notarize
+      - name: Report notarization policy
         run: |
-          SHOULD_NOTARIZE=false
-          if [[ "${{ inputs.is_release_or_prerelease }}" == "true" ]]; then
-            SHOULD_NOTARIZE=true
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" || \
-                  "${{ github.ref }}" == "refs/heads/main" || \
-                  "${{ github.ref }}" =~ ^refs/heads/release/.* || \
-                  "${{ github.ref }}" =~ ^refs/heads/hotfix/.* ]]; then
-            SHOULD_NOTARIZE=true
-          fi
-          echo "should_notarize=$SHOULD_NOTARIZE" >> $GITHUB_OUTPUT
           echo "Branch/tag: ${{ github.ref }}"
-          echo "Should notarize: $SHOULD_NOTARIZE"
+          echo "Should notarize: ${{ inputs.should_notarize }}"
 
       - name: Build macOS Package (signed and notarized)
-        if: ${{ steps.set_notarize.outputs.should_notarize == 'true' && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != ''}}
+        if: ${{ inputs.should_notarize && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' }}
         run: |
           chmod +x ./script/macos_service_package_builder.sh
           export KEYCHAIN_PASSWORD="${{ env.KEYCHAIN_PASSWORD }}"
@@ -117,7 +101,7 @@ jobs:
           echo "Package is signed and notarized"
 
       - name: Build macOS Package (signed only)
-        if: ${{ steps.set_notarize.outputs.should_notarize != 'true' && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' }}
+        if: ${{ ! inputs.should_notarize && env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' }}
         run: |
           chmod +x ./script/macos_service_package_builder.sh
           export KEYCHAIN_PASSWORD="${{ env.KEYCHAIN_PASSWORD }}"

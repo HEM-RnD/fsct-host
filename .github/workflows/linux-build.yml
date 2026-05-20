@@ -3,10 +3,6 @@ name: Build Debian packages
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Full SemVer (e.g. 0.2.14-alpha.5).'
-        type: string
-        required: true
       cargo_version:
         description: 'Version string passed to cargo set-version (usually identical to version).'
         type: string
@@ -61,6 +57,8 @@ jobs:
             /root/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ matrix.rust_target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust_target }}-
 
       - name: Package .deb (full script)
         env:

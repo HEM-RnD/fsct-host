@@ -3,10 +3,6 @@ name: Windows Build
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Full SemVer (e.g. 0.2.14-rc.1).'
-        type: string
-        required: true
       cargo_version:
         description: 'Version string passed to cargo set-version.'
         type: string
@@ -30,14 +26,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Inject computed version
-        shell: bash
-        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4

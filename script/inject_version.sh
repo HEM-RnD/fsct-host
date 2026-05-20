@@ -30,8 +30,11 @@ if ! grep -qE '^version = "0\.0\.0-dev"$' Cargo.toml; then
   echo "[inject_version] Has the placeholder been changed? Refusing to patch to avoid corruption." >&2
   exit 1
 fi
-sed -i.bak -E 's|^version = "0\.0\.0-dev"$|version = "'"$VERSION"'"|' Cargo.toml
+ESCAPED_VERSION=$(printf '%s' "$VERSION" | sed 's/[&|\/\\]/\\&/g')
+sed -i.bak -E "s|^version = \"0\\.0\\.0-dev\"$|version = \"$ESCAPED_VERSION\"|" Cargo.toml
 rm -f Cargo.toml.bak
+
+cargo update -p fsct-core -p fsct-driver -p fsct-client --offline
 
 # package.json — `npm version` is the canonical tool; it also updates package-lock.json.
 # Linux .deb cross-build containers do not have npm — skip there.
