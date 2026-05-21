@@ -1,0 +1,117 @@
+name: Publish
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Full SemVer.'
+        type: string
+        required: true
+      npm_tag:
+        description: 'npm dist-tag (latest / next / dev / skip).'
+        type: string
+        required: true
+      is_release:
+        description: 'true when this is a final release (vX.Y.Z tag).'
+        type: boolean
+        required: true
+      should_publish_npm:
+        type: boolean
+        required: true
+      should_create_release:
+        type: boolean
+        required: true
+    secrets:
+      NPM_TOKEN:
+        required: false
+
+jobs:
+  github-release:
+    name: GitHub Release
+    if: ${{ inputs.should_create_release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: find artifacts -type f | sort
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ !inputs.is_release }}
+          generate_release_notes: true
+          files: |
+            artifacts/deb-amd64/*.deb
+            artifacts/deb-i386/*.deb
+            artifacts/deb-armhf/*.deb
+            artifacts/deb-arm64/*.deb
+            artifacts/fsct-driver-installer-windows/*.exe
+            artifacts/fsct-driver-macos/*.pkg
+            artifacts/fsct-client-node/*.tgz
+
+  npm-publish:
+    name: npm publish
+    needs: github-release
+    # Runs when npm publish is requested, regardless of whether GH Release ran (it might be
+    # skipped on workflow_dispatch with only publish_target set). Refuses to run if GH Release
+    # ran and failed — that avoids publishing to npm without a matching GH Release.
+    if: ${{ always() && inputs.should_publish_npm && (needs.github-release.result == 'success' || needs.github-release.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Download node tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: fsct-client-node
+          path: dist
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::NPM_TOKEN secret is not set in the repository."
+            exit 1
+          fi
+          TARBALL=$(find dist -maxdepth 1 -name 'hemspzoo-fsct-client-*.tgz' -print -quit)
+          if [[ -z "$TARBALL" ]]; then
+            echo "::error::No npm tarball found in dist/."
+            exit 1
+          fi
+          TARBALL_VERSION=$(tar -xzOf "$TARBALL" package/package.json | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).version)')
+          if [[ "$TARBALL_VERSION" != "${{ inputs.version }}" ]]; then
+            echo "::error::Tarball version ($TARBALL_VERSION) != expected (${{ inputs.version }})"
+            exit 1
+          fi
+          echo "Publishing $TARBALL with --tag ${{ inputs.npm_tag }}"
+          npm publish "$TARBALL" --access public --tag "${{ inputs.npm_tag }}"

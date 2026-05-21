@@ -24,6 +24,7 @@
 #
 param(
     [Parameter()][int]$BuildNumber = 0,
+    [Parameter()][string]$MsiVersion = "",
     [switch]$NoSign,
     [switch]$NoDwnld,
     [switch]$NoLicense,
@@ -342,8 +343,17 @@ try
 
     Write-Host "[INFO] Package version: $packageVersion"
 
+    # If -MsiVersion is provided (e.g. by CI from GitVersion), it overrides the cargo-derived
+    # installer version. WiX ProductVersion must be X.Y.Z.B numeric and cannot encode SemVer
+    # prerelease segments like "-beta.5" or "-rc.1", so CI computes a clean numeric form.
+    if (-not [string]::IsNullOrEmpty($MsiVersion))
+    {
+        $installerVersion = $MsiVersion
+        Write-Host "[INFO] Installer version (from -MsiVersion): $installerVersion"
+    }
+
     # Handle BuildNumber = 0 case
-    if ($BuildNumber -eq 0) {
+    if ([string]::IsNullOrEmpty($MsiVersion) -and $BuildNumber -eq 0) {
         $buildNumberFilePath = Join-Path $env:LOCALAPPDATA "FSCT\windows-installer-buildnumber.txt"
         Write-Host "[INFO] BuildNumber is 0, using persistent build number from $buildNumberFilePath"
 
@@ -383,9 +393,11 @@ try
         }
     }
 
-    $installerVersion = "$packageVersion.$BuildNumber"
-
-    Write-Host "[INFO] Installer version: $installerVersion"
+    if ([string]::IsNullOrEmpty($MsiVersion))
+    {
+        $installerVersion = "$packageVersion.$BuildNumber"
+        Write-Host "[INFO] Installer version: $installerVersion"
+    }
 
     # === Signing EXE ===
     if (-not (Sign-File -FilePath "$BUILD_DIR\$BIN_NAME" -Description "EXE"))

@@ -1,22 +1,12 @@
 name: Node Client Build
 
 on:
-  push:
-    branches: [ '**' ]
-    tags: [ 'v*' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  pull_request:
-    branches: [ main, develop, 'release/*', 'hotfix/*' ]
-    paths-ignore:
-      - '.cross/**'
-      - 'Cross.toml'
-      - '.github/workflows/build-cross-images.yml'
-  release:
-    types: [ created ]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      cargo_version:
+        description: 'Version string passed to cargo set-version (for the ipc_test_server binary).'
+        type: string
+        required: true
 
 concurrency:
   group: node-client-build-${{ github.ref }}
@@ -47,6 +37,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Inject computed version
+        shell: bash
+        run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -89,18 +83,11 @@ jobs:
         working-directory: clients/node
         run: npm pack
 
+      # Tarball is the same on all 3 OSes (pure JS in dist/); upload it once from Linux only.
       - name: Upload npm package artifact
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: fsct-client-node-${{ matrix.os }}-${{ github.run_number }}
+          name: fsct-client-node
           path: clients/node/hemspzoo-fsct-client-*.tgz
           retention-days: 30
-
-      - name: Upload to Release
-        if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')) && matrix.os == 'ubuntu-latest'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            clients/node/hemspzoo-fsct-client-*.tgz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

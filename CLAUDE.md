@@ -130,8 +130,37 @@ Platform installers consume assets from `packages/` and are built by scripts in 
 - `script/build_windows_installer.ps1` → MSI via WiX v6 (`packages/windows/`)
 - `script/build_linux_deb.sh` → Debian package via fpm (`packages/linux/`)
 - `script/macos_service_package_builder.sh` → notarized pkg (`packages/macos/`)
+- `script/inject_version.sh` → writes the CI-computed version into `Cargo.toml` and `clients/node/package.json` before each build.
 
 Cross-compilation Docker files are in `.cross/` and are used automatically by `cross`.
+
+## Versioning
+
+The version in `Cargo.toml` (`[workspace.package].version`) and `clients/node/package.json` is **always `0.0.0-dev`** in the repository. It is a placeholder; the real version is computed by [GitVersion](https://gitversion.net) in CI and injected by `script/inject_version.sh` before every build. Never commit a real version — `release/*` branches do not "own" the version string. Cutting a release means tagging a commit; nothing in the working tree changes.
+
+### Branch → version
+
+| Ref | Computed version | npm dist-tag | GitHub Release |
+|---|---|---|---|
+| tag `vX.Y.Z` | `X.Y.Z` | `latest` | Release |
+| tag `vX.Y.Z-rc.N` | `X.Y.Z-rc.N` | `next` | Pre-Release |
+| `release/X.Y.Z` push | `X.Y.Z-beta.<N>` | — | — (artifacts only) |
+| `hotfix/X.Y.Z` push | `X.Y.Z-beta.<N>` | — | — (artifacts only) |
+| `develop` push | `X.Y.(Z+1)-alpha.<N>` | — | — (artifacts only) |
+| `feature/<slug>` push | `X.Y.(Z+1)-alpha-<slug>.<N>` | — | — (artifacts only) |
+| pull request | `X.Y.(Z+1)-pr.<PR>.<N>` | — | — (artifacts only) |
+| `workflow_dispatch` | as above for the source branch | per `publish_target` input | per `create_release` input |
+
+`<N>` is commits since the version source. `<PR>` is the pull-request number. Configuration lives in `GitVersion.yml`.
+
+### CI structure
+
+- `.github/workflows/ci.yml` — top-level orchestrator (the only file with `push`/`pull_request`/`workflow_dispatch` triggers).
+- `.github/workflows/version.yml` — runs GitVersion, exposes outputs (`version`, `cargo_version`, `msi_version`, `npm_tag`, `is_release`, `is_prerelease`, `should_publish_npm`, `should_create_release`).
+- `.github/workflows/{linux,windows,macos,node-client}-build.yml` — reusable (`on: workflow_call` only). Each one runs `script/inject_version.sh` first.
+- `.github/workflows/publish.yml` — reusable. Creates the GitHub Release and runs `npm publish` from the same artifacts the build jobs produced. Requires `NPM_TOKEN` secret.
+
+Manual publish: trigger `ci.yml` via "Run workflow" with `publish_target` (`dev` / `next` / `latest`) and/or `create_release` set.
 
 ## Key Dependencies
 
