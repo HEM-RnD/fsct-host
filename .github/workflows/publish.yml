@@ -103,7 +103,7 @@ jobs:
             echo "::error::NPM_TOKEN secret is not set in the repository."
             exit 1
           fi
-          TARBALL=$(find dist -maxdepth 1 -name 'hemspzoo-fsct-client-*.tgz' -print -quit)
+          TARBALL=$(find "$PWD/dist" -maxdepth 1 -name 'hemspzoo-fsct-client-*.tgz' -print -quit)
           if [[ -z "$TARBALL" ]]; then
             echo "::error::No npm tarball found in dist/."
             exit 1
