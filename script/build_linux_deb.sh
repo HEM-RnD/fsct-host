@@ -81,10 +81,11 @@ if (( ${#missing[@]} > 0 )); then
   echo "Proceeding despite missing deps due to --allow-missing-deps" >&2
 fi
 
-# Clean staging
+# Clean staging and any stale .deb outputs from previous runs (e.g. restored from CI cache)
 rm -rf "${BUILD_ROOT}"
 mkdir -p "${STAGE_DIR}"
 mkdir -p "${OUTPUT_DIR}"
+rm -f "${OUTPUT_DIR}"/*.deb
 
 # Build Rust binaries (unless skipped)
 if [[ "$SKIP_BUILD" == true ]]; then
