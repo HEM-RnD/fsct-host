@@ -56,6 +56,7 @@ jobs:
             /root/.cargo/registry
             /root/.cargo/git
             target
+            !target/deb
           key: ${{ runner.os }}-cargo-${{ matrix.rust_target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.rust_target }}-
