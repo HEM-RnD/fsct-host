@@ -55,7 +55,8 @@ await client.updatePlayerState(playerId, {
   status: 'playing',
   timeline: {
     positionMs: 0,
-    updateUnixMs: Date.now(),
+    // Omit updateMonoNs to anchor at "now" (age 0). If you sampled the position earlier, pass
+    // client.monoNowNs() captured at that moment instead.
     durationMs: 240_000,
     rate: 1.0,
   },

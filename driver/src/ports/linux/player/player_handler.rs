@@ -22,7 +22,7 @@ use fsct::{FsctDriver, PlayerState};
 use futures_util::StreamExt;
 use log::{debug, warn};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::select;
 use zbus::export::ordered_stream::OrderedStreamExt;
 use zbus::zvariant::OwnedValue;
@@ -40,7 +40,7 @@ struct TimelineParts {
     position: Option<Duration>,
     rate: Option<f64>,
     duration: Option<Duration>,
-    update_time: SystemTime,
+    update_time: Instant,
 }
 
 impl PlayerHandler {
@@ -53,15 +53,15 @@ impl PlayerHandler {
                 position: None,
                 rate: None,
                 duration: None,
-                update_time: SystemTime::now(),
+                update_time: Instant::now(),
             }),
             state: Mutex::default(),
         }
     }
 
     // --- Helpers ---
-    fn now() -> SystemTime {
-        SystemTime::now()
+    fn now() -> Instant {
+        Instant::now()
     }
 
     fn micros_to_duration(v: i64) -> Duration {
@@ -317,9 +317,7 @@ impl PlayerHandler {
         let mut timeline_parts = self.timeline_parts.lock().unwrap();
         if let Some(position) = timeline_parts.position {
             let now = Self::now();
-            let elapsed = now
-                .duration_since(timeline_parts.update_time)
-                .unwrap_or(Duration::from_micros(0));
+            let elapsed = now.saturating_duration_since(timeline_parts.update_time);
             let advance = (elapsed.as_micros() as f64) * Self::effective_rate(status, timeline_parts.rate);
             let advance = Duration::from_micros(advance.max(0.0) as u64); // don't advance backwards
             let pos = position + advance;

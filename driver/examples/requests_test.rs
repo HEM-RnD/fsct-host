@@ -44,8 +44,8 @@ async fn main() -> anyhow::Result<()> {
             device.vendor_id(),
             device.product_id()
         );
-        let time_diff = fsct_device.time_diff();
-        println!("Time difference: {:?}", time_diff);
+        let time_offset_ms = fsct_device.time_offset_ms();
+        println!("Time offset (ms): {:?}", time_offset_ms);
         let enable = fsct_device.get_enable().await?;
         println!("Enable: {}", enable);
         if !enable {
@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
 
         fsct_device
             .set_progress(Some(TimelineInfo {
-                update_time: std::time::SystemTime::now() - Duration::from_secs(60),
+                update_time: std::time::Instant::now() - Duration::from_secs(60),
                 position: Duration::from_secs(60),
                 duration: Duration::from_secs(186),
                 rate: 1.0,
@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
         fsct_device
             .set_progress(Some(TimelineInfo {
-                update_time: std::time::SystemTime::now(),
+                update_time: std::time::Instant::now(),
                 position: Duration::from_secs(120) + sleep,
                 duration: Duration::from_secs(186),
                 rate: 0.0,

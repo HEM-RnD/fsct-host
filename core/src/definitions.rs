@@ -15,12 +15,36 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::mono_clock::{instant_from_mono_ns, mono_now_ns, mono_ns_of};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::num::NonZeroU32;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+
+/// A back-to-back sample of the wall and monotonic clocks, exchanged during the time-sync
+/// handshake so a client can bridge its monotonic frame to the driver's
+/// (see [`crate::mono_offset_ns`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeSync {
+    /// Wall-clock time in nanoseconds since the Unix epoch, sampled together with `mono_ns`.
+    pub wall_ns: u64,
+    /// Monotonic time in nanoseconds since the responder's process [`EPOCH`], sampled together with `wall_ns`.
+    pub mono_ns: u64,
+}
+
+impl TimeSync {
+    /// Sample the wall and monotonic clocks back-to-back in this process's frame.
+    pub fn sample_now() -> Self {
+        let wall_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let mono_ns = mono_now_ns();
+        Self { wall_ns, mono_ns }
+    }
+}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -79,21 +103,19 @@ pub enum FsctTextEncoding {
 #[serde(deny_unknown_fields)]
 struct TimelineWire {
     position_ms: u64,
-    update_unix_ms: i64,
+    /// Monotonic timestamp of the sample, in nanoseconds since the sender's [`EPOCH`].
+    /// When crossing the IPC boundary this is converted into the driver's frame
+    /// (see [`mono_offset_ns`]) so the driver can compare it directly with its own clock.
+    update_mono_ns: i64,
     duration_ms: u64,
     rate: f64,
 }
 
 impl From<TimelineInfo> for TimelineWire {
     fn from(t: TimelineInfo) -> Self {
-        let update_unix_ms = t
-            .update_time
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
         Self {
             position_ms: t.position.as_millis() as u64,
-            update_unix_ms,
+            update_mono_ns: mono_ns_of(t.update_time) as i64,
             duration_ms: t.duration.as_millis() as u64,
             rate: t.rate,
         }
@@ -102,14 +124,9 @@ impl From<TimelineInfo> for TimelineWire {
 
 impl From<TimelineWire> for TimelineInfo {
     fn from(w: TimelineWire) -> Self {
-        let update_time = if w.update_unix_ms >= 0 {
-            UNIX_EPOCH + Duration::from_millis(w.update_unix_ms as u64)
-        } else {
-            UNIX_EPOCH - Duration::from_millis((-w.update_unix_ms) as u64)
-        };
         Self {
             position: Duration::from_millis(w.position_ms),
-            update_time,
+            update_time: instant_from_mono_ns(w.update_mono_ns.max(0) as u64),
             duration: Duration::from_millis(w.duration_ms),
             rate: w.rate,
         }
@@ -120,7 +137,8 @@ impl From<TimelineWire> for TimelineInfo {
 #[serde(from = "TimelineWire", into = "TimelineWire")]
 pub struct TimelineInfo {
     pub position: Duration,
-    pub update_time: SystemTime,
+    /// Monotonic instant at which `position` was captured (jump-free; see [`EPOCH`]).
+    pub update_time: Instant,
     pub duration: Duration,
     pub rate: f64,
 }
@@ -182,6 +200,29 @@ pub const FSCT_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, m
 pub type ManagedDeviceId = Uuid;
 /// Type alias for player ID
 pub type ManagedPlayerId = NonZeroU32;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mono_clock::mono_ns_of;
+
+    #[test]
+    fn timeline_wire_roundtrips_monotonic_anchor() {
+        let original = TimelineInfo {
+            position: Duration::from_millis(30_000),
+            update_time: Instant::now(),
+            duration: Duration::from_millis(240_000),
+            rate: 1.0,
+        };
+        let wire: TimelineWire = original.clone().into();
+        assert_eq!(wire.update_mono_ns, mono_ns_of(original.update_time) as i64);
+        let back: TimelineInfo = wire.into();
+        assert_eq!(back.position, original.position);
+        assert_eq!(back.duration, original.duration);
+        assert_eq!(back.rate, original.rate);
+        assert_eq!(mono_ns_of(back.update_time), mono_ns_of(original.update_time));
+    }
+}
 
 /// Information about a detected FSCT device
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

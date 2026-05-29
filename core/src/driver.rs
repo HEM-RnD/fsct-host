@@ -17,7 +17,7 @@
 
 use crate::definitions::ManagedDeviceId;
 use crate::definitions::ManagedPlayerId;
-use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimeSync, TimelineInfo};
 use crate::player_state::PlayerState;
 use anyhow::Error;
 use async_trait::async_trait;
@@ -80,4 +80,11 @@ pub trait FsctDriver: Send + Sync {
 
     /// Get device info of a connected device by device ID
     async fn get_device_info(&self, device_id: ManagedDeviceId) -> Result<DeviceInfo, Error>;
+
+    // --- Time synchronization ---
+    /// Sample the driver's wall and monotonic clocks back-to-back.
+    ///
+    /// Clients call this (typically twice, at connect) to bridge their monotonic frame to the
+    /// driver's, so timeline anchors can be sent in the driver's frame. See [`crate::mono_offset_ns`].
+    async fn get_timesync(&self) -> Result<TimeSync, Error>;
 }

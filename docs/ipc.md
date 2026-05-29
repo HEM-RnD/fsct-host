@@ -15,6 +15,7 @@ This document is the **authoritative specification** of the FSCT IPC protocol v1
 7. [Error Codes](#error-codes)
 8. [Methods](#methods)
    - [get_protocol_version](#get_protocol_version)
+   - [get_timesync](#get_timesync)
    - [register_player](#register_player)
    - [unregister_player](#unregister_player)
    - [assign_player_to_device](#assign_player_to_device)
@@ -138,8 +139,11 @@ Notifications have **no `id` field** and require no response from the client.
    - Compare the returned `major` version to the expected value. If major versions differ, close the connection —
      the protocol is incompatible.
    - Minor version differences are backwards-compatible (the driver may support more features).
-3. **Operate**: send method calls; handle responses and notifications concurrently.
-4. **Disconnect**: the client may close the connection at any time. The driver will automatically unregister
+3. **Time-sync**: call [`get_timesync`](#get_timesync) to establish the monotonic-frame offset used for
+   [`TimelineInfo`](#timelineinfo-object) timestamps. Re-run this whenever you reconnect (a driver restart
+   resets its monotonic epoch).
+4. **Operate**: send method calls; handle responses and notifications concurrently.
+5. **Disconnect**: the client may close the connection at any time. The driver will automatically unregister
    all players that were registered on that connection.
 
 **Current protocol version:** `1.0`
@@ -193,13 +197,13 @@ Identifies a text metadata slot. One of:
 
 ### `TimelineInfo` (object)
 
-Represents the playback timeline at a specific point in time. The `position_ms` was valid at `update_unix_ms`
+Represents the playback timeline at a specific point in time. The `position_ms` was valid at `update_mono_ns`
 and advances at `rate` milliseconds per real millisecond.
 
 ```json
 {
   "position_ms": 45000,
-  "update_unix_ms": 1746700000000,
+  "update_mono_ns": 90000000000,
   "duration_ms": 240000,
   "rate": 1.0
 }
@@ -207,10 +211,16 @@ and advances at `rate` milliseconds per real millisecond.
 
 | Field           | Type   | Description                                                              |
 |-----------------|--------|--------------------------------------------------------------------------|
-| `position_ms`   | u64    | Playback position in milliseconds at the time of `update_unix_ms`.       |
-| `update_unix_ms`| i64    | Unix timestamp in milliseconds when `position_ms` was measured.          |
+| `position_ms`   | u64    | Playback position in milliseconds at the time of `update_mono_ns`.       |
+| `update_mono_ns`| i64    | Monotonic timestamp (nanoseconds) when `position_ms` was measured, expressed in the **driver's** monotonic frame (see [`get_timesync`](#get_timesync)). The client converts its own monotonic stamp into the driver's frame before sending. |
 | `duration_ms`   | u64    | Total track duration in milliseconds.                                    |
 | `rate`          | f64    | Playback rate relative to real time. `1.0` = normal speed, `0.0` = paused. |
+
+> **Why monotonic, not wall-clock?** Playback position is a relative track offset, so the anchor only needs a
+> jump-free clock — never the calendar time. Anchoring to the monotonic clock means a wall-clock step (e.g. an
+> NTP sync on a device with no RTC) does not corrupt the extrapolated position. The two processes' monotonic
+> clocks share the same source but differ by a per-boot constant, which is reconciled once at connect via
+> [`get_timesync`](#get_timesync).
 
 ### `TrackMetadata` (object)
 
@@ -241,7 +251,7 @@ Full player state snapshot.
   "status": "playing",
   "timeline": {
     "position_ms": 45000,
-    "update_unix_ms": 1746700000000,
+    "update_mono_ns": 90000000000,
     "duration_ms": 240000,
     "rate": 1.0
   },
@@ -324,6 +334,44 @@ Returns the driver's protocol version. **Must be called first** after connecting
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"get_protocol_version","params":{}}
 ← {"jsonrpc":"2.0","id":1,"result":{"major":1,"minor":0}}
+```
+
+---
+
+### `get_timesync`
+
+Returns a back-to-back sample of the driver's wall-clock and monotonic clocks, used to bridge the client's
+monotonic frame to the driver's. **Should be called right after [`get_protocol_version`](#get_protocol_version)**
+(and again on every reconnect) to compute the offset applied to [`TimelineInfo`](#timelineinfo-object)
+`update_mono_ns` values.
+
+**Params:** `{}`
+
+**Returns:** an object with:
+
+| Field     | Type | Description                                                                |
+|-----------|------|----------------------------------------------------------------------------|
+| `wall_ns` | u64  | Wall-clock time (nanoseconds since the Unix epoch), sampled with `mono_ns`. |
+| `mono_ns` | u64  | Monotonic time (nanoseconds since the driver process's epoch), sampled with `wall_ns`. |
+
+**Computing the offset.** Sample your own `(wall_c, mono_c)` immediately after the response arrives, then:
+
+```
+offset = (mono_d - mono_c) + (wall_c - wall_d)      // driver_frame = client_frame + offset
+```
+
+IPC latency cancels out (the `wall_c - wall_d` term corrects for which wall instant each side sampled), so the
+offset is stable for the life of the connection regardless of later wall-clock steps. Only a wall-clock step
+*during* the handshake itself can corrupt it, so perform the exchange **twice** and require the two offsets to
+agree within a small tolerance (a few milliseconds); retry otherwise. Add this offset to a timeline's
+client-frame `update_mono_ns` before sending. A driver restart yields a new monotonic epoch, so the handshake
+must be re-run on reconnect.
+
+**Example:**
+
+```json
+→ {"jsonrpc":"2.0","id":2,"method":"get_timesync","params":{}}
+← {"jsonrpc":"2.0","id":2,"result":{"wall_ns":1746700000000000000,"mono_ns":90000000000}}
 ```
 
 ---
@@ -447,7 +495,7 @@ Updates the complete player state in a single call. This is a convenience method
         "status": "playing",
         "timeline": {
           "position_ms": 45000,
-          "update_unix_ms": 1746700000000,
+          "update_mono_ns": 90000000000,
           "duration_ms": 240000,
           "rate": 1.0
         },
@@ -512,7 +560,7 @@ Updates only the timeline (position/duration/rate) for a player. Pass `null` to 
       "player_id": 1,
       "timeline": {
         "position_ms": 90000,
-        "update_unix_ms": 1746700045000,
+        "update_mono_ns": 135000000000,
         "duration_ms": 240000,
         "rate": 1.0
       }

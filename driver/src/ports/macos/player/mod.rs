@@ -23,7 +23,7 @@ use fsct::player_state::{PlayerState, TrackMetadata};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]
@@ -43,10 +43,27 @@ fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     texts
 }
 
+/// Convert an OS-provided wall-clock timestamp into the monotonic frame.
+///
+/// The OS reports when playback info was last updated as a wall-clock `SystemTime`. We translate
+/// it to `Instant` by measuring its age against the current wall-clock and subtracting that age
+/// from `Instant::now()`. The age is normally a few seconds, well inside any NTP step window, so
+/// the result is a faithful monotonic anchor that no longer drifts when the wall-clock jumps.
+fn instant_from_wall(wall: SystemTime) -> Instant {
+    let now = Instant::now();
+    match SystemTime::now().duration_since(wall) {
+        Ok(age) => now.checked_sub(age).unwrap_or(now),
+        Err(_) => now,
+    }
+}
+
 fn get_timeline_info(now_playing_info: &NowPlayingInfo) -> Option<TimelineInfo> {
     let duration = now_playing_info.duration?;
     let position = now_playing_info.elapsed_time.unwrap_or(0.0);
-    let update_time = now_playing_info.info_update_time.unwrap_or(SystemTime::now());
+    let update_time = now_playing_info
+        .info_update_time
+        .map(instant_from_wall)
+        .unwrap_or_else(Instant::now);
     let is_playing = now_playing_info.is_playing.unwrap_or(false);
     let rate = if is_playing {
         now_playing_info.playback_rate.unwrap_or(0.0)

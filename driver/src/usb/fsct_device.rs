@@ -31,7 +31,9 @@ struct SupportedMetadata {
 }
 
 struct FsctDeviceSharedState {
-    time_diff: Option<Duration>,
+    /// Offset (ms) mapping host monotonic time to device time: `device_ms = host_mono_ms - offset`.
+    /// Signed because the device's "ms since power-on" and the host's monotonic epoch are unrelated.
+    time_offset_ms: Option<i64>,
     fsct_text_encoding: FsctTextEncoding,
     supported_current_texts: Vec<SupportedMetadata>,
     supported_functionalities: FsctFunctionality,
@@ -48,7 +50,7 @@ impl FsctDevice {
             fsct_interface: Arc::new(fsct_interface),
             time_sync_handle: None,
             state: Arc::new(Mutex::new(FsctDeviceSharedState {
-                time_diff: None,
+                time_offset_ms: None,
                 fsct_text_encoding: FsctTextEncoding::Utf8,
                 supported_current_texts: Vec::new(),
                 supported_functionalities: FsctFunctionality::empty(),
@@ -104,8 +106,8 @@ impl FsctDevice {
         }
     }
 
-    pub fn time_diff(&self) -> Option<Duration> {
-        self.state.lock().unwrap().time_diff
+    pub fn time_offset_ms(&self) -> Option<i64> {
+        self.state.lock().unwrap().time_offset_ms
     }
 
     async fn synchronize_time(&mut self) -> Result<(), FsctDeviceError> {
@@ -127,20 +129,12 @@ impl FsctDevice {
         {
             return Err(FsctDeviceError::PlaybackProgressNotSupported);
         }
-        let before = std::time::SystemTime::now();
-        let timestamp_in_millis = fsct_interface.get_device_timestamp().await?;
-        let after = std::time::SystemTime::now();
-        let mean_now = ((before.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
-            + after.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis())
-            / 2) as i128;
-        let time_diff = mean_now - (timestamp_in_millis as i128);
-        if time_diff > u64::MAX as i128 {
-            return Err(FsctDeviceError::TimeDifferenceTooLarge);
-        }
-        if time_diff < 0 {
-            return Err(FsctDeviceError::TimeDifferenceNegative);
-        }
-        state.lock().unwrap().time_diff = Some(Duration::from_millis(time_diff as u64));
+        let before = fsct::mono_now_ns();
+        let device_uptime_ms = fsct_interface.get_device_timestamp().await?;
+        let after = fsct::mono_now_ns();
+        let mean_host_mono_ms = (((before as i128) + (after as i128)) / 2) / 1_000_000;
+        let offset_ms = compute_offset_ms(mean_host_mono_ms, device_uptime_ms)?;
+        state.lock().unwrap().time_offset_ms = Some(offset_ms);
         Ok(())
     }
 
@@ -161,30 +155,26 @@ impl FsctDevice {
         {
             return Ok(()); // not supported, omitting
         }
-        let time_diff = self
+        let offset_ms = self
             .state
             .lock()
             .unwrap()
-            .time_diff
+            .time_offset_ms
             .ok_or(FsctDeviceError::TimeNotSynchronized)?;
         match progress {
             None => self.fsct_interface.disable_track_progress().await,
             Some(progress) => {
-                let timestamp = std::time::SystemTime::now();
-                let duration_since_update_time = timestamp
-                    .duration_since(progress.update_time)
-                    .map_err(|e| FsctDeviceError::TimeDifferenceCalculationError(e.to_string()))?;
+                // Anchor everything to the same monotonic instant `now`, so the extrapolated
+                // position and the device timestamp refer to the exact same point in time.
+                let now = std::time::Instant::now();
+                let elapsed = now.saturating_duration_since(progress.update_time);
 
-                let position =
-                    progress.position.as_secs_f64() + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
-                let position = position * 1000.0; // position is in milliseconds
-                let device_timestamp = (timestamp - time_diff)
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                let position_ms = extrapolated_position_ms(progress.position, progress.rate, elapsed);
+                let host_mono_now_ms = (fsct::mono_ns_of(now) / 1_000_000) as i128;
+                let device_timestamp = device_timestamp_ms(host_mono_now_ms, offset_ms);
                 let track_progress_request_data = TrackProgressRequestData {
                     duration: progress.duration.as_secs_f64().round() as u32,
-                    position: position.round() as i32,
+                    position: position_ms.round() as i32,
                     timestamp: device_timestamp,
                     rate: progress.rate as f32,
                 };
@@ -238,6 +228,26 @@ impl Drop for FsctDevice {
     }
 }
 
+/// Offset (ms) mapping host monotonic time to device time: `host_mono_ms - device_uptime_ms`.
+/// Signed; only errors if the magnitude cannot fit an `i64` (not reachable in practice).
+fn compute_offset_ms(host_mono_ms: i128, device_uptime_ms: u64) -> Result<i64, FsctDeviceError> {
+    let offset = host_mono_ms - device_uptime_ms as i128;
+    if offset > i64::MAX as i128 || offset < i64::MIN as i128 {
+        return Err(FsctDeviceError::TimeDifferenceTooLarge);
+    }
+    Ok(offset as i64)
+}
+
+/// Device timestamp (ms since device power-on) for a host monotonic instant, clamped at 0.
+fn device_timestamp_ms(host_mono_now_ms: i128, offset_ms: i64) -> u64 {
+    (host_mono_now_ms - offset_ms as i128).max(0) as u64
+}
+
+/// Position (ms) extrapolated from the last known position over `elapsed` at `rate`.
+fn extrapolated_position_ms(position: Duration, rate: f64, elapsed: Duration) -> f64 {
+    (position.as_secs_f64() + elapsed.as_secs_f64() * rate) * 1000.0
+}
+
 fn floor_char_boundary_utf8(text: &str, max_length: usize) -> &str {
     let mut new_text_length = text.len().min(max_length);
     while !text.is_char_boundary(new_text_length) {
@@ -289,6 +299,33 @@ fn to_usb_encoded_text(fsct_text_encoding: FsctTextEncoding, text: &str, max_len
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offset_accepts_device_ahead_of_host() {
+        // The device may have been powered on long before this host process started, so its
+        // uptime exceeds host monotonic time -> negative offset must be accepted (no rejection).
+        assert_eq!(compute_offset_ms(1_000, 5_000).unwrap(), -4_000);
+    }
+
+    #[test]
+    fn device_timestamp_applies_offset() {
+        let offset = compute_offset_ms(10_000, 3_000).unwrap();
+        assert_eq!(offset, 7_000);
+        assert_eq!(device_timestamp_ms(12_000, offset), 5_000);
+    }
+
+    #[test]
+    fn device_timestamp_clamps_to_zero() {
+        assert_eq!(device_timestamp_ms(1_000, 5_000), 0);
+    }
+
+    #[test]
+    fn extrapolated_position_advances_with_rate() {
+        let playing = extrapolated_position_ms(Duration::from_secs(10), 1.0, Duration::from_secs(2));
+        assert!((playing - 12_000.0).abs() < 1e-6);
+        let paused = extrapolated_position_ms(Duration::from_secs(10), 0.0, Duration::from_secs(2));
+        assert!((paused - 10_000.0).abs() < 1e-6);
+    }
 
     #[test]
     fn test_fsct_device_to_usb_encoded_utf16_simple_text() {

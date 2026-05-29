@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
             position: Duration::from_secs(13),
             duration: Duration::from_secs(184),
             rate: 1.0,
-            update_time: std::time::SystemTime::now(),
+            update_time: std::time::Instant::now(),
         }),
         texts: TrackMetadata {
             artist: Some("Demo Artist".to_string()),

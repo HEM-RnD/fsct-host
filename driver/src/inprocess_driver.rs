@@ -19,7 +19,7 @@ use crate::player_manager::PlayerManager;
 use crate::{DeviceManager, MultiJoinableTaskHandle, Orchestrator, run_usb_device_watch};
 use anyhow::Error;
 use async_trait::async_trait;
-use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimeSync, TimelineInfo};
 use fsct::{FsctDriver, PlayerState};
 use std::sync::Arc;
 
@@ -156,5 +156,9 @@ impl FsctDriver for LocalDriver {
             .into_iter()
             .find(|d| d.id == device_id)
             .ok_or_else(|| anyhow::anyhow!("device not found"))
+    }
+
+    async fn get_timesync(&self) -> Result<TimeSync, Error> {
+        Ok(TimeSync::sample_now())
     }
 }

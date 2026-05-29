@@ -96,7 +96,7 @@ if let Some(device_id) = get_device_id_from_somewhere() {
         position: Duration::from_secs(30),
         duration: Duration::from_secs(180),
         rate: 1.0,
-        update_time: SystemTime::now(),
+        update_time: Instant::now(),
     };
     device_manager.set_progress(device_id, Some(progress)).await?;
 }

@@ -191,6 +191,10 @@ impl FsctDriver for LoggingDriver {
         println!("[LoggingDriver] get_device_info: id={:?}", device_id);
         Err(anyhow::anyhow!("not implemented"))
     }
+
+    async fn get_timesync(&self) -> Result<fsct::definitions::TimeSync, Error> {
+        Ok(fsct::definitions::TimeSync::sample_now())
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]

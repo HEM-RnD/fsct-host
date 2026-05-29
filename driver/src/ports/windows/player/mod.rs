@@ -22,7 +22,7 @@ use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use log::{debug, error, warn};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
@@ -46,6 +46,19 @@ pub enum PlayerError {
     Other(#[from] AnyError),
 }
 
+/// Convert an OS-provided wall-clock timestamp into the monotonic frame.
+///
+/// `LastUpdatedTime` is a wall-clock FILETIME. We measure its age against the current wall-clock
+/// and subtract that age from `Instant::now()`, yielding a monotonic anchor immune to wall-clock
+/// steps. The age is normally a few seconds, well inside any NTP step window.
+fn instant_from_wall(wall: SystemTime) -> Instant {
+    let now = Instant::now();
+    match SystemTime::now().duration_since(wall) {
+        Ok(age) => now.checked_sub(age).unwrap_or(now),
+        Err(_) => now,
+    }
+}
+
 fn get_timeline_info(
     playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,
     timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties,
@@ -55,10 +68,11 @@ fn get_timeline_info(
     let end_time = timeline_properties.EndTime().into_player_error()?.Duration as f64 / 10_000_000.0;
 
     let update_time = if last_update_time.UniversalTime < UNIX_EPOCH_OFFSET {
-        std::time::SystemTime::now()
+        Instant::now()
     } else {
         let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
-        std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
+        let wall = UNIX_EPOCH + Duration::from_nanos(last_update_unix_nanos as u64);
+        instant_from_wall(wall)
     };
 
     let position_sec = position.Duration as f64 / 10_000_000.0;

@@ -113,6 +113,9 @@ impl FsctDriver for TestDriver {
     ) -> Result<fsct::definitions::DeviceInfo, anyhow::Error> {
         Err(anyhow::anyhow!("not used"))
     }
+    async fn get_timesync(&self) -> Result<fsct::definitions::TimeSync, anyhow::Error> {
+        Ok(fsct::definitions::TimeSync::sample_now())
+    }
 }
 
 #[tokio::test]

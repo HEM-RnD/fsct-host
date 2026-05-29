@@ -19,12 +19,12 @@
 // Covers: register/unregister, assign/unassign, updates, preferred player and assigned device
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use fsct::FsctDriver;
 use fsct::definitions::ManagedPlayerId;
-use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, TimeSync, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
 use fsct_client::IpcDriver;
 use fsct_driver::IpcServer;
@@ -223,6 +223,10 @@ mod helpers {
 
         pub detected_devices: Mutex<Vec<DeviceInfo>>,
         pub device_changes_tx: tokio::sync::broadcast::Sender<fsct::DeviceChangeEvent>,
+
+        // get_timesync always succeeds (the IpcDriver handshake runs it on every connect).
+        pub timesync_calls: Mutex<u32>,
+        pub timesync_override: Mutex<Option<TimeSync>>,
     }
 
     impl FsctDriverMock {
@@ -253,6 +257,8 @@ mod helpers {
                 metadata_calls: Mutex::new(Vec::new()),
                 detected_devices: Mutex::new(Vec::new()),
                 device_changes_tx: tx,
+                timesync_calls: Mutex::new(0),
+                timesync_override: Mutex::new(None),
             }
         }
     }
@@ -369,6 +375,14 @@ mod helpers {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("not found"))
         }
+        async fn get_timesync(&self) -> anyhow::Result<TimeSync> {
+            *self.timesync_calls.lock().unwrap() += 1;
+            Ok(self
+                .timesync_override
+                .lock()
+                .unwrap()
+                .unwrap_or_else(TimeSync::sample_now))
+        }
     }
 }
 
@@ -478,7 +492,7 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
     // timeline
     let timeline = TimelineInfo {
         position: Duration::from_millis(12345),
-        update_time: SystemTime::now(),
+        update_time: Instant::now(),
         duration: Duration::from_millis(54321),
         rate: 1.0,
     };
@@ -492,6 +506,15 @@ async fn ipc_update_methods() -> anyhow::Result<()> {
         assert_eq!(got.position, timeline.position);
         assert_eq!(got.duration, timeline.duration);
         assert!((got.rate - timeline.rate).abs() < 1e-9);
+        // The monotonic anchor must survive the client->driver frame conversion. In-process the
+        // two share a process EPOCH (handshake offset ~0), so it round-trips to within tolerance.
+        let drift = got.update_time.saturating_duration_since(timeline.update_time)
+            + timeline.update_time.saturating_duration_since(got.update_time);
+        assert!(
+            drift < Duration::from_millis(50),
+            "update_time anchor drifted by {:?}",
+            drift
+        );
     }
 
     // metadata
@@ -778,13 +801,13 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 12,
-                    "timeline": {"update_unix_ms": 0, "duration_ms": 2000, "rate": 1.0}
+                    "timeline": {"update_mono_ns": 0, "duration_ms": 2000, "rate": 1.0}
                 })
             )
             .await
             .is_err()
     );
-    // timeline missing update_unix_ms
+    // timeline missing update_mono_ns
     assert!(
         client
             .request(
@@ -804,7 +827,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 14,
-                    "timeline": {"position_ms": 1000, "update_unix_ms": 0, "rate": 1.0}
+                    "timeline": {"position_ms": 1000, "update_mono_ns": 0, "rate": 1.0}
                 })
             )
             .await
@@ -817,7 +840,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 15,
-                    "timeline": {"position_ms": 1000, "update_unix_ms": 0, "duration_ms": 2000}
+                    "timeline": {"position_ms": 1000, "update_mono_ns": 0, "duration_ms": 2000}
                 })
             )
             .await
@@ -830,7 +853,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 16,
-                    "timeline": {"position_ms": "1000", "update_unix_ms": "0", "duration_ms": "2000", "rate": "1.0"}
+                    "timeline": {"position_ms": "1000", "update_mono_ns": "0", "duration_ms": "2000", "rate": "1.0"}
                 })
             )
             .await
@@ -981,7 +1004,7 @@ async fn ipc_player_id_scope_validation_errors() -> anyhow::Result<()> {
     assert!(client.update_player_status(bad_pid, FsctStatus::Playing).await.is_err());
     let tl = TimelineInfo {
         position: std::time::Duration::from_millis(1),
-        update_time: std::time::SystemTime::now(),
+        update_time: std::time::Instant::now(),
         duration: std::time::Duration::from_millis(2),
         rate: 1.0,
     };
@@ -1203,6 +1226,32 @@ async fn ipc_oversized_line_closes_connection() -> anyhow::Result<()> {
         .await
         .expect("timed out waiting for server to close connection");
     assert!(resp.is_none(), "server should close connection after oversized line");
+
+    server_task.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_get_timesync_round_trips_wall_and_mono() -> anyhow::Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let mock = Arc::new(helpers::FsctDriverMock::new());
+    // Pin the driver's reply so we can assert the exact values cross the wire unchanged.
+    *mock.timesync_override.lock().unwrap() = Some(TimeSync {
+        wall_ns: 1_700_000_000_000_000_000,
+        mono_ns: 42_000_000_000,
+    });
+
+    // Use the raw client so no handshake runs; we drive get_timesync explicitly.
+    let (mut client, server_task) = helpers::start_server_and_connect_raw(mock.clone()).await;
+
+    let result = client
+        .request("get_timesync", json!({}))
+        .await
+        .expect("get_timesync should succeed");
+    assert_eq!(result["wall_ns"].as_u64(), Some(1_700_000_000_000_000_000));
+    assert_eq!(result["mono_ns"].as_u64(), Some(42_000_000_000));
+    assert_eq!(*mock.timesync_calls.lock().unwrap(), 1);
 
     server_task.shutdown().await?;
     Ok(())

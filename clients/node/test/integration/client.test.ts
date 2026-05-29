@@ -71,7 +71,7 @@ describe('FsctIpcClient integration', () => {
     const [, event1] = await Promise.all([
       client.updatePlayerTimeline(playerId, {
         positionMs: 30_000,
-        updateUnixMs: Date.now(),
+        updateMonoNs: client.monoNowNs(),
         durationMs: 240_000,
         rate: 1.0,
       }),
@@ -83,12 +83,33 @@ describe('FsctIpcClient integration', () => {
       duration_ms: 240_000,
       rate: 1.0,
     });
+    // The anchor crosses the wire as a driver-frame monotonic stamp (ns), never wall-clock.
+    const wire1 = event1['timeline'] as Record<string, unknown>;
+    expect(typeof wire1['update_mono_ns']).toBe('number');
+    expect(Number.isFinite(wire1['update_mono_ns'] as number)).toBe(true);
+    expect('update_unix_ms' in wire1).toBe(false);
 
     const [, event2] = await Promise.all([
       client.updatePlayerTimeline(playerId, null),
       server.waitForReceived('update_player_timeline'),
     ]);
     expect(event2['timeline']).toBeNull();
+  });
+
+  it('anchors timeline at "now" when updateMonoNs is omitted (Volumio age 0)', async () => {
+    const playerId = await client.registerPlayer('volumio-no-ts');
+
+    const [, event] = await Promise.all([
+      client.updatePlayerTimeline(playerId, {
+        positionMs: 5_000,
+        durationMs: 200_000,
+        rate: 1.0,
+      }),
+      server.waitForReceived('update_player_timeline'),
+    ]);
+    const wire = event['timeline'] as Record<string, unknown>;
+    expect(wire).toMatchObject({ position_ms: 5_000, duration_ms: 200_000, rate: 1.0 });
+    expect(typeof wire['update_mono_ns']).toBe('number');
   });
 
   it('update player metadata and server receives correct slot and value', async () => {
@@ -115,7 +136,7 @@ describe('FsctIpcClient integration', () => {
     const playerId = await client.registerPlayer('state-test');
     const state: PlayerState = {
       status: 'playing',
-      timeline: { positionMs: 1000, updateUnixMs: Date.now(), durationMs: 5000, rate: 1.0 },
+      timeline: { positionMs: 1000, updateMonoNs: client.monoNowNs(), durationMs: 5000, rate: 1.0 },
       texts: { title: 'Track', artist: 'Artist', album: null, genre: null },
     };
 

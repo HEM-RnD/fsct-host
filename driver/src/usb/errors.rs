@@ -137,12 +137,6 @@ pub enum FsctDeviceError {
     #[error("Time difference is too large")]
     TimeDifferenceTooLarge,
 
-    #[error("Time difference is negative")]
-    TimeDifferenceNegative,
-
-    #[error("Failed to get time difference. It seems that timestamp is later than now. Error: {0}")]
-    TimeDifferenceCalculationError(String),
-
     #[error("Device does not support current playback progress, so it can't synchronize time")]
     PlaybackProgressNotSupported,
 
