@@ -83,7 +83,7 @@ describe('FsctIpcClient integration', () => {
       duration_ms: 240_000,
       rate: 1.0,
     });
-    // The anchor crosses the wire as a driver-frame monotonic stamp (ns), never wall-clock.
+    // The anchor crosses the wire as a driver-frame monotonic stamp (ms), never wall-clock.
     const wire1 = event1['timeline'] as Record<string, unknown>;
     expect(typeof wire1['update_mono_ms']).toBe('number');
     expect(Number.isFinite(wire1['update_mono_ms'] as number)).toBe(true);

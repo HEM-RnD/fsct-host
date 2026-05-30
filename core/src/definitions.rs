@@ -15,7 +15,7 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use crate::mono_clock::{instant_from_mono_ms, mono_now_ms, mono_ms_of};
+use crate::mono_clock::{instant_from_mono_ms, mono_ms_of, mono_now_ms};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
