@@ -22,6 +22,9 @@
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+// Rust documents ~100 years as a cross-platform comfortable range for Instant arithmetic.
+const MAX_INSTANT_OFFSET_MS: u64 = 100 * 365 * 24 * 60 * 60 * 1_000;
+
 /// Process-global monotonic epoch, captured once on first access.
 ///
 /// Monotonic timestamps are expressed as milliseconds since this epoch, giving a
@@ -43,7 +46,8 @@ pub fn mono_ms_of(instant: Instant) -> u64 {
 
 /// Reconstruct an `Instant` from a monotonic millisecond stamp in this process's frame.
 pub fn instant_from_mono_ms(ms: u64) -> Instant {
-    *EPOCH + Duration::from_millis(ms)
+    let offset = Duration::from_millis(ms.min(MAX_INSTANT_OFFSET_MS));
+    EPOCH.checked_add(offset).unwrap_or(*EPOCH)
 }
 
 /// NTP/PTP-style offset (ms) that converts a *client-frame* monotonic stamp into the
@@ -55,13 +59,14 @@ pub fn instant_from_mono_ms(ms: u64) -> Instant {
 /// instant each side sampled), so only a wall-clock step *during* the handshake can corrupt
 /// the result — detected by sampling twice and comparing with [`offsets_consistent`].
 pub fn mono_offset_ms(wall_d_ms: i64, mono_d_ms: i64, wall_c_ms: i64, mono_c_ms: i64) -> i64 {
-    (mono_d_ms - mono_c_ms) + (wall_c_ms - wall_d_ms)
+    let offset = (mono_d_ms as i128 - mono_c_ms as i128) + (wall_c_ms as i128 - wall_d_ms as i128);
+    offset.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 /// Two offset samples agree when their difference is within tolerance, i.e. no wall-clock
 /// step happened between the two handshake round-trips.
 pub fn offsets_consistent(a_ms: i64, b_ms: i64, tolerance_ms: i64) -> bool {
-    (a_ms - b_ms).abs() <= tolerance_ms
+    tolerance_ms >= 0 && a_ms.abs_diff(b_ms) <= tolerance_ms as u64
 }
 
 #[cfg(test)]
@@ -91,5 +96,23 @@ mod tests {
         let k2 = mono_offset_ms(1_000, 0, 0, 0);
         assert!(!offsets_consistent(k1, k2, 5));
         assert!(offsets_consistent(k1, k1, 5));
+    }
+
+    #[test]
+    fn instant_from_mono_ms_clamps_unrepresentable_values() {
+        let instant = instant_from_mono_ms(u64::MAX);
+        assert_eq!(mono_ms_of(instant), MAX_INSTANT_OFFSET_MS);
+    }
+
+    #[test]
+    fn mono_offset_saturates_extreme_inputs() {
+        assert_eq!(mono_offset_ms(0, i64::MAX, i64::MAX, i64::MIN), i64::MAX);
+        assert_eq!(mono_offset_ms(i64::MAX, i64::MIN, 0, i64::MAX), i64::MIN);
+    }
+
+    #[test]
+    fn offsets_consistent_handles_extreme_inputs() {
+        assert!(!offsets_consistent(i64::MIN, i64::MAX, i64::MAX));
+        assert!(!offsets_consistent(0, 0, -1));
     }
 }
