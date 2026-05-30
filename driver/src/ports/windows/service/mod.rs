@@ -26,11 +26,11 @@ pub mod standalone;
 pub use crate::cli::*;
 pub use constants::{DRIVER_SERVICE_NAME, USER_SERVICE_NAME};
 pub use install::{install_service, uninstall_service};
-pub use logger::{init_service_logger, init_install_logger};
+pub use logger::{init_install_logger, init_service_logger};
 pub use standalone::run_standalone;
 
 use anyhow::bail;
-use log::{info, error, debug};
+use log::{debug, error, info};
 
 fn get_service_name(user_service: bool) -> &'static str {
     if user_service {
@@ -39,7 +39,6 @@ fn get_service_name(user_service: bool) -> &'static str {
         DRIVER_SERVICE_NAME
     }
 }
-
 
 pub fn fsct_main() -> anyhow::Result<()> {
     // Parse command line arguments using clap
@@ -56,7 +55,10 @@ pub fn fsct_main() -> anyhow::Result<()> {
                 }
                 let user_service = cli.user;
                 match command {
-                    ServiceCommands::Install { verbose, service_log_level } => {
+                    ServiceCommands::Install {
+                        verbose,
+                        service_log_level,
+                    } => {
                         // Initialize logger for install command
                         if let Err(e) = init_install_logger(verbose, log_level) {
                             eprintln!("Failed to initialize logger: {}", e);

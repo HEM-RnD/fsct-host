@@ -34,12 +34,12 @@
 //! [D-Bus standard interfaces]: https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces,
 #![allow(non_snake_case)]
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use zbus::proxy;
-use serde::{Deserialize, Serialize};
-use zbus::zvariant::*;
 use zbus::zvariant::OwnedValue;
 use zbus::zvariant::Type;
+use zbus::zvariant::*;
 
 #[proxy(
     interface = "org.mpris.MediaPlayer2.Player",

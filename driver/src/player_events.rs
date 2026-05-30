@@ -15,35 +15,57 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::ManagedDeviceId;
-use fsct::PlayerState;
 use fsct::ManagedPlayerId;
+use fsct::PlayerState;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 
 /// Events emitted by PlayerManager about player lifecycle, assignments and state changes.
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
     /// A new player has been registered.
-    Registered { player_id: ManagedPlayerId, self_id: String },
+    Registered {
+        player_id: ManagedPlayerId,
+        self_id: String,
+    },
 
     /// A player has been unregistered.
     Unregistered { player_id: ManagedPlayerId },
 
     /// A player has been assigned to a specific device.
-    Assigned { player_id: ManagedPlayerId, device_id: ManagedDeviceId },
+    Assigned {
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    },
 
     /// A player has been unassigned from a specific device.
-    Unassigned { player_id: ManagedPlayerId, device_id: ManagedDeviceId },
+    Unassigned {
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    },
 
     /// Player's state has been updated.
-    StateUpdated { player_id: ManagedPlayerId, state: PlayerState },
+    StateUpdated {
+        player_id: ManagedPlayerId,
+        state: PlayerState,
+    },
 
     /// Player's state has been partially updated, status has changed.
-    StatusUpdated { player_id: ManagedPlayerId, status: FsctStatus },
+    StatusUpdated {
+        player_id: ManagedPlayerId,
+        status: FsctStatus,
+    },
 
     /// Player's state has been partially updated, timeline has changed.
-    TimelineUpdated { player_id: ManagedPlayerId, timeline: TimelineInfo },
+    TimelineUpdated {
+        player_id: ManagedPlayerId,
+        timeline: TimelineInfo,
+    },
 
     /// Player's state has been partially updated, text metadata has changed.
-    TextMetadataUpdated { player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: Option<String> },
+    TextMetadataUpdated {
+        player_id: ManagedPlayerId,
+        metadata: FsctTextMetadata,
+        text: Option<String>,
+    },
 }

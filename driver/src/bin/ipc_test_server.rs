@@ -82,12 +82,20 @@ impl FsctDriver for MockFsctDriver {
         Ok(())
     }
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+    async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> anyhow::Result<()> {
         self.assignments.lock().unwrap().insert(player_id, device_id);
         Ok(())
     }
 
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+    async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> anyhow::Result<()> {
         let mut guard = self.assignments.lock().unwrap();
         if guard.get(&player_id) == Some(&device_id) {
             guard.remove(&player_id);
@@ -115,7 +123,11 @@ impl FsctDriver for MockFsctDriver {
         Ok(())
     }
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
+    async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> anyhow::Result<()> {
         emit_received(serde_json::json!({
             "type": "received",
             "method": "update_player_timeline",
@@ -216,9 +228,7 @@ async fn stdin_command_loop(tx: broadcast::Sender<DeviceChangeEvent>) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let endpoint = std::env::args()
-        .nth(1)
-        .expect("Usage: ipc_test_server <socket-path>");
+    let endpoint = std::env::args().nth(1).expect("Usage: ipc_test_server <socket-path>");
 
     let driver = Arc::new(MockFsctDriver::new());
     let tx = driver.device_changes_tx.clone();

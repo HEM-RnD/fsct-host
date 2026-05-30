@@ -15,17 +15,17 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::ports::linux::player::mpris::{PlaybackStatus, Player, PlayerProxy};
+use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
+use fsct::player_state::TrackMetadata;
+use fsct::{FsctDriver, PlayerState};
+use futures_util::StreamExt;
+use log::{debug, warn};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use fsct::{FsctDriver, PlayerState};
-use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
-use zbus::zvariant::OwnedValue;
-use fsct::player_state::TrackMetadata;
-use log::{debug, warn};
 use tokio::select;
 use zbus::export::ordered_stream::OrderedStreamExt;
-use futures_util::StreamExt;
-use crate::ports::linux::player::mpris::{PlaybackStatus, Player, PlayerProxy};
+use zbus::zvariant::OwnedValue;
 
 pub struct PlayerHandler {
     player: Player,
@@ -60,10 +60,16 @@ impl PlayerHandler {
     }
 
     // --- Helpers ---
-    fn now() -> SystemTime { SystemTime::now() }
+    fn now() -> SystemTime {
+        SystemTime::now()
+    }
 
     fn micros_to_duration(v: i64) -> Duration {
-        if v <= 0 { Duration::from_micros(0) } else { Duration::from_micros(v as u64) }
+        if v <= 0 {
+            Duration::from_micros(0)
+        } else {
+            Duration::from_micros(v as u64)
+        }
     }
 
     fn effective_rate(status: FsctStatus, rate_opt: Option<f64>) -> f64 {
@@ -73,7 +79,9 @@ impl PlayerHandler {
         }
     }
 
-    fn parse_metadata(map: &std::collections::HashMap<String, OwnedValue>) -> (fsct::player_state::TrackMetadata, Option<Duration>) {
+    fn parse_metadata(
+        map: &std::collections::HashMap<String, OwnedValue>,
+    ) -> (fsct::player_state::TrackMetadata, Option<Duration>) {
         let mut md = TrackMetadata::default();
         let mut dur: Option<Duration> = None;
         for (name, value) in map.iter() {
@@ -83,7 +91,7 @@ impl PlayerHandler {
                 "xesam:album" => md.album = Self::parse_text(value),
                 "xesam:genre" => md.genre = Self::parse_text(value),
                 "mpris:length" => dur = Self::parse_length(value),
-                _ => ()
+                _ => (),
             }
         }
         (md, dur)
@@ -103,7 +111,9 @@ impl PlayerHandler {
         let multiple_texts: Option<Vec<String>> = value.clone().try_into().ok();
         if let Some(multiple_texts) = multiple_texts {
             Some(multiple_texts.join(", "))
-        } else { None }
+        } else {
+            None
+        }
     }
 
     fn parse_text(value: &OwnedValue) -> Option<String> {
@@ -117,7 +127,9 @@ impl PlayerHandler {
             Some(Self::micros_to_duration(us))
         } else if let Ok(x) = <i32 as TryFrom<OwnedValue>>::try_from(value.clone()) {
             Some(Self::micros_to_duration(x as i64))
-        } else { None };
+        } else {
+            None
+        };
         duration
     }
 
@@ -206,7 +218,9 @@ impl PlayerHandler {
     }
 
     async fn handle_seeked_task<'a>(&'a self, player_proxy: &PlayerProxy<'a>) -> anyhow::Result<()> {
-        let mut sig = player_proxy.receive_seeked().await
+        let mut sig = player_proxy
+            .receive_seeked()
+            .await
             .inspect_err(|e| warn!("Error subscribing to seek signal: {}", e))?;
         while let Some(event) = OrderedStreamExt::next(&mut sig).await {
             match event.args() {
@@ -238,7 +252,8 @@ impl PlayerHandler {
 
     async fn update_texts(&self, texts: TrackMetadata) {
         self.state.lock().unwrap().texts = texts.clone();
-        for (ty, opt) in texts.iter() { // iterator yields (FsctTextMetadata, &Option<String>)
+        for (ty, opt) in texts.iter() {
+            // iterator yields (FsctTextMetadata, &Option<String>)
             let _ = self.driver.update_player_metadata(self.id, ty, opt.clone()).await;
         }
     }
@@ -283,14 +298,18 @@ impl PlayerHandler {
     }
 
     fn get_timeline(parts: &TimelineParts, status: FsctStatus) -> Option<TimelineInfo> {
-        if let Some(duration) = parts.duration && let Some(position) = parts.position {
+        if let Some(duration) = parts.duration
+            && let Some(position) = parts.position
+        {
             Some(TimelineInfo {
                 duration,
                 position,
                 update_time: parts.update_time,
                 rate: Self::effective_rate(status, parts.rate),
             })
-        } else { None }
+        } else {
+            None
+        }
     }
 
     fn recalculate_position(&self) {
@@ -298,7 +317,9 @@ impl PlayerHandler {
         let mut timeline_parts = self.timeline_parts.lock().unwrap();
         if let Some(position) = timeline_parts.position {
             let now = Self::now();
-            let elapsed = now.duration_since(timeline_parts.update_time).unwrap_or(Duration::from_micros(0));
+            let elapsed = now
+                .duration_since(timeline_parts.update_time)
+                .unwrap_or(Duration::from_micros(0));
             let advance = (elapsed.as_micros() as f64) * Self::effective_rate(status, timeline_parts.rate);
             let advance = Duration::from_micros(advance.max(0.0) as u64); // don't advance backwards
             let pos = position + advance;

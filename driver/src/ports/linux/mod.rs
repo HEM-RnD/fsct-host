@@ -15,15 +15,20 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::os::fd::{FromRawFd, OwnedFd};
 use log::{info, warn};
+use std::os::fd::{FromRawFd, OwnedFd};
 
 pub mod player;
 
-
 fn is_triggered_by_systemd_socket_activation() -> bool {
-    let listen_fds = std::env::var("LISTEN_FDS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    let listen_pid = std::env::var("LISTEN_PID").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let listen_fds = std::env::var("LISTEN_FDS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let listen_pid = std::env::var("LISTEN_PID")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
     let this_process_pid = std::process::id();
     // Be sure that FDs are assigned to the correct (this) process; otherwise systemd will not pass them to us.
     listen_fds > 0 && listen_pid == this_process_pid
@@ -40,7 +45,10 @@ pub fn get_socket_activation_fd() -> Option<OwnedFd> {
         let fd = unsafe { OwnedFd::from_raw_fd(3) };
         Some(fd)
     } else {
-        info!("systemd socket activation not detected, using {}", fsct::default_endpoint_path());
+        info!(
+            "systemd socket activation not detected, using {}",
+            fsct::default_endpoint_path()
+        );
         None
     }
 }

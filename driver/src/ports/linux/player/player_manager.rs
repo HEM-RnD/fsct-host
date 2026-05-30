@@ -15,13 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::Arc;
-use log::{debug, error};
-use fsct::FsctDriver;
-use tokio_util::sync::{CancellationToken, DropGuard};
-use tokio::select;
 use crate::ports::linux::player::mpris;
 use crate::ports::linux::player::player_handler::PlayerHandler;
+use fsct::FsctDriver;
+use log::{debug, error};
+use std::sync::Arc;
+use tokio::select;
+use tokio_util::sync::{CancellationToken, DropGuard};
 
 pub struct PlayerRegistrationManager {
     driver: Arc<dyn FsctDriver>,
@@ -33,7 +33,11 @@ impl PlayerRegistrationManager {
     pub fn new(driver: Arc<dyn FsctDriver>) -> Self {
         let cancellation_token = CancellationToken::new();
         let drop_guard = cancellation_token.clone().drop_guard();
-        Self { driver, cancellation_token, _drop_guard: drop_guard }
+        Self {
+            driver,
+            cancellation_token,
+            _drop_guard: drop_guard,
+        }
     }
 
     pub async fn register_player(&self, player: mpris::Player) -> Result<(), anyhow::Error> {
@@ -42,8 +46,7 @@ impl PlayerRegistrationManager {
         Ok(())
     }
 
-    fn run_player_handler(&self, player: mpris::Player, id: fsct::ManagedPlayerId) -> ()
-    {
+    fn run_player_handler(&self, player: mpris::Player, id: fsct::ManagedPlayerId) -> () {
         let cancel_token = self.cancellation_token.child_token();
         let driver = self.driver.clone();
         tokio::spawn(async move {

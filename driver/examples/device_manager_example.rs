@@ -15,15 +15,12 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use anyhow::Result;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct_driver::{DeviceControl, DeviceEvent, DeviceManagement, DeviceManager, run_usb_device_watch};
+use log::{info, warn};
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::Result;
-use fsct_driver::{
-    DeviceManager, DeviceManagement, DeviceControl,
-    run_usb_device_watch, DeviceEvent
-};
-use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
-use log::{info, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,14 +34,14 @@ async fn main() -> Result<()> {
 
     // Subscribe to device events
     let mut device_events = device_manager.subscribe();
-    
+
     // Start a task to handle device events
     let event_task = tokio::spawn(async move {
         while let Ok(event) = device_events.recv().await {
             match event {
                 DeviceEvent::Added(device_id) => {
                     info!("Device added with managed ID: {}", device_id);
-                },
+                }
                 DeviceEvent::Removed(device_id) => {
                     info!("Device removed with managed ID: {}", device_id);
                 }
@@ -54,9 +51,7 @@ async fn main() -> Result<()> {
 
     // Start watching for USB devices
     info!("Starting USB device watch");
-    let device_watch_handle = run_usb_device_watch(
-        device_manager.clone(),
-    ).await?;
+    let device_watch_handle = run_usb_device_watch(device_manager.clone()).await?;
 
     // Wait for devices to be discovered
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -70,7 +65,10 @@ async fn main() -> Result<()> {
         info!("Device details:");
         info!("  ID: {}", device_info.id);
         info!("  Name: {}", device_info.name.as_deref().unwrap_or("N/A"));
-        info!("  Manufacturer: {}", device_info.manufacturer.as_deref().unwrap_or("N/A"));
+        info!(
+            "  Manufacturer: {}",
+            device_info.manufacturer.as_deref().unwrap_or("N/A")
+        );
         info!("  VID: 0x{:04X}", device_info.vendor_id);
         info!("  PID: 0x{:04X}", device_info.product_id);
         info!("  Serial: {}", device_info.serial_number.as_deref().unwrap_or("N/A"));
@@ -88,11 +86,10 @@ async fn main() -> Result<()> {
         }
 
         info!("Setting text for device {}", managed_id);
-        if let Err(e) = device_manager.set_current_text(
-            *managed_id,
-            FsctTextMetadata::CurrentTitle,
-            Some("Example Song Title"),
-        ).await {
+        if let Err(e) = device_manager
+            .set_current_text(*managed_id, FsctTextMetadata::CurrentTitle, Some("Example Song Title"))
+            .await
+        {
             warn!("Failed to set text for device {}: {}", managed_id, e);
         }
 
@@ -117,7 +114,7 @@ async fn main() -> Result<()> {
     // Shutdown device watching
     info!("Shutting down USB device watch");
     device_watch_handle.shutdown().await?;
-    
+
     // Abort the event handling task
     event_task.abort();
 

@@ -1,13 +1,14 @@
 // Example showing how to wire PlayerManager + DeviceManager + UsbDeviceWatch + Orchestrator
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::Result;
-use fsct_driver::{DeviceManager, run_usb_device_watch, Orchestrator, player_manager::PlayerManager,
-                  MultiJoinableTaskHandle};
 use fsct::PlayerState;
-use log::info;
 use fsct::definitions::{FsctStatus, TimelineInfo};
 use fsct::player_state::TrackMetadata;
+use fsct_driver::{
+    DeviceManager, MultiJoinableTaskHandle, Orchestrator, player_manager::PlayerManager, run_usb_device_watch,
+};
+use log::info;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,13 +32,13 @@ async fn main() -> Result<()> {
     let player_id = player_manager.register_player("demo-player".to_string()).await?;
 
     let state = PlayerState {
-         status: FsctStatus::Playing,
-         timeline: Some(TimelineInfo{
-             position: Duration::from_secs(13),
-             duration: Duration::from_secs(184),
-             rate: 1.0,
-             update_time: std::time::SystemTime::now()
-         }),
+        status: FsctStatus::Playing,
+        timeline: Some(TimelineInfo {
+            position: Duration::from_secs(13),
+            duration: Duration::from_secs(184),
+            rate: 1.0,
+            update_time: std::time::SystemTime::now(),
+        }),
         texts: TrackMetadata {
             artist: Some("Demo Artist".to_string()),
             title: Some("Demo title".to_string()),

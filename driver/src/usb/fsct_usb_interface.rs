@@ -15,14 +15,14 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::mem::size_of;
-use anyhow::{Context};
+use super::errors::{FsctDeviceError, ToFsctDeviceResult};
+use super::requests;
+use anyhow::Context;
+use fsct::definitions::FsctStatus;
+use fsct::definitions::FsctTextMetadata;
 use nusb::Interface;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
-use fsct::definitions::FsctTextMetadata;
-use super::requests;
-use fsct::definitions::FsctStatus;
-use super::errors::{FsctDeviceError, ToFsctDeviceResult};
+use std::mem::size_of;
 
 pub struct FsctUsbInterface {
     interface: Interface,
@@ -30,9 +30,7 @@ pub struct FsctUsbInterface {
 
 impl FsctUsbInterface {
     pub fn new(interface: Interface) -> Self {
-        Self {
-            interface,
-        }
+        Self { interface }
     }
     pub async fn get_device_timestamp(&self) -> Result<requests::Timestamp, FsctDeviceError> {
         let control_in = ControlIn {
@@ -43,11 +41,13 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16,
             length: size_of::<requests::Timestamp>() as u16,
         };
-        let timestamp_raw = self.interface.control_in(control_in)
-                                .await
-                                .into_result()
-                                .context("Failed to get device timestamp")
-                                .map_err_to_fsct_device_control_transfer_error()?;
+        let timestamp_raw = self
+            .interface
+            .control_in(control_in)
+            .await
+            .into_result()
+            .context("Failed to get device timestamp")
+            .map_err_to_fsct_device_control_transfer_error()?;
 
         if timestamp_raw.len() != size_of::<requests::Timestamp>() {
             return Err(FsctDeviceError::DataSizeMismatch {
@@ -69,11 +69,13 @@ impl FsctUsbInterface {
             length: 1,
         };
 
-        let enable_raw = self.interface.control_in(control_in)
-                             .await
-                             .into_result()
-                             .context("Failed to get enable.")
-                             .map_err_to_fsct_device_control_transfer_error()?;
+        let enable_raw = self
+            .interface
+            .control_in(control_in)
+            .await
+            .into_result()
+            .context("Failed to get enable.")
+            .map_err_to_fsct_device_control_transfer_error()?;
         if enable_raw.len() != 1 {
             return Err(FsctDeviceError::DataSizeMismatch {
                 expected: 1,
@@ -92,7 +94,8 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16,
             data: &[],
         };
-        self.interface.control_out(control_out)
+        self.interface
+            .control_out(control_out)
             .await
             .into_result()
             .context("Failed to set enable")
@@ -100,7 +103,10 @@ impl FsctUsbInterface {
         Ok(())
     }
 
-    pub async fn send_track_progress(&self, progress: &requests::TrackProgressRequestData) -> Result<(), FsctDeviceError> {
+    pub async fn send_track_progress(
+        &self,
+        progress: &requests::TrackProgressRequestData,
+    ) -> Result<(), FsctDeviceError> {
         let control_out = ControlOut {
             control_type: ControlType::Vendor,
             recipient: Recipient::Interface,
@@ -114,7 +120,10 @@ impl FsctUsbInterface {
                 )
             },
         };
-        self.interface.control_out(control_out).await.into_result()
+        self.interface
+            .control_out(control_out)
+            .await
+            .into_result()
             .context("Failed to send track progress")
             .map_err_to_fsct_device_control_transfer_error()?;
 
@@ -130,14 +139,16 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16,
             data: &[],
         };
-        self.interface.control_out(control_out).await.into_result()
+        self.interface
+            .control_out(control_out)
+            .await
+            .into_result()
             .context("Failed to disable track progress")
             .map_err_to_fsct_device_control_transfer_error()?;
         Ok(())
     }
 
-    pub async fn send_current_text(&self, text_id: FsctTextMetadata, text_raw: &[u8]) -> Result<(), FsctDeviceError>
-    {
+    pub async fn send_current_text(&self, text_id: FsctTextMetadata, text_raw: &[u8]) -> Result<(), FsctDeviceError> {
         let control_out = ControlOut {
             control_type: ControlType::Vendor,
             recipient: Recipient::Interface,
@@ -146,14 +157,16 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16 | ((text_id as u16) << 8),
             data: text_raw,
         };
-        self.interface.control_out(control_out).await.into_result()
+        self.interface
+            .control_out(control_out)
+            .await
+            .into_result()
             .context("Failed to send current text")
             .map_err_to_fsct_device_control_transfer_error()?;
         Ok(())
     }
 
-    pub async fn disable_current_text(&self, text_id: FsctTextMetadata) -> Result<(), FsctDeviceError>
-    {
+    pub async fn disable_current_text(&self, text_id: FsctTextMetadata) -> Result<(), FsctDeviceError> {
         let control_out = ControlOut {
             control_type: ControlType::Vendor,
             recipient: Recipient::Interface,
@@ -162,7 +175,10 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16 | ((text_id as u16) << 8),
             data: &[],
         };
-        self.interface.control_out(control_out).await.into_result()
+        self.interface
+            .control_out(control_out)
+            .await
+            .into_result()
             .context("Failed to send current text")
             .map_err_to_fsct_device_control_transfer_error()?;
         Ok(())
@@ -177,7 +193,10 @@ impl FsctUsbInterface {
             index: self.interface.interface_number() as u16,
             data: &[],
         };
-        self.interface.control_out(control_out).await.into_result()
+        self.interface
+            .control_out(control_out)
+            .await
+            .into_result()
             .context("Failed to send status")
             .map_err_to_fsct_device_control_transfer_error()?;
         Ok(())

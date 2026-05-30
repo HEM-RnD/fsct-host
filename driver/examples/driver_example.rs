@@ -2,11 +2,11 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use fsct::{FsctDriver, PlayerState};
 use fsct::definitions::{FsctStatus, TimelineInfo};
-use log::info;
-use fsct_driver::inprocess_driver::LocalDriver;
 use fsct::player_state::TrackMetadata;
+use fsct::{FsctDriver, PlayerState};
+use fsct_driver::inprocess_driver::LocalDriver;
+use log::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
             title: Option::from("Пісня Сміливих Дівчат".to_string()),
             artist: Option::from("KAZKA".to_string()),
             ..Default::default()
-        }
+        },
     };
 
     driver.update_player_state(player_id, state).await?;

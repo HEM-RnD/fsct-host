@@ -15,9 +15,9 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use nusb::DeviceInfo;
 use fsct_driver::usb::fsct_bos_finder;
 use fsct_driver::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
+use nusb::DeviceInfo;
 
 fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
     let devices = nusb::list_devices()
@@ -32,7 +32,6 @@ fn find_device_with_fsct_vendor_subclass_number() -> Option<DeviceInfo> {
     None
 }
 
-
 fn main() {
     let device = find_device_with_fsct_vendor_subclass_number();
     if device.is_none() {
@@ -41,16 +40,26 @@ fn main() {
     }
     let device = device.unwrap();
 
-    println!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})", device.product_string().unwrap_or("Unknown"), device.vendor_id(), device.product_id());
+    println!(
+        "Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
+        device.product_string().unwrap_or("Unknown"),
+        device.vendor_id(),
+        device.product_id()
+    );
 
     let fsct_cap = fsct_bos_finder::get_fsct_vendor_subclass_number_from_device(&device);
     match fsct_cap {
         Ok(fsct_cap) => {
-            println!("Vendor subclass number of Ferrum Streaming Control Technology interface: 0x{:02X}", fsct_cap);
+            println!(
+                "Vendor subclass number of Ferrum Streaming Control Technology interface: 0x{:02X}",
+                fsct_cap
+            );
         }
         Err(e) => {
-            println!("Ferrum Streaming Control Technology interface Vendor subclass number not provided in BOS \
-            descriptor, e: {e}");
+            println!(
+                "Ferrum Streaming Control Technology interface Vendor subclass number not provided in BOS \
+            descriptor, e: {e}"
+            );
         }
     }
 }

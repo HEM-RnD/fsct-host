@@ -15,15 +15,15 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::joinable_task::{JoinableTaskHandle, spawn_service};
+use anyhow::anyhow;
+use fsct::FsctDriver;
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
 use fsct::player_state::{PlayerState, TrackMetadata};
-use fsct::FsctDriver;
-use crate::joinable_task::{spawn_service, JoinableTaskHandle};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use anyhow::anyhow;
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]
@@ -32,7 +32,6 @@ struct NowPlayingWrapper {
 }
 
 unsafe impl Send for NowPlayingWrapper {}
-
 
 fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
     let mut texts = TrackMetadata::default();
@@ -79,7 +78,12 @@ fn build_state(info: &NowPlayingInfo) -> PlayerState {
     }
 }
 
-async fn push_state(driver: Arc<dyn FsctDriver>, player_id: ManagedPlayerId, previous_state: &mut PlayerState, info: Option<NowPlayingInfo>) {
+async fn push_state(
+    driver: Arc<dyn FsctDriver>,
+    player_id: ManagedPlayerId,
+    previous_state: &mut PlayerState,
+    info: Option<NowPlayingInfo>,
+) {
     if let Some(info) = info {
         let state = build_state(&info);
         if *previous_state != state {
@@ -123,17 +127,19 @@ pub async fn run_os_watcher(driver: Arc<dyn FsctDriver>) -> anyhow::Result<Joina
         let (tx, mut rx) = mpsc::unbounded_channel::<Option<NowPlayingInfo>>();
 
         // Choose implementation based on macOS version and set up subscriptions
-        let _now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version() && (major > 15 || (major == 15 && minor >= 4)) {
-                let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
-                let tx_clone = tx.clone();
-                now_playing.subscribe(move |guard| {
-                    let _ = tx_clone.send(guard.as_ref().cloned());
-                });
-                // push initial state via the same queue
-                let initial = now_playing.get_info().as_ref().cloned();
-                let _ = tx.send(initial);
+        let _now_playing: NowPlayingImpl = if let Some((major, minor)) = get_macos_version()
+            && (major > 15 || (major == 15 && minor >= 4))
+        {
+            let now_playing = NowPlayingJXA::new(Duration::from_millis(500));
+            let tx_clone = tx.clone();
+            now_playing.subscribe(move |guard| {
+                let _ = tx_clone.send(guard.as_ref().cloned());
+            });
+            // push initial state via the same queue
+            let initial = now_playing.get_info().as_ref().cloned();
+            let _ = tx.send(initial);
 
-                NowPlayingImpl::JXA(now_playing)
+            NowPlayingImpl::JXA(now_playing)
         } else {
             // Fallback to native implementation
             let now_playing = NowPlaying::new();

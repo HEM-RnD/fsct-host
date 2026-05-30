@@ -15,18 +15,18 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::collections::HashMap;
-use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::{Context, Error};
 use log::info;
+use std::collections::HashMap;
+use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
-use fsct::definitions::{ManagedDeviceId, ManagedPlayerId};
 use crate::PlayerEvent;
 use fsct::PlayerState;
-use tokio::sync::broadcast;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::{ManagedDeviceId, ManagedPlayerId};
+use tokio::sync::broadcast;
 
 #[allow(dead_code)]
 /// Represents a registered player with its state and device assignments
@@ -77,7 +77,10 @@ impl PlayerManager {
         self.players.lock().unwrap().insert(player_id, registered_player);
 
         // Notify listeners
-        let _ = self.events_tx.send(PlayerEvent::Registered { player_id, self_id: self_id.clone() });
+        let _ = self.events_tx.send(PlayerEvent::Registered {
+            player_id,
+            self_id: self_id.clone(),
+        });
 
         info!("Player {} registered: {}", player_id, self_id);
         Ok(player_id)
@@ -114,7 +117,11 @@ impl PlayerManager {
     }
 
     /// Assigns a player to a device
-    pub async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    pub async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
         let player_state = {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
@@ -128,19 +135,30 @@ impl PlayerManager {
         // Notify about assignment
         let _ = self.events_tx.send(PlayerEvent::Assigned { player_id, device_id });
         // Also emit current state so consumers may immediately propagate it if needed
-        let _ = self.events_tx.send(PlayerEvent::StateUpdated { player_id, state: player_state });
+        let _ = self.events_tx.send(PlayerEvent::StateUpdated {
+            player_id,
+            state: player_state,
+        });
 
         info!("Player {} assigned to device {}", player_id, device_id);
         Ok(())
     }
 
     /// Unassigns a player from a device
-    pub async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    pub async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
         self.unassign_player_from_device_internal(player_id, device_id).await
     }
 
     /// Internal implementation of unassign_player_from_device
-    async fn unassign_player_from_device_internal(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    async fn unassign_player_from_device_internal(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
         {
             let mut players = self.players.lock().unwrap();
             if let Some(player) = players.get_mut(&player_id) {
@@ -182,14 +200,15 @@ impl PlayerManager {
         }
 
         // Notify listeners about the new state
-        let _ = self.events_tx.send(PlayerEvent::StateUpdated { player_id, state: new_state });
+        let _ = self.events_tx.send(PlayerEvent::StateUpdated {
+            player_id,
+            state: new_state,
+        });
 
         Ok(())
     }
 
-
-    pub async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error>
-    {
+    pub async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error> {
         {
             let players = self.players.lock().unwrap();
             if let Some(player) = players.get(&player_id) {
@@ -199,12 +218,18 @@ impl PlayerManager {
                 return Err(anyhow::anyhow!("Player not found"));
             }
         }
-        let _ = self.events_tx.send(PlayerEvent::StatusUpdated { player_id, status: new_status });
+        let _ = self.events_tx.send(PlayerEvent::StatusUpdated {
+            player_id,
+            status: new_status,
+        });
         Ok(())
     }
 
-    pub async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error>
-    {
+    pub async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> Result<(), Error> {
         {
             let players = self.players.lock().unwrap();
             if let Some(player) = players.get(&player_id) {
@@ -215,13 +240,19 @@ impl PlayerManager {
             }
         }
         if let Some(timeline) = new_timeline {
-            let _ = self.events_tx.send(PlayerEvent::TimelineUpdated { player_id, timeline });
+            let _ = self
+                .events_tx
+                .send(PlayerEvent::TimelineUpdated { player_id, timeline });
         }
         Ok(())
     }
 
-    pub async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>
-    {
+    pub async fn update_player_metadata(
+        &self,
+        player_id: ManagedPlayerId,
+        metadata_id: FsctTextMetadata,
+        new_text: Option<String>,
+    ) -> Result<(), Error> {
         {
             let players = self.players.lock().unwrap();
             if let Some(player) = players.get(&player_id) {
@@ -232,7 +263,11 @@ impl PlayerManager {
                 return Err(anyhow::anyhow!("Player not found"));
             }
         }
-        let _ = self.events_tx.send(PlayerEvent::TextMetadataUpdated { player_id, metadata: metadata_id, text: new_text });
+        let _ = self.events_tx.send(PlayerEvent::TextMetadataUpdated {
+            player_id,
+            metadata: metadata_id,
+            text: new_text,
+        });
         Ok(())
     }
 }

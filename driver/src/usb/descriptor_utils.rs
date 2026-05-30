@@ -15,19 +15,23 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::mem::size_of;
-use nusb::descriptors::Descriptor;
-use nusb::{Interface};
-use log::warn;
-use nusb::transfer::{ControlIn, ControlType, Recipient};
-use super::descriptors::{FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor,
-                     FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart, FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID};
+use super::descriptors::{
+    FSCT_FUNCTIONALITY_DESCRIPTOR_ID, FSCT_IMAGE_METADATA_DESCRIPTOR_ID, FSCT_TEXT_METADATA_DESCRIPTOR_ID,
+    FsctFunctionalityDescriptor, FsctImageMetadataDescriptor, FsctTextMetadataDescriptor,
+    FsctTextMetadataDescriptorHeader, FsctTextMetadataDescriptorMultiPart,
+};
 use super::errors::{DescriptorError, IoErrorOrAny};
+use log::warn;
+use nusb::Interface;
+use nusb::descriptors::Descriptor;
+use nusb::transfer::{ControlIn, ControlType, Recipient};
+use std::mem::size_of;
 
-async fn get_interface_descriptor(interface: &Interface,
-                                  descriptor_number: u8,
-                                  length: u16) -> Result<Vec<u8>, IoErrorOrAny>
-{
+async fn get_interface_descriptor(
+    interface: &Interface,
+    descriptor_number: u8,
+    length: u16,
+) -> Result<Vec<u8>, IoErrorOrAny> {
     let interface_number = interface.interface_number();
     let control_in = ControlIn {
         control_type: ControlType::Standard,
@@ -46,21 +50,19 @@ async fn get_interface_descriptor(interface: &Interface,
 
 const FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE: usize = size_of::<FsctFunctionalityDescriptor>();
 
-async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, IoErrorOrAny>
-{
+async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Result<Vec<u8>, IoErrorOrAny> {
     let descriptor = get_interface_descriptor(
         interface,
         FSCT_FUNCTIONALITY_DESCRIPTOR_ID,
         FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE as u16,
     )
-        .await?;
+    .await?;
 
     if descriptor.len() < FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE {
         return Err(DescriptorError::TooShort.into());
     }
-    let fsct_functionality_descriptor: FsctFunctionalityDescriptor = unsafe {
-        *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(descriptor.as_ptr())
-    };
+    let fsct_functionality_descriptor: FsctFunctionalityDescriptor =
+        unsafe { *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(descriptor.as_ptr()) };
     if fsct_functionality_descriptor.bLength != FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE as u8 {
         return Err(DescriptorError::TooShort.into());
     }
@@ -72,7 +74,7 @@ async fn get_fsct_functionality_descriptor_set_raw(interface: &Interface) -> Res
         FSCT_FUNCTIONALITY_DESCRIPTOR_ID,
         fsct_functionality_descriptor.wTotalLength,
     )
-        .await
+    .await
 }
 
 #[derive(Debug)]
@@ -82,8 +84,9 @@ pub enum FsctDescriptorSet {
     TextMetadata(FsctTextMetadataDescriptor),
 }
 
-pub async fn get_fsct_functionality_descriptor_set(interface: &Interface) -> Result<Vec<FsctDescriptorSet>, IoErrorOrAny>
-{
+pub async fn get_fsct_functionality_descriptor_set(
+    interface: &Interface,
+) -> Result<Vec<FsctDescriptorSet>, IoErrorOrAny> {
     let raw_descriptor = get_fsct_functionality_descriptor_set_raw(interface).await?;
     let descriptors = Descriptors(&raw_descriptor);
     let mut fsct_descriptors = Vec::new();
@@ -119,10 +122,7 @@ impl<'a> Descriptors<'a> {
         }
 
         if self.0[0] < 2 {
-            warn!(
-                "descriptor with bLength {} can't point to next descriptor",
-                self.0[0]
-            );
+            warn!("descriptor with bLength {} can't point to next descriptor", self.0[0]);
             return None;
         }
 
@@ -161,9 +161,8 @@ impl TryFrom<Descriptor<'_>> for FsctFunctionalityDescriptor {
         if value.len() != FSCT_FUNCTIONALITY_DESCRIPTOR_SIZE {
             return Err(DescriptorError::TooShort);
         }
-        let fsct_functionality_descriptor: FsctFunctionalityDescriptor = unsafe {
-            *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(value.as_ptr())
-        };
+        let fsct_functionality_descriptor: FsctFunctionalityDescriptor =
+            unsafe { *std::mem::transmute::<*const u8, &FsctFunctionalityDescriptor>(value.as_ptr()) };
         Ok(fsct_functionality_descriptor)
     }
 }
@@ -177,9 +176,8 @@ impl TryFrom<Descriptor<'_>> for FsctImageMetadataDescriptor {
         if value.len() != size_of::<FsctImageMetadataDescriptor>() {
             return Err(DescriptorError::TooShort);
         }
-        let fsct_image_metadata_descriptor: FsctImageMetadataDescriptor = unsafe {
-            *std::mem::transmute::<*const u8, &FsctImageMetadataDescriptor>(value.as_ptr())
-        };
+        let fsct_image_metadata_descriptor: FsctImageMetadataDescriptor =
+            unsafe { *std::mem::transmute::<*const u8, &FsctImageMetadataDescriptor>(value.as_ptr()) };
         Ok(fsct_image_metadata_descriptor)
     }
 }
@@ -195,9 +193,8 @@ impl TryFrom<Descriptor<'_>> for FsctTextMetadataDescriptor {
         if value.len() < FSCT_TEXT_METADATA_DESCRIPTOR_HEADER_SIZE {
             return Err(DescriptorError::TooShort);
         }
-        let fsct_text_metadata_descriptor_header: &FsctTextMetadataDescriptorHeader = unsafe {
-            &std::mem::transmute::<*const u8, &FsctTextMetadataDescriptorHeader>(value.as_ptr())
-        };
+        let fsct_text_metadata_descriptor_header: &FsctTextMetadataDescriptorHeader =
+            unsafe { &std::mem::transmute::<*const u8, &FsctTextMetadataDescriptorHeader>(value.as_ptr()) };
 
         let mut fsct_text_metadata_descriptor = FsctTextMetadataDescriptor {
             bLength: fsct_text_metadata_descriptor_header.bLength,
@@ -215,7 +212,9 @@ impl TryFrom<Descriptor<'_>> for FsctTextMetadataDescriptor {
             let fsct_text_metadata_descriptor_multi_part: &FsctTextMetadataDescriptorMultiPart = unsafe {
                 &std::mem::transmute::<*const u8, &FsctTextMetadataDescriptorMultiPart>(remaining_data.as_ptr())
             };
-            fsct_text_metadata_descriptor.aMetadata.push(*fsct_text_metadata_descriptor_multi_part);
+            fsct_text_metadata_descriptor
+                .aMetadata
+                .push(*fsct_text_metadata_descriptor_multi_part);
             remaining_data = &remaining_data[size_of::<FsctTextMetadataDescriptorMultiPart>()..];
         }
 

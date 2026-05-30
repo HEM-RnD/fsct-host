@@ -16,19 +16,19 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
 mod mpris;
-mod player_manager;
 mod player_handler;
+mod player_manager;
 
-use std::sync::Arc;
+use crate::{JoinableTaskHandle, spawn_service};
 use anyhow::bail;
-use futures_util::StreamExt;
-use log::{warn};
-use tokio::select;
-use crate::{spawn_service, JoinableTaskHandle};
-use fsct::definitions::FsctStatus;
 use fsct::FsctDriver;
+use fsct::definitions::FsctStatus;
+use futures_util::StreamExt;
+use log::warn;
 use mpris::*;
 use player_manager::PlayerRegistrationManager;
+use std::sync::Arc;
+use tokio::select;
 
 impl From<PlaybackStatus> for FsctStatus {
     fn from(status: PlaybackStatus) -> Self {
@@ -40,7 +40,10 @@ impl From<PlaybackStatus> for FsctStatus {
     }
 }
 
-pub async fn os_watcher_main_loop(driver: Arc<dyn FsctDriver>, player_watcher: mpris::SessionWatcher) -> anyhow::Result<()> {
+pub async fn os_watcher_main_loop(
+    driver: Arc<dyn FsctDriver>,
+    player_watcher: mpris::SessionWatcher,
+) -> anyhow::Result<()> {
     let manager = PlayerRegistrationManager::new(driver.clone());
     let stream = player_watcher.iter_player(true).await;
     futures_util::pin_mut!(stream);

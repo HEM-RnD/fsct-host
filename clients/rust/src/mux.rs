@@ -22,8 +22,8 @@ use futures::{SinkExt, StreamExt};
 use log::warn;
 use serde_json::{Value, Value as JsonValue, json};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::sync::oneshot::Sender;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use uuid::Uuid;
 
@@ -70,7 +70,12 @@ async fn handle_outbound<W: AsyncWrite + Unpin>(
 ) -> bool {
     let id = *next_id;
     *next_id += 1;
-    let req = RpcRequest { jsonrpc: "2.0".into(), id: json!(id), method: call.method, params: call.params };
+    let req = RpcRequest {
+        jsonrpc: "2.0".into(),
+        id: json!(id),
+        method: call.method,
+        params: call.params,
+    };
     match serde_json::to_string(&req) {
         Ok(line) => {
             if writer.send(line).await.is_err() {
@@ -130,7 +135,10 @@ fn dispatch_inbound(
 fn handle_response(pending: &mut HashMap<u64, Sender<Result<Value, String>>>, resp: RpcResponse) {
     if let Some(id_u64) = resp.id.as_u64() {
         if let Some(tx) = pending.remove(&id_u64) {
-            let result = resp.error.map(|e| Err(e.message)).unwrap_or_else(|| Ok(resp.result.unwrap_or(JsonValue::Null)));
+            let result = resp
+                .error
+                .map(|e| Err(e.message))
+                .unwrap_or_else(|| Ok(resp.result.unwrap_or(JsonValue::Null)));
             let _ = tx.send(result);
         }
     }

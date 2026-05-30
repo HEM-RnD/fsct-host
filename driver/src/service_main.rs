@@ -18,15 +18,15 @@
 // This file calls the appropriate service main implementation from the library
 // based on the target OS.
 
+use crate::cli::{Cli, Parser};
+use crate::inprocess_driver::LocalDriver;
+use crate::{MultiJoinableTaskHandle, run_os_watcher};
+use anyhow::anyhow;
+use fsct::FsctDriver;
+use fsct::default_endpoint_path;
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
-use fsct::{FsctDriver};
-use log::{debug, error, info, warn};
-use anyhow::anyhow;
-use crate::cli::{Cli, Parser};
-use fsct::default_endpoint_path;
-use crate::inprocess_driver::LocalDriver;
-use crate::{run_os_watcher, MultiJoinableTaskHandle};
 
 pub trait StopSignal {
     fn wait(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
@@ -54,7 +54,10 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
 
     let mut services = MultiJoinableTaskHandle::new();
 
-    let endpoint = args.endpoint.clone().unwrap_or_else(|| default_endpoint_path().to_string());
+    let endpoint = args
+        .endpoint
+        .clone()
+        .unwrap_or_else(|| default_endpoint_path().to_string());
 
     let driver: Arc<dyn FsctDriver> = if args.user {
         // In user mode, connect to IPC driver
@@ -115,7 +118,8 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
                 res = services.wait_for_any_to_finish() => {
                     res.inspect_err(|e| log::error!("Service error: {}", e))
                 },
-            }.map_err(|e|anyhow!(e))
+            }
+            .map_err(|e| anyhow!(e))
         }
     } else {
         Ok(())
@@ -124,8 +128,10 @@ pub async fn async_main(mut stop_signal: impl StopSignal, listener: impl Service
         error!("Failed to notify service stopping: {}", e);
     }
 
-    let shutdown_res = services.shutdown().await
-                               .inspect_err(|e| log::error!("Shutdown error: {}", e));
+    let shutdown_res = services
+        .shutdown()
+        .await
+        .inspect_err(|e| log::error!("Shutdown error: {}", e));
 
     service_res?;
     shutdown_res?;

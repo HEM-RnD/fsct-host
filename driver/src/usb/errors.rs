@@ -15,14 +15,12 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use anyhow::anyhow;
 use std::io;
-use anyhow::{anyhow};
 use thiserror::Error;
 
-
 #[derive(Error, Debug)]
-pub enum IoErrorOrAny
-{
+pub enum IoErrorOrAny {
     #[error("IO error -> {0}")]
     IoError(#[from] io::Error),
 
@@ -30,10 +28,8 @@ pub enum IoErrorOrAny
     Or(#[from] anyhow::Error),
 }
 
-
 #[derive(Error, Debug)]
-pub enum DeviceDiscoveryError
-{
+pub enum DeviceDiscoveryError {
     #[error("IO error -> {0}")]
     IoError(#[from] io::Error),
 
@@ -115,10 +111,7 @@ pub enum BosError {
     CapabilityTypeMismatch(u8),
 
     #[error("BOS FSCT capability version mismatch, expected {expected}, got {actual}")]
-    FsctCapabilityVersionMismatch {
-        expected: u16,
-        actual: u16,
-    },
+    FsctCapabilityVersionMismatch { expected: u16, actual: u16 },
 }
 
 #[derive(Error, Debug)]
@@ -157,10 +150,7 @@ pub enum FsctDeviceError {
     UsbControlTransferError(#[source] anyhow::Error),
 
     #[error("Expected {expected} bytes, got {actual}")]
-    DataSizeMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    DataSizeMismatch { expected: usize, actual: usize },
 }
 
 pub trait ToFsctDeviceError {

@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::str::FromStr;
+pub use clap::Parser;
 use clap::{Subcommand, ValueEnum};
 use log::LevelFilter;
-pub use clap::Parser;
+use std::str::FromStr;
 // Define log levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum LogLevel {
@@ -122,5 +122,5 @@ pub enum ServiceCommands {
     },
 
     /// Run as a service
-    Run
+    Run,
 }

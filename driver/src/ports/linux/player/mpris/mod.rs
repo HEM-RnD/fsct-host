@@ -16,15 +16,14 @@
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 #![allow(unused_imports)]
 
-mod watcher;
 mod media_player2;
 mod media_player2_player;
 mod player;
+mod watcher;
 
-pub use watcher::SessionWatcher;
-pub use player::Player;
-pub use media_player2_player::PlaybackStatus;
-pub use media_player2_player::PlayerProxy;
 pub use media_player2::MediaPlayer2Proxy;
 pub use media_player2_player::LoopStatus;
-
+pub use media_player2_player::PlaybackStatus;
+pub use media_player2_player::PlayerProxy;
+pub use player::Player;
+pub use watcher::SessionWatcher;

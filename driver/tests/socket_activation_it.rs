@@ -11,19 +11,19 @@
 // - Unix-only and #[ignore] by default.
 // - We do not assert server logs, only that a connection is possible.
 
-use std::os::fd::IntoRawFd as _;
-use std::time::{Duration, Instant};
-use std::path::PathBuf;
-use std::io;
-use std::os::unix::net::UnixListener;
-use std::os::fd::AsRawFd;
-use std::fs;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
+use fsct::{FSCT_PROTOCOL_VERSION, ProtocolVersion};
+use nix::libc;
 use nix::libc::setenv;
 use nix::poll::PollTimeout;
-use fsct::{ProtocolVersion, FSCT_PROTOCOL_VERSION};
+use std::fs;
+use std::io;
+use std::os::fd::AsRawFd;
+use std::os::fd::IntoRawFd as _;
 use std::os::unix::ffi::OsStrExt;
-use nix::libc as libc;
+use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::net::UnixStream;
 
 fn random_sock_path() -> PathBuf {
@@ -45,10 +45,14 @@ const FD_CLOEXEC: i32 = 1;
 
 fn clear_cloexec(fd: i32) -> io::Result<()> {
     let flags = unsafe { fcntl(fd, F_GETFD) };
-    if flags < 0 { return Err(io::Error::last_os_error()); }
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
     let new_flags = flags & !FD_CLOEXEC;
     let r = unsafe { fcntl(fd, F_SETFD, new_flags) };
-    if r < 0 { return Err(io::Error::last_os_error()); }
+    if r < 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(())
 }
 
@@ -75,13 +79,21 @@ fn fork_exec_service(fsct_bin: &PathBuf, listener_fd: i32, out_wr_fd: i32, err_w
             nix::unistd::ForkResult::Child => {
                 // Child process setup
                 // dup listener to fd 3
-                if dup2(listener_fd, 3) < 0 { libc::_exit(127); }
+                if dup2(listener_fd, 3) < 0 {
+                    libc::_exit(127);
+                }
                 // clear CLOEXEC on 3
-                if clear_cloexec(3).is_err() { libc::_exit(127); }
+                if clear_cloexec(3).is_err() {
+                    libc::_exit(127);
+                }
 
                 // Wire stdout/stderr
-                if dup2(out_wr_fd, 1) < 0 { libc::_exit(127); }
-                if dup2(err_wr_fd, 2) < 0 { libc::_exit(127); }
+                if dup2(out_wr_fd, 1) < 0 {
+                    libc::_exit(127);
+                }
+                if dup2(err_wr_fd, 2) < 0 {
+                    libc::_exit(127);
+                }
                 // Clear CLOEXEC on 1,2 as well
                 let _ = clear_cloexec(1);
                 let _ = clear_cloexec(2);
@@ -105,8 +117,8 @@ fn fork_exec_service(fsct_bin: &PathBuf, listener_fd: i32, out_wr_fd: i32, err_w
 }
 
 fn terminate_child(handle: &mut ChildHandle) -> std::io::Result<()> {
-    use nix::sys::signal::{kill, Signal};
-    use nix::unistd::{Pid};
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
     let _ = kill(Pid::from_raw(handle.pid), Signal::SIGTERM);
     // wait
     let _ = nix::sys::wait::waitpid(Pid::from_raw(handle.pid), None);
@@ -122,7 +134,9 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     // Prepare socket
     let sock_path = random_sock_path();
-    if let Some(dir) = sock_path.parent() { let _ = fs::create_dir_all(dir); }
+    if let Some(dir) = sock_path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
     let _ = fs::remove_file(&sock_path);
     let listener = UnixListener::bind(&sock_path).expect("failed to bind unix socket");
     // chmod 0666
@@ -135,13 +149,12 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     // The thread will repeatedly try to connect and, once connected, perform a msgpack-rpc call: get_protocol_version.
     use std::thread;
 
-
     // Create stdout/stderr pipes first and start reading threads before spawning child
-    use nix::unistd::pipe2;
     use nix::fcntl::OFlag;
-    use std::os::fd::FromRawFd;
+    use nix::unistd::pipe2;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
+    use std::os::fd::FromRawFd;
     // Create pipes with CLOEXEC initially; we'll clear CLOEXEC on the write ends passed to the child
     let (out_rd_fd, out_wr_fd) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stdout failed");
     let (err_rd_fd, err_wr_fd) = pipe2(OFlag::O_CLOEXEC).expect("pipe2 stderr failed");
@@ -154,7 +167,9 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
         let mut reader = BufReader::new(out_reader);
         let mut line = String::new();
         while let Ok(n) = reader.read_line(&mut line) {
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             print!("[CHILD][stdout] {}", line);
             line.clear();
         }
@@ -163,7 +178,9 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
         let mut reader = BufReader::new(err_reader);
         let mut line = String::new();
         while let Ok(n) = reader.read_line(&mut line) {
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             print!("[CHILD][stderr] {}", line);
             line.clear();
         }
@@ -171,11 +188,11 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
 
     let endpoint_str = sock_path.to_string_lossy().to_string();
     let client_handle = thread::spawn(move || {
-        use fsct_client::rpc::{RpcRequest, RpcResponse, MAX_LINE_BYTES};
-        use tokio::time::timeout;
-        use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+        use fsct_client::rpc::{MAX_LINE_BYTES, RpcRequest, RpcResponse};
         use futures::{SinkExt, StreamExt};
         use serde_json::json;
+        use tokio::time::timeout;
+        use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 
         // Create a small Tokio runtime inside the thread
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -188,7 +205,8 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
             // we try only once to connect to the socket, because we want to be sure that service may run after a connection attempt and handle an incoming connection which triggers socket activation
             println!("[CLIENT] Connecting to {}", endpoint_str);
 
-            let connection = timeout(Duration::from_secs(2), UnixStream::connect(endpoint_str.as_str())).await
+            let connection = timeout(Duration::from_secs(2), UnixStream::connect(endpoint_str.as_str()))
+                .await
                 .with_context(|| format!("client connection timed out after 5 seconds to {}", endpoint_str))?
                 .with_context(|| format!("client failed to connect to {}: invalid endpoint", endpoint_str))?;
 
@@ -204,10 +222,13 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
                 method: "get_protocol_version".into(),
                 params: json!({}),
             };
-            writer.send(serde_json::to_string(&req).unwrap()).await
+            writer
+                .send(serde_json::to_string(&req).unwrap())
+                .await
                 .with_context(|| "failed to send get_protocol_version request")?;
 
-            let resp_line = timeout(Duration::from_secs(1), reader.next()).await
+            let resp_line = timeout(Duration::from_secs(1), reader.next())
+                .await
                 .with_context(|| format!("get_protocol_version response timed out to {}", endpoint_str))?
                 .ok_or_else(|| anyhow!("connection closed before get_protocol_version response"))?
                 .with_context(|| "error reading get_protocol_version response")?;
@@ -220,14 +241,22 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
             }
 
             let result = resp.result.with_context(|| "get_protocol_version returned no result")?;
-            let major = result["major"].as_u64().with_context(|| "missing major in protocol version")? as u16;
-            let minor = result["minor"].as_u64().with_context(|| "missing minor in protocol version")? as u16;
+            let major = result["major"]
+                .as_u64()
+                .with_context(|| "missing major in protocol version")? as u16;
+            let minor = result["minor"]
+                .as_u64()
+                .with_context(|| "missing minor in protocol version")? as u16;
 
             let protocol_version = FSCT_PROTOCOL_VERSION;
             let read_version = ProtocolVersion { major, minor };
             println!("[CLIENT] Read protocol version: {}", read_version);
             if protocol_version != read_version {
-                bail!("protocol version mismatch: expected {}, got {}", protocol_version, read_version);
+                bail!(
+                    "protocol version mismatch: expected {}, got {}",
+                    protocol_version,
+                    read_version
+                );
             }
             Ok(())
         })
@@ -236,9 +265,12 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     // Wait until we detect a connection attempt on the listening socket (POLLIN),
     // then spawn the fsct_driver which should adopt fd=3 and accept the pending client.
     {
-        println!("[SOCKET] Waiting for first incoming connection on {}", sock_path.display());
-        use nix::poll::{poll, PollFd, PollFlags};
-        use std::os::fd::{RawFd, BorrowedFd};
+        println!(
+            "[SOCKET] Waiting for first incoming connection on {}",
+            sock_path.display()
+        );
+        use nix::poll::{PollFd, PollFlags, poll};
+        use std::os::fd::{BorrowedFd, RawFd};
         let raw: RawFd = listener.as_raw_fd();
         let start = Instant::now();
         let timeout_total = Duration::from_secs(10);
@@ -253,7 +285,10 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
                 break;
             }
             if start.elapsed() > timeout_total {
-                panic!("timeout waiting for first incoming connection on {}", sock_path.display());
+                panic!(
+                    "timeout waiting for first incoming connection on {}",
+                    sock_path.display()
+                );
             }
         }
     }
@@ -266,8 +301,7 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     let err_wr_raw = err_wr_fd.into_raw_fd();
     let _ = clear_cloexec(out_wr_raw);
     let _ = clear_cloexec(err_wr_raw);
-    let mut child = fork_exec_service(&fsct_bin, fd, out_wr_raw, err_wr_raw)
-        .expect("failed to fork/exec fsct service");
+    let mut child = fork_exec_service(&fsct_bin, fd, out_wr_raw, err_wr_raw).expect("failed to fork/exec fsct service");
     // Close our copies of the write ends in the parent so readers see EOF when child closes
     let _ = nix::unistd::close(out_wr_raw);
     let _ = nix::unistd::close(err_wr_raw);
@@ -294,4 +328,3 @@ fn socket_activation_correctly_passes_socket_fd_into_service_and_service_accepts
     let _ = fs::remove_file(&sock_path);
     res.unwrap();
 }
-

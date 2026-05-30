@@ -15,27 +15,25 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::cli::Cli;
+use crate::ports::windows::service::get_service_name;
+use crate::service_main::async_main;
+use crate::{ServiceStateListener, StopSignal};
+use anyhow::{Result, anyhow};
+use clap::Parser;
+use log::{debug, error, info};
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
-use anyhow::{anyhow, Result};
-use clap::Parser;
-use log::{info, error, debug};
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
+use windows_service::service::ServiceType;
+use windows_service::service_control_handler::ServiceStatusHandle;
 use windows_service::{
-    service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceAccess,
-    },
+    define_windows_service,
+    service::{ServiceAccess, ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus},
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
     service_manager::{ServiceManager, ServiceManagerAccess},
-    define_windows_service,
 };
-use windows_service::service::ServiceType;
-use windows_service::service_control_handler::ServiceStatusHandle;
-use crate::{ServiceStateListener, StopSignal};
-use crate::service_main::async_main;
-use crate::cli::Cli;
-use crate::ports::windows::service::get_service_name;
 
 // Define service events
 #[derive(Clone)]
@@ -85,7 +83,9 @@ impl WindowsServiceStopSignal {
 
 impl StopSignal for WindowsServiceStopSignal {
     async fn wait(&mut self) -> anyhow::Result<()> {
-        self.event_rx.recv().await
+        self.event_rx
+            .recv()
+            .await
             .map(|_event| ())
             .map_err(|_e| anyhow!("Error in listening for service stop event"))
     }
@@ -99,7 +99,10 @@ struct WindowsServiceStateNotifier {
 
 impl WindowsServiceStateNotifier {
     pub fn new(status_handle: ServiceStatusHandle, service_type: ServiceType) -> Self {
-        Self { status_handle, service_type }
+        Self {
+            status_handle,
+            service_type,
+        }
     }
 
     fn get_service_status(&self, state: ServiceState) -> ServiceStatus {
@@ -136,7 +139,6 @@ impl ServiceStateListener for WindowsServiceStateNotifier {
         let mut status = self.get_service_status(ServiceState::Running);
         status.controls_accepted = ServiceControlAccept::STOP;
         self.status_handle.set_service_status(status).map_err(|e| anyhow!(e))
-
     }
     fn on_service_stopping(&self) -> anyhow::Result<()> {
         debug!("Setting service status to StopPending");
@@ -152,9 +154,7 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     let service_name = get_service_name(cli.user);
 
     debug!("Creating Tokio runtime");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
 
     // Create a broadcast channel for events that can be used from both sync and async contexts
     let (event_tx, _) = tokio::sync::broadcast::channel::<ServiceEvent>(2);
@@ -188,16 +188,13 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     // Tell the system that the service is starting
     debug!("Setting service status to StartPending");
 
-
     service_status_notifier.on_service_start_pending()?;
 
     let stop_signal = WindowsServiceStopSignal::new(event_tx.subscribe());
 
     let listener = service_status_notifier.clone();
     // Run the service in the Tokio runtime
-    let res = rt.block_on(async move {
-        async_main(stop_signal, listener).await
-    });
+    let res = rt.block_on(async move { async_main(stop_signal, listener).await });
 
     rt.shutdown_timeout(Duration::from_secs(10));
     debug!("Service tasks stopped, exiting");
@@ -207,7 +204,6 @@ pub fn run_service_main(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     let status = if res.is_ok() { 0u32 } else { 1u32 };
     service_status_notifier.on_service_stopped(status)?;
 
-    res
-        .inspect(|_|info!("Service stopped successfully"))
-        .inspect_err(|e|error!("Service stopped, because it's failed: {}", e))
+    res.inspect(|_| info!("Service stopped successfully"))
+        .inspect_err(|e| error!("Service stopped, because it's failed: {}", e))
 }

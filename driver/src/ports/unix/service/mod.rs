@@ -15,9 +15,9 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::{ServiceStateNullListener, service_main};
 use anyhow::anyhow;
 use env_logger::Env;
-use crate::{service_main, ServiceStateNullListener};
 
 pub struct UnixStopSignal {}
 impl UnixStopSignal {
@@ -25,7 +25,7 @@ impl UnixStopSignal {
         Self {}
     }
 }
-impl service_main::StopSignal for UnixStopSignal{
+impl service_main::StopSignal for UnixStopSignal {
     async fn wait(&mut self) -> anyhow::Result<()> {
         let mut terminate_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
@@ -47,4 +47,3 @@ pub async fn fsct_main() -> anyhow::Result<()> {
     let stop_signal = UnixStopSignal::new();
     service_main::async_main(stop_signal, ServiceStateNullListener).await
 }
-
