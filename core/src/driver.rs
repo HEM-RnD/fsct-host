@@ -85,6 +85,6 @@ pub trait FsctDriver: Send + Sync {
     /// Sample the driver's wall and monotonic clocks back-to-back.
     ///
     /// Clients call this (typically twice, at connect) to bridge their monotonic frame to the
-    /// driver's, so timeline anchors can be sent in the driver's frame. See [`crate::mono_offset_ns`].
+    /// driver's, so timeline anchors can be sent in the driver's frame. See [`crate::mono_offset_ms`].
     async fn get_timesync(&self) -> Result<TimeSync, Error>;
 }

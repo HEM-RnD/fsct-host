@@ -129,10 +129,10 @@ impl FsctDevice {
         {
             return Err(FsctDeviceError::PlaybackProgressNotSupported);
         }
-        let before = fsct::mono_now_ns();
+        let before = fsct::mono_now_ms();
         let device_uptime_ms = fsct_interface.get_device_timestamp().await?;
-        let after = fsct::mono_now_ns();
-        let mean_host_mono_ms = (((before as i128) + (after as i128)) / 2) / 1_000_000;
+        let after = fsct::mono_now_ms();
+        let mean_host_mono_ms = ((before as i128) + (after as i128)) / 2;
         let offset_ms = compute_offset_ms(mean_host_mono_ms, device_uptime_ms)?;
         state.lock().unwrap().time_offset_ms = Some(offset_ms);
         Ok(())
@@ -170,7 +170,7 @@ impl FsctDevice {
                 let elapsed = now.saturating_duration_since(progress.update_time);
 
                 let position_ms = extrapolated_position_ms(progress.position, progress.rate, elapsed);
-                let host_mono_now_ms = (fsct::mono_ns_of(now) / 1_000_000) as i128;
+                let host_mono_now_ms = fsct::mono_ms_of(now) as i128;
                 let device_timestamp = device_timestamp_ms(host_mono_now_ms, offset_ms);
                 let track_progress_request_data = TrackProgressRequestData {
                     duration: progress.duration.as_secs_f64().round() as u32,

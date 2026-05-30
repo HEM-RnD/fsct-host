@@ -801,13 +801,13 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 12,
-                    "timeline": {"update_mono_ns": 0, "duration_ms": 2000, "rate": 1.0}
+                    "timeline": {"update_mono_ms": 0, "duration_ms": 2000, "rate": 1.0}
                 })
             )
             .await
             .is_err()
     );
-    // timeline missing update_mono_ns
+    // timeline missing update_mono_ms
     assert!(
         client
             .request(
@@ -827,7 +827,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 14,
-                    "timeline": {"position_ms": 1000, "update_mono_ns": 0, "rate": 1.0}
+                    "timeline": {"position_ms": 1000, "update_mono_ms": 0, "rate": 1.0}
                 })
             )
             .await
@@ -840,7 +840,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 15,
-                    "timeline": {"position_ms": 1000, "update_mono_ns": 0, "duration_ms": 2000}
+                    "timeline": {"position_ms": 1000, "update_mono_ms": 0, "duration_ms": 2000}
                 })
             )
             .await
@@ -853,7 +853,7 @@ async fn ipc_parsing_errors_are_returned_to_client() -> anyhow::Result<()> {
                 "update_player_timeline",
                 json!({
                     "player_id": 16,
-                    "timeline": {"position_ms": "1000", "update_mono_ns": "0", "duration_ms": "2000", "rate": "1.0"}
+                    "timeline": {"position_ms": "1000", "update_mono_ms": "0", "duration_ms": "2000", "rate": "1.0"}
                 })
             )
             .await
@@ -1238,8 +1238,8 @@ async fn ipc_get_timesync_round_trips_wall_and_mono() -> anyhow::Result<()> {
     let mock = Arc::new(helpers::FsctDriverMock::new());
     // Pin the driver's reply so we can assert the exact values cross the wire unchanged.
     *mock.timesync_override.lock().unwrap() = Some(TimeSync {
-        wall_ns: 1_700_000_000_000_000_000,
-        mono_ns: 42_000_000_000,
+        wall_ms: 1_700_000_000_000,
+        mono_ms: 42_000,
     });
 
     // Use the raw client so no handshake runs; we drive get_timesync explicitly.
@@ -1249,8 +1249,8 @@ async fn ipc_get_timesync_round_trips_wall_and_mono() -> anyhow::Result<()> {
         .request("get_timesync", json!({}))
         .await
         .expect("get_timesync should succeed");
-    assert_eq!(result["wall_ns"].as_u64(), Some(1_700_000_000_000_000_000));
-    assert_eq!(result["mono_ns"].as_u64(), Some(42_000_000_000));
+    assert_eq!(result["wall_ms"].as_u64(), Some(1_700_000_000_000));
+    assert_eq!(result["mono_ms"].as_u64(), Some(42_000));
     assert_eq!(*mock.timesync_calls.lock().unwrap(), 1);
 
     server_task.shutdown().await?;

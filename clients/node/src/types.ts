@@ -46,14 +46,14 @@ export type FsctTextMetadata =
 export interface TimelineInfo {
   positionMs: number;
   /**
-   * Monotonic timestamp (nanoseconds, in this client's `process.hrtime` frame) at which
-   * `positionMs` was sampled. Use {@link FsctIpcClient.monoNowNs} for "now". Omit to anchor at
+   * Monotonic timestamp (milliseconds, in this client's `process.hrtime` frame) at which
+   * `positionMs` was sampled. Use {@link FsctIpcClient.monoNowMs} for "now". Omit to anchor at
    * "now" (age 0) — appropriate when the source has no timestamp of its own (e.g. Volumio).
    *
    * The client converts this into the driver's monotonic frame (via the connect-time handshake)
    * before sending, so it is immune to wall-clock steps.
    */
-  updateMonoNs?: number;
+  updateMonoMs?: number;
   durationMs: number;
   rate: number;
 }
