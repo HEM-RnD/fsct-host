@@ -17,8 +17,8 @@
 
 //! IPC client using platform-native Tokio transports (Unix sockets / Windows named pipes).
 
-pub mod rpc;
-mod mux;
 mod driver;
+mod mux;
+pub mod rpc;
 
 pub use driver::IpcDriver;

@@ -15,17 +15,17 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::Arc;
-use std::time::Duration;
-use nusb::{list_devices, DeviceId, DeviceInfo};
-use log::{debug, info, warn};
-use nusb::hotplug::HotplugEvent;
-use futures::StreamExt;
-use fsct::ManagedDeviceId;
 use crate::device_manager::DeviceManagement;
+use crate::joinable_task::{JoinableTaskHandle, spawn_service};
 use crate::usb::create_and_configure_fsct_device;
 use crate::usb::errors::DeviceDiscoveryError;
-use crate::joinable_task::{spawn_service, JoinableTaskHandle};
+use fsct::ManagedDeviceId;
+use futures::StreamExt;
+use log::{debug, info, warn};
+use nusb::hotplug::HotplugEvent;
+use nusb::{DeviceId, DeviceInfo, list_devices};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Tries to initialize a device and add it to the device manager
 async fn try_initialize_device_and_add_to_manager<T: DeviceManagement>(
@@ -76,7 +76,7 @@ async fn run_device_initialization<T: DeviceManagement + Send + Sync + 'static>(
                         result = Some(Err(res.unwrap_err()));
                         break;
                     }
-                    _ => ()
+                    _ => (),
                 }
             }
             tokio::time::sleep(retry_period).await;
@@ -88,21 +88,27 @@ async fn run_device_initialization<T: DeviceManagement + Send + Sync + 'static>(
 
 /// Logs the result of device initialization
 fn log_device_initialize_result(
-    result: Option<Result<ManagedDeviceId, DeviceDiscoveryError>>, 
-    device_info: &DeviceInfo
+    result: Option<Result<ManagedDeviceId, DeviceDiscoveryError>>,
+    device_info: &DeviceInfo,
 ) {
     match result {
-        Some(Ok(_)) => info!("Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
-                          device_info.product_string().unwrap_or("Unknown"),
-                          device_info.vendor_id(),
-                          device_info.product_id()),
-        Some(Err(e)) => warn!("Failed to initialize device {:04x}:{:04x}: {}", 
-                           device_info.vendor_id(),
-                           device_info.product_id(), 
-                           e),
-        None => warn!("Failed to initialize device {:04x}:{:04x}: Timeout", 
-                   device_info.vendor_id(),
-                   device_info.product_id()),
+        Some(Ok(_)) => info!(
+            "Device with Ferrum Streaming Control Technology capability found: \"{}\" ({:04X}:{:04X})",
+            device_info.product_string().unwrap_or("Unknown"),
+            device_info.vendor_id(),
+            device_info.product_id()
+        ),
+        Some(Err(e)) => warn!(
+            "Failed to initialize device {:04x}:{:04x}: {}",
+            device_info.vendor_id(),
+            device_info.product_id(),
+            e
+        ),
+        None => warn!(
+            "Failed to initialize device {:04x}:{:04x}: Timeout",
+            device_info.vendor_id(),
+            device_info.product_id()
+        ),
     }
 }
 
@@ -113,7 +119,7 @@ async fn deinitialize_devices<T: DeviceManagement>(device_manager: &T) {
     for (id, device) in devices {
         let res = device.set_enable(false).await;
         if let Err(e) = res {
-            warn!("Failed to disable device {}: {}", id, e); 
+            warn!("Failed to disable device {}: {}", id, e);
         }
     }
 }

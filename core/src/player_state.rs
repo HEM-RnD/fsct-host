@@ -39,8 +39,12 @@ impl<'a> Iterator for TrackMetadataIterator<'a> {
     type Item = (FsctTextMetadata, &'a Option<String>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let text_types = [FsctTextMetadata::CurrentTitle, FsctTextMetadata::CurrentAuthor,
-            FsctTextMetadata::CurrentAlbum, FsctTextMetadata::CurrentGenre];
+        let text_types = [
+            FsctTextMetadata::CurrentTitle,
+            FsctTextMetadata::CurrentAuthor,
+            FsctTextMetadata::CurrentAlbum,
+            FsctTextMetadata::CurrentGenre,
+        ];
         if self.index < text_types.len() {
             let text_type = text_types[self.index];
             let text = self.metadata.get_text(text_type);
@@ -81,8 +85,12 @@ impl TrackMetadata {
     }
 
     pub fn iter_id(&self) -> Iter<'static, FsctTextMetadata> {
-        static TEXT_TYPES: [FsctTextMetadata; 4] = [FsctTextMetadata::CurrentTitle, FsctTextMetadata::CurrentAuthor,
-            FsctTextMetadata::CurrentAlbum, FsctTextMetadata::CurrentGenre];
+        static TEXT_TYPES: [FsctTextMetadata; 4] = [
+            FsctTextMetadata::CurrentTitle,
+            FsctTextMetadata::CurrentAuthor,
+            FsctTextMetadata::CurrentAlbum,
+            FsctTextMetadata::CurrentGenre,
+        ];
         TEXT_TYPES.iter()
     }
 }

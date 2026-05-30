@@ -15,15 +15,15 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::path::PathBuf;
+use crate::cli::LogLevel;
+use crate::ports::windows::service::runtime::get_current_session_id;
 use log::debug;
 use log4rs::{
     append::file::FileAppender,
     config::{Appender, Config, Root},
     encode::pattern::PatternEncoder,
 };
-use crate::cli::LogLevel;
-use crate::ports::windows::service::runtime::get_current_session_id;
+use std::path::PathBuf;
 
 pub fn get_log_dir() -> anyhow::Result<PathBuf> {
     // Create a log directory in ProgramData
@@ -38,16 +38,11 @@ pub fn get_log_dir() -> anyhow::Result<PathBuf> {
     Ok(log_dir)
 }
 
-pub fn get_logger_pattern() -> PatternEncoder
-{
+pub fn get_logger_pattern() -> PatternEncoder {
     PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} - {l} - {m}\n")
 }
 
-pub fn build_logger_config(
-    log_file: PathBuf, 
-    log_level: LogLevel, 
-    include_console: bool
-) -> anyhow::Result<Config> {
+pub fn build_logger_config(log_file: PathBuf, log_level: LogLevel, include_console: bool) -> anyhow::Result<Config> {
     // Create a file appender
     let file_appender = FileAppender::builder()
         .encoder(Box::new(get_logger_pattern()))
@@ -57,8 +52,7 @@ pub fn build_logger_config(
     let level_filter = log_level.to_level_filter();
 
     // Build the logger configuration
-    let mut config_builder = Config::builder()
-        .appender(Appender::builder().build("file", Box::new(file_appender)));
+    let mut config_builder = Config::builder().appender(Appender::builder().build("file", Box::new(file_appender)));
 
     let mut root_builder = Root::builder().appender("file");
 
@@ -69,8 +63,7 @@ pub fn build_logger_config(
             .encoder(Box::new(get_logger_pattern()))
             .build();
 
-        config_builder = config_builder
-            .appender(Appender::builder().build("console", Box::new(console_appender)));
+        config_builder = config_builder.appender(Appender::builder().build("console", Box::new(console_appender)));
 
         root_builder = root_builder.appender("console");
     }

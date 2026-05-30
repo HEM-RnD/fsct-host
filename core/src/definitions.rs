@@ -15,11 +15,11 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use bitflags::bitflags;
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::num::NonZeroU32;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use bitflags::bitflags;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 bitflags! {
@@ -86,7 +86,8 @@ struct TimelineWire {
 
 impl From<TimelineInfo> for TimelineWire {
     fn from(t: TimelineInfo) -> Self {
-        let update_unix_ms = t.update_time
+        let update_unix_ms = t
+            .update_time
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
@@ -156,7 +157,6 @@ impl Default for FsctStatus {
         Self::Unknown
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion {

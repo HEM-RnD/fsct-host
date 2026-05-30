@@ -18,11 +18,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fsct_client::IpcDriver;
-use fsct_driver::IpcServer;
-use fsct::FsctDriver;
 use async_trait::async_trait;
 use fsct::FSCT_PROTOCOL_VERSION;
+use fsct::FsctDriver;
+use fsct_client::IpcDriver;
+use fsct_driver::IpcServer;
 
 fn test_endpoint() -> String {
     #[cfg(windows)]
@@ -46,20 +46,73 @@ impl FsctDriver for TestDriver {
     async fn register_player(&self, _self_id: String) -> Result<fsct::ManagedPlayerId, anyhow::Error> {
         Err(anyhow::anyhow!("not used"))
     }
-    async fn unregister_player(&self, _player_id: fsct::ManagedPlayerId) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn assign_player_to_device(&self, _player_id: fsct::ManagedPlayerId, _device_id: fsct::ManagedDeviceId) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn unassign_player_from_device(&self, _player_id: fsct::ManagedPlayerId, _device_id: fsct::ManagedDeviceId) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn update_player_state(&self, _player_id: fsct::ManagedPlayerId, _new_state: fsct::player_state::PlayerState) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn update_player_status(&self, _player_id: fsct::ManagedPlayerId, _new_status: fsct::definitions::FsctStatus) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn update_player_timeline(&self, _player_id: fsct::ManagedPlayerId, _new_timeline: Option<fsct::definitions::TimelineInfo>) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn update_player_metadata(&self, _player_id: fsct::ManagedPlayerId, _metadata_id: fsct::definitions::FsctTextMetadata, _new_text: Option<String>) -> Result<(), anyhow::Error> { Ok(()) }
-    async fn get_player_assigned_device(&self, _player_id: fsct::ManagedPlayerId) -> Result<Option<fsct::ManagedDeviceId>, anyhow::Error> { Ok(None) }
-    async fn get_detected_devices(&self) -> Result<Vec<fsct::ManagedDeviceId>, anyhow::Error> { Ok(Vec::new()) }
-    async fn subscribe_device_changes(&self) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, anyhow::Error> {
+    async fn unregister_player(&self, _player_id: fsct::ManagedPlayerId) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn assign_player_to_device(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _device_id: fsct::ManagedDeviceId,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn unassign_player_from_device(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _device_id: fsct::ManagedDeviceId,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn update_player_state(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _new_state: fsct::player_state::PlayerState,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn update_player_status(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _new_status: fsct::definitions::FsctStatus,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn update_player_timeline(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _new_timeline: Option<fsct::definitions::TimelineInfo>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn update_player_metadata(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+        _metadata_id: fsct::definitions::FsctTextMetadata,
+        _new_text: Option<String>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn get_player_assigned_device(
+        &self,
+        _player_id: fsct::ManagedPlayerId,
+    ) -> Result<Option<fsct::ManagedDeviceId>, anyhow::Error> {
+        Ok(None)
+    }
+    async fn get_detected_devices(&self) -> Result<Vec<fsct::ManagedDeviceId>, anyhow::Error> {
+        Ok(Vec::new())
+    }
+    async fn subscribe_device_changes(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, anyhow::Error> {
         let (_tx, rx) = tokio::sync::broadcast::channel(1);
         Ok(rx)
     }
-    async fn get_device_info(&self, _device_id: fsct::ManagedDeviceId) -> Result<fsct::definitions::DeviceInfo, anyhow::Error> { Err(anyhow::anyhow!("not used")) }
+    async fn get_device_info(
+        &self,
+        _device_id: fsct::ManagedDeviceId,
+    ) -> Result<fsct::definitions::DeviceInfo, anyhow::Error> {
+        Err(anyhow::anyhow!("not used"))
+    }
 }
 
 #[tokio::test]

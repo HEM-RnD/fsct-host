@@ -19,18 +19,19 @@ use std::os::fd::{IntoRawFd, OwnedFd};
 
 pub mod player;
 
-
-
 /// Returns the file descriptor provided by launchd socket activation (if any).
 ///
 /// This expects a socket named "fsct-socket" in the launchd .plist under the `Sockets` key.
 /// If the service wasn't activated via launchd sockets, returns None.
 pub fn get_socket_activation_fd() -> Option<OwnedFd> {
-    use std::os::fd::{FromRawFd};
+    use std::os::fd::FromRawFd;
 
-    let fds: Vec<_> = raunch::activate_socket("fsct-socket").ok()?
+    let fds: Vec<_> = raunch::activate_socket("fsct-socket")
+        .ok()?
         // map to OwnedFd and collect, so all discarded fds are closed automatically
-        .into_iter().map(|fd| unsafe { OwnedFd::from_raw_fd(fd)}).collect();
+        .into_iter()
+        .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
+        .collect();
     // return the first fd, discarding the rest
     fds.into_iter().next()
 }

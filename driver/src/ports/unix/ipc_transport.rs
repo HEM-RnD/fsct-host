@@ -41,8 +41,7 @@ impl EndpointListener {
         }
         let _ = tokio::fs::remove_file(&path).await;
 
-        let listener = UnixListener::bind(&path)
-            .with_context(|| format!("failed to bind unix socket at {}", path))?;
+        let listener = UnixListener::bind(&path).with_context(|| format!("failed to bind unix socket at {}", path))?;
 
         // Set mode 0o666 (rw for everyone)
         use std::os::unix::fs::PermissionsExt;
@@ -61,8 +60,7 @@ impl EndpointListener {
         std_listener
             .set_nonblocking(true)
             .context("failed to set nonblocking on fd")?;
-        let listener = UnixListener::from_std(std_listener)
-            .context("failed to adopt fd as UnixListener")?;
+        let listener = UnixListener::from_std(std_listener).context("failed to adopt fd as UnixListener")?;
         Ok(EndpointListener { inner: listener })
     }
 

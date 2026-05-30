@@ -15,7 +15,6 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-
 use uuid::Uuid;
 
 const ROOT_UUID_STR: &str = "0e042ba4-82f1-4531-bd35-b455efebc627";

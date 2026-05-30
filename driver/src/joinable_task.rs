@@ -15,12 +15,12 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use futures::StreamExt;
+use futures::future::join_all;
+use futures::stream::FuturesUnordered;
 use std::future::Future;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use futures::future::join_all;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 
 /// A handle passed to background tasks that lets them observe a stop/shutdown request.
 ///
@@ -31,7 +31,9 @@ pub struct StopHandle {
 
 impl StopHandle {
     /// Internal constructor from a receiver
-    fn new(shutdown_rx: oneshot::Receiver<()>) -> Self { Self { shutdown_rx } }
+    fn new(shutdown_rx: oneshot::Receiver<()>) -> Self {
+        Self { shutdown_rx }
+    }
 
     /// Awaits a signal from the shutdown receiver.
     ///
@@ -75,9 +77,11 @@ pub struct JoinableTaskHandle {
 impl JoinableTaskHandle {
     /// Construct a new ServiceHandle from a spawned task handle and a oneshot shutdown sender.
     pub fn new(join: JoinHandle<()>, shutdown_tx: oneshot::Sender<()>) -> Self {
-        Self { join, shutdown_tx: shutdown_tx }
+        Self {
+            join,
+            shutdown_tx: shutdown_tx,
+        }
     }
-
 
     /// Request cooperative shutdown and await task completion.
     pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
@@ -101,7 +105,7 @@ impl JoinableTaskHandle {
 /// on a Tokio task. The returned ServiceHandle allows triggering a cooperative shutdown or aborting.
 pub fn spawn_service<Fut, Func>(f: Func) -> JoinableTaskHandle
 where
-    Fut: Future<Output=()> + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
     Func: FnOnce(StopHandle) -> Fut + Send + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -118,24 +122,38 @@ pub struct MultiJoinableTaskHandle {
 }
 
 impl Default for MultiJoinableTaskHandle {
-    fn default() -> Self { Self { handles: Vec::new() } }
+    fn default() -> Self {
+        Self { handles: Vec::new() }
+    }
 }
 
 impl MultiJoinableTaskHandle {
     /// Create an empty MultiServiceHandle
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Create with reserved capacity
-    pub fn with_capacity(cap: usize) -> Self { Self { handles: Vec::with_capacity(cap) } }
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            handles: Vec::with_capacity(cap),
+        }
+    }
 
     /// Add a ServiceHandle to be managed
-    pub fn add(&mut self, handle: JoinableTaskHandle) { self.handles.push(handle); }
+    pub fn add(&mut self, handle: JoinableTaskHandle) {
+        self.handles.push(handle);
+    }
 
     /// Number of contained handles
-    pub fn len(&self) -> usize { self.handles.len() }
+    pub fn len(&self) -> usize {
+        self.handles.len()
+    }
 
     /// Whether there are no handles
-    pub fn is_empty(&self) -> bool { self.handles.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.handles.is_empty()
+    }
 
     /// Request shutdown for all services, then await their completion.
     /// Returns Ok(()) if all joins succeed; otherwise returns the first JoinError encountered.

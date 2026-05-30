@@ -88,10 +88,13 @@ struct PlatformCapability {
 
 fn decode_bos_descriptor(data: &[u8]) -> Result<BosDescriptor, BosError> {
     if data.len() < std::mem::size_of::<BosDescriptor>() {
-        return Err(BosError::TooShort { name: "BosDescriptor", expected: std::mem::size_of::<BosDescriptor>(), actual: data.len() });
+        return Err(BosError::TooShort {
+            name: "BosDescriptor",
+            expected: std::mem::size_of::<BosDescriptor>(),
+            actual: data.len(),
+        });
     }
-    let descriptor: BosDescriptor =
-        unsafe { *std::mem::transmute::<*const u8, &BosDescriptor>(data.as_ptr()) };
+    let descriptor: BosDescriptor = unsafe { *std::mem::transmute::<*const u8, &BosDescriptor>(data.as_ptr()) };
     if descriptor.bDescriptorType != 0x0F {
         return Err(BosError::WrongType {
             name: "BosDescriptor",
@@ -104,25 +107,40 @@ fn decode_bos_descriptor(data: &[u8]) -> Result<BosDescriptor, BosError> {
 
 fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData<'_>, BosError> {
     if data.len() < std::mem::size_of::<BosCapabilityDescriptor>() {
-        return Err(BosError::TooShort { name: "BosCapabilityDescriptor", expected: std::mem::size_of::<BosCapabilityDescriptor>(), actual: data.len() });
+        return Err(BosError::TooShort {
+            name: "BosCapabilityDescriptor",
+            expected: std::mem::size_of::<BosCapabilityDescriptor>(),
+            actual: data.len(),
+        });
     }
     let capability_desc: BosCapabilityDescriptor =
         unsafe { *std::mem::transmute::<*const u8, &BosCapabilityDescriptor>(data.as_ptr()) };
     if capability_desc.bLength as usize > data.len() {
-        return Err(BosError::TooShort { name: "BosCapabilityDescriptor", expected: capability_desc.bLength as usize, actual: data.len() });
+        return Err(BosError::TooShort {
+            name: "BosCapabilityDescriptor",
+            expected: capability_desc.bLength as usize,
+            actual: data.len(),
+        });
     }
     if capability_desc.bDescriptorType != 0x10 {
-        return Err(BosError::WrongType { name: "BosCapabilityDescriptor", expected: 0x10, actual: capability_desc.bDescriptorType });
+        return Err(BosError::WrongType {
+            name: "BosCapabilityDescriptor",
+            expected: 0x10,
+            actual: capability_desc.bDescriptorType,
+        });
     }
     if (capability_desc.bLength as usize) < std::mem::size_of::<BosCapabilityDescriptor>() {
-        return Err(BosError::TooShort { 
-            name: "BosCapabilityDescriptor data", 
-            expected: std::mem::size_of::<BosCapabilityDescriptor>(), 
-            actual: capability_desc.bLength as usize 
+        return Err(BosError::TooShort {
+            name: "BosCapabilityDescriptor data",
+            expected: std::mem::size_of::<BosCapabilityDescriptor>(),
+            actual: capability_desc.bLength as usize,
         });
-    }     
-    let data = if (capability_desc.bLength as usize) == std::mem::size_of::<BosCapabilityDescriptor>() { &[] }
-    else { &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)] };
+    }
+    let data = if (capability_desc.bLength as usize) == std::mem::size_of::<BosCapabilityDescriptor>() {
+        &[]
+    } else {
+        &data[std::mem::size_of::<BosCapabilityDescriptor>()..(capability_desc.bLength as usize)]
+    };
     if capability_desc.bDevCapabilityType == 0 || capability_desc.bDevCapabilityType > 17 {
         return Err(BosError::CapabilityTypeMismatch(capability_desc.bDevCapabilityType));
     }
@@ -134,13 +152,15 @@ fn decode_bos_capability(data: &[u8]) -> Result<BosCapabilityDescWithData<'_>, B
     })
 }
 
-fn decode_bos_descriptor_with_capabilities(
-    data: &[u8],
-) -> Result<Vec<BosCapabilityDescWithData<'_>>, BosError> {
+fn decode_bos_descriptor_with_capabilities(data: &[u8]) -> Result<Vec<BosCapabilityDescWithData<'_>>, BosError> {
     let descriptor = decode_bos_descriptor(data)?;
     let total_length = descriptor.wTotalLength as usize;
     if data.len() < total_length {
-        return Err(BosError::TooShort { name: "BosDescriptor with capabilities", expected: total_length, actual: data.len() });
+        return Err(BosError::TooShort {
+            name: "BosDescriptor with capabilities",
+            expected: total_length,
+            actual: data.len(),
+        });
     }
     let mut capabilities = Vec::new();
     let mut offset = descriptor.bLength as usize;
@@ -161,9 +181,13 @@ fn get_platform_capabilities(
             BosCapabilityType::Platform => {
                 let platform_part_size = size_of::<PlatformDataPartDescriptor>();
                 if capability.data.len() < size_of::<PlatformDataPartDescriptor>() {
-                    return Err(BosError::TooShort { name: "PlatformCapabilityDescriptor - bReserved and UUID part", expected: 17, actual: capability.data.len() });
+                    return Err(BosError::TooShort {
+                        name: "PlatformCapabilityDescriptor - bReserved and UUID part",
+                        expected: 17,
+                        actual: capability.data.len(),
+                    });
                 };
-                let platform_part: PlatformDataPartDescriptor =  
+                let platform_part: PlatformDataPartDescriptor =
                     unsafe { *std::mem::transmute::<*const u8, &PlatformDataPartDescriptor>(capability.data.as_ptr()) };
                 let uuid = Uuid::from_bytes_le(platform_part.uuid);
                 capabilities.push(PlatformCapability {
@@ -195,20 +219,24 @@ struct FSCTCapability {
     version: (u8, u8),
 }
 
-fn get_fsct_capability(
-    platform_capabilities: Vec<PlatformCapability>,
-) -> Result<FSCTCapability, BosError> {
+fn get_fsct_capability(platform_capabilities: Vec<PlatformCapability>) -> Result<FSCTCapability, BosError> {
     for capability in platform_capabilities {
         if capability.uuid == FSCT_UUID {
             if capability.data.len() < std::mem::size_of::<FSCTCapabilityDesc>() {
-                return Err(BosError::TooShort { name: "FSCT capability data", expected: std::mem::size_of::<FSCTCapabilityDesc>(), actual: capability.data.len() });
+                return Err(BosError::TooShort {
+                    name: "FSCT capability data",
+                    expected: std::mem::size_of::<FSCTCapabilityDesc>(),
+                    actual: capability.data.len(),
+                });
             }
-            let fsct_capability: FSCTCapabilityDesc = unsafe {
-                *std::mem::transmute::<*const u8, &FSCTCapabilityDesc>(capability.data.as_ptr())
-            };
+            let fsct_capability: FSCTCapabilityDesc =
+                unsafe { *std::mem::transmute::<*const u8, &FSCTCapabilityDesc>(capability.data.as_ptr()) };
             if fsct_capability.capabilityDescriptorVersion != FSCT_CAPABILITY_DESCRIPTOR_VERSION {
                 let capability_descriptor_version = fsct_capability.capabilityDescriptorVersion;
-                return Err(BosError::FsctCapabilityVersionMismatch { expected: FSCT_CAPABILITY_DESCRIPTOR_VERSION, actual: capability_descriptor_version });
+                return Err(BosError::FsctCapabilityVersionMismatch {
+                    expected: FSCT_CAPABILITY_DESCRIPTOR_VERSION,
+                    actual: capability_descriptor_version,
+                });
             }
             return Ok(FSCTCapability {
                 vendor_sub_class_number: fsct_capability.vendorSubClassNumber,
@@ -222,22 +250,17 @@ fn get_fsct_capability(
     Err(BosError::NotFsctCapability)
 }
 
-fn get_fsct_vendor_subclass_number(
-    platform_capabilities: Vec<PlatformCapability>,
-) -> Result<u8, BosError> {
+fn get_fsct_vendor_subclass_number(platform_capabilities: Vec<PlatformCapability>) -> Result<u8, BosError> {
     Ok(get_fsct_capability(platform_capabilities)?.vendor_sub_class_number)
 }
 
-pub fn get_fsct_vendor_subclass_number_from_device(
-    device: &DeviceInfo,
-) -> Result<u8, IoErrorOrAny> {
+pub fn get_fsct_vendor_subclass_number_from_device(device: &DeviceInfo) -> Result<u8, IoErrorOrAny> {
     if device.usb_version() <= 0x0200 {
         return Err(BosError::NotAvailable(device.usb_version()).into());
     }
 
     let handle = device.open()?;
-    let desc = handle
-        .get_descriptor(15, 0, 0, Duration::from_secs(1))?;
+    let desc = handle.get_descriptor(15, 0, 0, Duration::from_secs(1))?;
     let bos_desc = decode_bos_descriptor_with_capabilities(&desc)?;
     let platform_caps = get_platform_capabilities(bos_desc)?;
     Ok(get_fsct_vendor_subclass_number(platform_caps)?)
@@ -246,18 +269,18 @@ pub fn get_fsct_vendor_subclass_number_from_device(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     const FSCT_PLATFORM_CAPABILITY_DATA: [u8; 20] = [
         0x00, // bReserved
-        0xEB, 0xBE, 0x33, 0xC4, 0x00, 0x8D, 0x20, 0x44,
-        0x95, 0x15, 0xBC, 0xB7, 0xFA, 0xF3, 0x8A, 0x41, // FSCT UUID
+        0xEB, 0xBE, 0x33, 0xC4, 0x00, 0x8D, 0x20, 0x44, 0x95, 0x15, 0xBC, 0xB7, 0xFA, 0xF3, 0x8A,
+        0x41, // FSCT UUID
         0x00, 0x01, // FSCT desc version
         0x42, // FSCT vendorSubClassNumber
     ];
 
     fn create_bos_descriptor(total_length: u16, num_caps: u8) -> Vec<u8> {
         vec![
-            5, // bLength
+            5,    // bLength
             0x0F, // bDescriptorType
             total_length as u8,
             (total_length >> 8) as u8,
@@ -267,9 +290,9 @@ mod tests {
 
     fn create_capability_descriptor(cap_type: u8, data: &[u8]) -> Vec<u8> {
         let mut desc = vec![
-            (3 + data.len()) as u8, // bLength 
-            0x10, // bDescriptorType
-            cap_type, // bDevCapabilityType
+            (3 + data.len()) as u8, // bLength
+            0x10,                   // bDescriptorType
+            cap_type,               // bDevCapabilityType
         ];
         desc.extend_from_slice(data);
         desc
@@ -327,7 +350,7 @@ mod tests {
 
         assert_eq!(vendor_subclass, 0x42);
     }
-    
+
     #[test]
     fn test_wrong_bos_descriptor() {
         let data = vec![5, 0x0E, 0, 0, 0]; // Wrong descriptor type

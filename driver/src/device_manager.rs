@@ -15,17 +15,17 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::usb::errors::FsctDeviceError;
+use crate::usb::fsct_device::FsctDevice;
+use fsct::calculate_uuid;
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use nusb::DeviceId;
 use std::collections::HashMap;
 use std::mem::swap;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use nusb::DeviceId;
-use tokio::sync::broadcast;
 use thiserror::Error;
-use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
-use crate::usb::errors::FsctDeviceError;
-use crate::usb::fsct_device::FsctDevice;
-use fsct::calculate_uuid;
+use tokio::sync::broadcast;
 
 /// Device event types that can be broadcast by the DeviceManager
 pub use fsct::DeviceChangeEvent as DeviceEvent;
@@ -36,7 +36,7 @@ pub enum DeviceManagerError {
     /// The device with the specified ID was not found
     #[error("Device with ID {0} not found")]
     DeviceNotFound(ManagedDeviceId),
-    
+
     /// An error occurred in the underlying FSCT device
     #[error("FSCT device error: {0}")]
     FsctDeviceError(#[from] FsctDeviceError),
@@ -77,19 +77,39 @@ pub trait DeviceManagement {
 /// Trait for device control operations
 pub trait DeviceControl {
     /// Set the enable state for a device
-    fn set_enable(&self, managed_id: ManagedDeviceId, enable: bool) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
-    
+    fn set_enable(
+        &self,
+        managed_id: ManagedDeviceId,
+        enable: bool,
+    ) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
+
     /// Get the enable state for a device
-    fn get_enable(&self, managed_id: ManagedDeviceId) -> impl std::future::Future<Output = Result<bool, DeviceManagerError>> + Send + Sync;
-    
+    fn get_enable(
+        &self,
+        managed_id: ManagedDeviceId,
+    ) -> impl std::future::Future<Output = Result<bool, DeviceManagerError>> + Send + Sync;
+
     /// Set the progress for a device
-    fn set_progress(&self, managed_id: ManagedDeviceId, progress: Option<TimelineInfo>) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
-    
+    fn set_progress(
+        &self,
+        managed_id: ManagedDeviceId,
+        progress: Option<TimelineInfo>,
+    ) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
+
     /// Set text for a device
-    fn set_current_text(&self, managed_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&str>) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
-    
+    fn set_current_text(
+        &self,
+        managed_id: ManagedDeviceId,
+        text_id: FsctTextMetadata,
+        text: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
+
     /// Set status for a device
-    fn set_status(&self, managed_id: ManagedDeviceId, status: FsctStatus) -> impl std::future::Future<Output =Result<(), DeviceManagerError>> + Send + Sync;
+    fn set_status(
+        &self,
+        managed_id: ManagedDeviceId,
+        status: FsctStatus,
+    ) -> impl std::future::Future<Output = Result<(), DeviceManagerError>> + Send + Sync;
 
     /// Subscribe to device events
     fn subscribe(&self) -> broadcast::Receiver<DeviceEvent>;
@@ -112,7 +132,7 @@ impl DeviceManager {
     pub fn new() -> Self {
         // Create a broadcast channel with a capacity of 100 events
         let (event_sender, _) = broadcast::channel(100);
-        
+
         Self {
             devices: Arc::new(Mutex::new(HashMap::new())),
             usb_id_to_managed_id: Arc::new(Mutex::new(HashMap::new())),
@@ -122,7 +142,8 @@ impl DeviceManager {
 
     fn get_device(&self, managed_id: ManagedDeviceId) -> Result<Arc<FsctDevice>, DeviceManagerError> {
         let devices = self.devices.lock().unwrap();
-        devices.get(&managed_id)
+        devices
+            .get(&managed_id)
             .map(|info| info.device.clone())
             .ok_or(DeviceManagerError::DeviceNotFound(managed_id))
     }
@@ -163,7 +184,7 @@ impl DeviceManagement for DeviceManager {
 
         managed_id
     }
-    
+
     fn remove_device_by_usb_id(&self, device_id: DeviceId) -> Option<Arc<FsctDevice>> {
         // Get the managed ID
         let managed_id = {
@@ -195,9 +216,7 @@ impl DeviceManagement for DeviceManager {
         let mut local_devices = HashMap::new();
         let mut devices = self.devices.lock().unwrap();
         swap(&mut local_devices, devices.deref_mut());
-        local_devices.into_iter()
-            .map(|(id, info)| (id, info.device))
-            .collect()
+        local_devices.into_iter().map(|(id, info)| (id, info.device)).collect()
     }
 
     fn get_managed_id_for_usb_id(&self, device_id: DeviceId) -> Option<ManagedDeviceId> {
@@ -212,7 +231,8 @@ impl DeviceManagement for DeviceManager {
 
     fn get_detected_devices(&self) -> Vec<fsct::definitions::DeviceInfo> {
         let devices = self.devices.lock().unwrap();
-        devices.iter()
+        devices
+            .iter()
             .map(|(id, stored)| fsct::definitions::DeviceInfo {
                 id: *id,
                 name: stored.name.clone(),
@@ -230,27 +250,38 @@ impl DeviceControl for DeviceManager {
         let device = self.get_device(managed_id)?;
         device.set_enable(enable).await.map_err(DeviceManagerError::from)
     }
-    
+
     async fn get_enable(&self, managed_id: ManagedDeviceId) -> Result<bool, DeviceManagerError> {
         let device = self.get_device(managed_id)?;
         device.get_enable().await.map_err(DeviceManagerError::from)
     }
-    
-    async fn set_progress(&self, managed_id: ManagedDeviceId, progress: Option<TimelineInfo>) -> Result<(), DeviceManagerError> {
+
+    async fn set_progress(
+        &self,
+        managed_id: ManagedDeviceId,
+        progress: Option<TimelineInfo>,
+    ) -> Result<(), DeviceManagerError> {
         let device = self.get_device(managed_id)?;
         device.set_progress(progress).await.map_err(DeviceManagerError::from)
     }
-    
-    async fn set_current_text(&self, managed_id: ManagedDeviceId, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), DeviceManagerError> {
+
+    async fn set_current_text(
+        &self,
+        managed_id: ManagedDeviceId,
+        text_id: FsctTextMetadata,
+        text: Option<&str>,
+    ) -> Result<(), DeviceManagerError> {
         let device = self.get_device(managed_id)?;
-        device.set_current_text(text_id, text).await.map_err(DeviceManagerError::from)
+        device
+            .set_current_text(text_id, text)
+            .await
+            .map_err(DeviceManagerError::from)
     }
-    
+
     async fn set_status(&self, managed_id: ManagedDeviceId, status: FsctStatus) -> Result<(), DeviceManagerError> {
         let device = self.get_device(managed_id)?;
         device.set_status(status).await.map_err(DeviceManagerError::from)
     }
-
 
     fn subscribe(&self) -> broadcast::Receiver<DeviceEvent> {
         self.event_sender.subscribe()

@@ -15,11 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-
-pub mod service;
-pub mod player;
 #[cfg(windows)]
 pub mod ipc_transport;
+pub mod player;
+pub mod service;
 
 pub fn get_socket_activation_fd() -> Option<i32> {
     // There is no socket activation on Windows.

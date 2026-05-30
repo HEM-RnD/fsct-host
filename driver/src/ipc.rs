@@ -31,24 +31,23 @@ use std::sync::{Arc, Mutex};
 use std::os::fd::{AsRawFd, OwnedFd};
 
 use anyhow::Context;
+use futures::SinkExt;
 use futures::StreamExt;
 use log::{error, info, warn};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
-use futures::SinkExt;
 use uuid::Uuid;
 
 use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::player_state::PlayerState;
-use fsct::{DeviceChangeEvent, FsctDriver, FSCT_PROTOCOL_VERSION};
+use fsct::{DeviceChangeEvent, FSCT_PROTOCOL_VERSION, FsctDriver};
 use fsct_client::rpc::{
-    RpcNotification, RpcRequest, RpcResponse,
-    ERR_APPLICATION, ERR_METHOD_NOT_FOUND, ERR_PARSE_ERROR, MAX_LINE_BYTES,
+    ERR_APPLICATION, ERR_METHOD_NOT_FOUND, ERR_PARSE_ERROR, MAX_LINE_BYTES, RpcNotification, RpcRequest, RpcResponse,
 };
 
-use crate::joinable_task::{spawn_service, JoinableTaskHandle, MultiJoinableTaskHandle};
+use crate::joinable_task::{JoinableTaskHandle, MultiJoinableTaskHandle, spawn_service};
 
 // ---------------------------------------------------------------------------
 // Endpoint types
@@ -153,13 +152,18 @@ impl IpcServer {
             let conn_players: Arc<Mutex<HashSet<NonZeroU32>>> = Arc::new(Mutex::new(HashSet::new()));
             let (read_half, write_half) = tokio::io::split(stream);
             let reader = FramedRead::new(read_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES));
-            let writer = Arc::new(tokio::sync::Mutex::new(
-                FramedWrite::new(write_half, LinesCodec::new_with_max_length(MAX_LINE_BYTES)),
-            ));
+            let writer = Arc::new(tokio::sync::Mutex::new(FramedWrite::new(
+                write_half,
+                LinesCodec::new_with_max_length(MAX_LINE_BYTES),
+            )));
 
             let notify_task = tokio::spawn(run_notification_forwarder(writer.clone(), driver.clone()));
 
-            let handler = ConnectionHandler { driver: driver.clone(), conn_players: conn_players.clone(), connection_id };
+            let handler = ConnectionHandler {
+                driver: driver.clone(),
+                conn_players: conn_players.clone(),
+                connection_id,
+            };
 
             tokio::pin!(reader);
             select! {
@@ -182,16 +186,17 @@ impl IpcServer {
     }
 }
 
-async fn run_notification_forwarder<W>(
-    writer: Arc<tokio::sync::Mutex<W>>,
-    driver: Arc<dyn FsctDriver>,
-) where
+async fn run_notification_forwarder<W>(writer: Arc<tokio::sync::Mutex<W>>, driver: Arc<dyn FsctDriver>)
+where
     W: futures::Sink<String> + Unpin,
     W::Error: std::fmt::Display,
 {
     let mut rx = match driver.subscribe_device_changes().await {
         Ok(rx) => rx,
-        Err(e) => { warn!("subscribe_device_changes failed: {}", e); return; }
+        Err(e) => {
+            warn!("subscribe_device_changes failed: {}", e);
+            return;
+        }
     };
     loop {
         let event = match rx.recv().await {
@@ -204,7 +209,10 @@ async fn run_notification_forwarder<W>(
         };
         let line = match serde_json::to_string(&device_event_to_notification(event)) {
             Ok(l) => l,
-            Err(e) => { warn!("notification serialize error: {}", e); continue; }
+            Err(e) => {
+                warn!("notification serialize error: {}", e);
+                continue;
+            }
         };
         let mut w = writer.lock().await;
         if let Err(e) = w.send(line).await {
@@ -226,13 +234,19 @@ async fn run_request_loop<R, W>(
 {
     while let Some(line_result) = reader.next().await {
         let line = match line_result {
-            Err(e) => { warn!("IPC read error (id={}): {}", connection_id, e); break; }
+            Err(e) => {
+                warn!("IPC read error (id={}): {}", connection_id, e);
+                break;
+            }
             Ok(l) => l,
         };
         let response = handler.handle_line(&line).await;
         let resp_line = match serde_json::to_string(&response) {
             Ok(l) => l,
-            Err(e) => { error!("Failed to serialize response: {}", e); continue; }
+            Err(e) => {
+                error!("Failed to serialize response: {}", e);
+                continue;
+            }
         };
         let mut w = writer.lock().await;
         if let Err(e) = w.send(resp_line).await {
@@ -297,11 +311,7 @@ impl ConnectionHandler {
         let req: RpcRequest = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
-                return RpcResponse::err(
-                    JsonValue::Null,
-                    ERR_PARSE_ERROR,
-                    format!("parse error: {}", e),
-                );
+                return RpcResponse::err(JsonValue::Null, ERR_PARSE_ERROR, format!("parse error: {}", e));
             }
         };
         let id = req.id.clone();
@@ -355,30 +365,27 @@ impl ConnectionHandler {
     }
 
     fn parse_device_id(params: &JsonValue) -> anyhow::Result<Uuid> {
-        let s = params["device_id"].as_str()
+        let s = params["device_id"]
+            .as_str()
             .with_context(|| "device_id must be a UUID string")?;
         Uuid::parse_str(s).with_context(|| format!("invalid device_id UUID: {}", s))
     }
 
     fn parse_status(params: &JsonValue) -> anyhow::Result<FsctStatus> {
-        serde_json::from_value(params["status"].clone())
-            .with_context(|| "invalid status value")
+        serde_json::from_value(params["status"].clone()).with_context(|| "invalid status value")
     }
 
     fn parse_text_metadata_id(params: &JsonValue) -> anyhow::Result<FsctTextMetadata> {
-        serde_json::from_value(params["metadata_id"].clone())
-            .with_context(|| "invalid metadata_id value")
+        serde_json::from_value(params["metadata_id"].clone()).with_context(|| "invalid metadata_id value")
     }
 
     fn parse_player_state(params: &JsonValue) -> anyhow::Result<PlayerState> {
         let state = params.get("state").ok_or_else(|| anyhow::anyhow!("missing 'state'"))?;
-        serde_json::from_value::<PlayerState>(state.clone())
-            .map_err(|e| anyhow::anyhow!("invalid player state: {}", e))
+        serde_json::from_value::<PlayerState>(state.clone()).map_err(|e| anyhow::anyhow!("invalid player state: {}", e))
     }
 
     fn parse_timeline_opt(params: &JsonValue) -> anyhow::Result<Option<TimelineInfo>> {
-        serde_json::from_value::<Option<TimelineInfo>>(params["timeline"].clone())
-            .with_context(|| "invalid timeline")
+        serde_json::from_value::<Option<TimelineInfo>>(params["timeline"].clone()).with_context(|| "invalid timeline")
     }
 
     // -----------------------------------------------------------------------
@@ -390,10 +397,14 @@ impl ConnectionHandler {
     }
 
     async fn req_register_player(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
-        let self_id = params["self_id"].as_str()
+        let self_id = params["self_id"]
+            .as_str()
             .with_context(|| "self_id must be a string")?
             .to_string();
-        let pid = self.driver.register_player(self_id).await
+        let pid = self
+            .driver
+            .register_player(self_id)
+            .await
             .with_context(|| "register_player error")?;
         {
             let mut guard = self.conn_players.lock().unwrap();
@@ -406,13 +417,19 @@ impl ConnectionHandler {
     async fn req_unregister_player(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {
         let pid = Self::parse_player_id(params)?;
         self.ensure_player_for_connection(pid)?;
-        self.driver.unregister_player(pid).await
+        self.driver
+            .unregister_player(pid)
+            .await
             .with_context(|| "unregister_player error")?;
         {
             let mut guard = self.conn_players.lock().unwrap();
             guard.remove(&pid);
         }
-        info!("Unregistered player {} for connection {}", pid.get(), self.connection_id);
+        info!(
+            "Unregistered player {} for connection {}",
+            pid.get(),
+            self.connection_id
+        );
         Ok(JsonValue::Null)
     }
 

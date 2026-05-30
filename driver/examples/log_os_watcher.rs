@@ -15,7 +15,6 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-
 // Example: LoggingDriver that prints all driver interactions to stdout/stderr
 // Run with:
 //   cargo run --package fsct_driver --example logging_driver
@@ -27,17 +26,16 @@ use std::sync::{Arc, Mutex};
 use anyhow::Error;
 use async_trait::async_trait;
 use env_logger::Env;
-use tokio::sync::broadcast::Receiver;
+use fsct::DeviceChangeEvent;
+use fsct::definitions::ManagedDeviceId;
+use fsct::definitions::ManagedPlayerId;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, TimelineInfo};
 use fsct::driver::FsctDriver;
-use fsct::definitions::ManagedPlayerId;
-use fsct::definitions::ManagedDeviceId;
-use fsct::DeviceChangeEvent;
 use fsct::player_state::PlayerState;
 use fsct_driver::joinable_task::JoinableTaskHandle;
+use tokio::sync::broadcast::Receiver;
 
 use fsct_driver::run_os_watcher;
-
 
 #[derive(Default)]
 struct LoggingDriver {
@@ -46,7 +44,12 @@ struct LoggingDriver {
 }
 
 impl LoggingDriver {
-    fn new() -> Self { Self { players: Mutex::new(HashMap::new()), next_id: Mutex::new(1) } }
+    fn new() -> Self {
+        Self {
+            players: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(1),
+        }
+    }
     fn alloc_id(&self) -> ManagedPlayerId {
         let mut n = self.next_id.lock().unwrap();
         let id = *n;
@@ -66,41 +69,104 @@ impl FsctDriver for LoggingDriver {
 
     async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error> {
         let removed = self.players.lock().unwrap().remove(&player_id);
-        println!("[LoggingDriver] unregister_player: id={:?}, existed={}", player_id, removed.is_some());
+        println!(
+            "[LoggingDriver] unregister_player: id={:?}, existed={}",
+            player_id,
+            removed.is_some()
+        );
         Ok(())
     }
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        println!("[LoggingDriver] assign_player_to_device: player={:?} -> device={:?}", player_id, device_id);
+    async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
+        println!(
+            "[LoggingDriver] assign_player_to_device: player={:?} -> device={:?}",
+            player_id, device_id
+        );
         Ok(())
     }
 
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        println!("[LoggingDriver] unassign_player_from_device: player={:?} -/-> device={:?}", player_id, device_id);
+    async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
+        println!(
+            "[LoggingDriver] unassign_player_from_device: player={:?} -/-> device={:?}",
+            player_id, device_id
+        );
         Ok(())
     }
 
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
-        let name = self.players.lock().unwrap().get(&player_id).cloned().unwrap_or_else(|| "<unknown>".into());
-        println!("[LoggingDriver] update_player_state: id={:?} ({}) => {:?}", player_id, name, new_state);
+        let name = self
+            .players
+            .lock()
+            .unwrap()
+            .get(&player_id)
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".into());
+        println!(
+            "[LoggingDriver] update_player_state: id={:?} ({}) => {:?}",
+            player_id, name, new_state
+        );
         Ok(())
     }
 
     async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error> {
-        let name = self.players.lock().unwrap().get(&player_id).cloned().unwrap_or_else(|| "<unknown>".into());
-        println!("[LoggingDriver] update_player_status: id={:?} ({}) => {:?}", player_id, name, new_status);
+        let name = self
+            .players
+            .lock()
+            .unwrap()
+            .get(&player_id)
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".into());
+        println!(
+            "[LoggingDriver] update_player_status: id={:?} ({}) => {:?}",
+            player_id, name, new_status
+        );
         Ok(())
     }
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
-        let name = self.players.lock().unwrap().get(&player_id).cloned().unwrap_or_else(|| "<unknown>".into());
-        println!("[LoggingDriver] update_player_timeline: id={:?} ({}) => {:?}", player_id, name, new_timeline);
+    async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> Result<(), Error> {
+        let name = self
+            .players
+            .lock()
+            .unwrap()
+            .get(&player_id)
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".into());
+        println!(
+            "[LoggingDriver] update_player_timeline: id={:?} ({}) => {:?}",
+            player_id, name, new_timeline
+        );
         Ok(())
     }
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
-        let name = self.players.lock().unwrap().get(&player_id).cloned().unwrap_or_else(|| "<unknown>".into());
-        println!("[LoggingDriver] update_player_metadata: id={:?} ({}), meta={:?} => {:?}", player_id, name, metadata_id, new_text);
+    async fn update_player_metadata(
+        &self,
+        player_id: ManagedPlayerId,
+        metadata_id: FsctTextMetadata,
+        new_text: Option<String>,
+    ) -> Result<(), Error> {
+        let name = self
+            .players
+            .lock()
+            .unwrap()
+            .get(&player_id)
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".into());
+        println!(
+            "[LoggingDriver] update_player_metadata: id={:?} ({}), meta={:?} => {:?}",
+            player_id, name, metadata_id, new_text
+        );
         Ok(())
     }
 
@@ -118,7 +184,10 @@ impl FsctDriver for LoggingDriver {
         todo!()
     }
 
-    async fn get_device_info(&self, device_id: fsct::definitions::ManagedDeviceId) -> Result<fsct::definitions::DeviceInfo, Error> {
+    async fn get_device_info(
+        &self,
+        device_id: fsct::definitions::ManagedDeviceId,
+    ) -> Result<fsct::definitions::DeviceInfo, Error> {
         println!("[LoggingDriver] get_device_info: id={:?}", device_id);
         Err(anyhow::anyhow!("not implemented"))
     }
@@ -126,7 +195,9 @@ impl FsctDriver for LoggingDriver {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let env = Env::default().filter_or("FSCT_LOG", "info").write_style("FSCT_LOG_STYLE");
+    let env = Env::default()
+        .filter_or("FSCT_LOG", "info")
+        .write_style("FSCT_LOG_STYLE");
     env_logger::init_from_env(env);
 
     let driver: Arc<dyn FsctDriver> = Arc::new(LoggingDriver::new());

@@ -15,13 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::Arc;
-use async_trait::async_trait;
+use crate::player_manager::PlayerManager;
+use crate::{DeviceManager, MultiJoinableTaskHandle, Orchestrator, run_usb_device_watch};
 use anyhow::Error;
+use async_trait::async_trait;
 use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
 use fsct::{FsctDriver, PlayerState};
-use crate::{run_usb_device_watch, DeviceManager, MultiJoinableTaskHandle, Orchestrator};
-use crate::player_manager::PlayerManager;
+use std::sync::Arc;
 
 /// Local, in-process implementation of FsctDriver.
 /// Wraps the existing PlayerManager and DeviceManager and forwards all calls.
@@ -33,7 +33,10 @@ pub struct LocalDriver {
 impl LocalDriver {
     /// Create a LocalDriver from existing managers.
     pub fn new(player_manager: Arc<PlayerManager>, device_manager: Arc<DeviceManager>) -> Self {
-        Self { player_manager, device_manager }
+        Self {
+            player_manager,
+            device_manager,
+        }
     }
 
     /// Create a LocalDriver with freshly created managers.
@@ -42,8 +45,12 @@ impl LocalDriver {
     }
 
     /// Access the underlying managers if needed by advanced callers.
-    pub fn player_manager(&self) -> Arc<PlayerManager> { self.player_manager.clone() }
-    pub fn device_manager(&self) -> Arc<DeviceManager> { self.device_manager.clone() }
+    pub fn player_manager(&self) -> Arc<PlayerManager> {
+        self.player_manager.clone()
+    }
+    pub fn device_manager(&self) -> Arc<DeviceManager> {
+        self.device_manager.clone()
+    }
 
     /// Run orchestrator and USB device watch services and return a combined handle.
     pub async fn run(&self) -> Result<MultiJoinableTaskHandle, Error> {
@@ -76,12 +83,22 @@ impl FsctDriver for LocalDriver {
         self.player_manager.unregister_player(player_id).await
     }
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
+    async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
         self.player_manager.assign_player_to_device(player_id, device_id).await
     }
 
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error> {
-        self.player_manager.unassign_player_from_device(player_id, device_id).await
+    async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error> {
+        self.player_manager
+            .unassign_player_from_device(player_id, device_id)
+            .await
     }
 
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error> {
@@ -92,12 +109,25 @@ impl FsctDriver for LocalDriver {
         self.player_manager.update_player_status(player_id, new_status).await
     }
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error> {
-        self.player_manager.update_player_timeline(player_id, new_timeline).await
+    async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> Result<(), Error> {
+        self.player_manager
+            .update_player_timeline(player_id, new_timeline)
+            .await
     }
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error> {
-        self.player_manager.update_player_metadata(player_id, metadata_id, new_text).await
+    async fn update_player_metadata(
+        &self,
+        player_id: ManagedPlayerId,
+        metadata_id: FsctTextMetadata,
+        new_text: Option<String>,
+    ) -> Result<(), Error> {
+        self.player_manager
+            .update_player_metadata(player_id, metadata_id, new_text)
+            .await
     }
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error> {
@@ -109,15 +139,21 @@ impl FsctDriver for LocalDriver {
         Ok(self.device_manager.get_all_managed_ids())
     }
 
-    async fn subscribe_device_changes(&self) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, Error> {
+    async fn subscribe_device_changes(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<fsct::DeviceChangeEvent>, Error> {
         use crate::device_manager::DeviceControl;
         Ok(self.device_manager.subscribe())
     }
 
-    async fn get_device_info(&self, device_id: fsct::definitions::ManagedDeviceId) -> Result<fsct::definitions::DeviceInfo, Error> {
+    async fn get_device_info(
+        &self,
+        device_id: fsct::definitions::ManagedDeviceId,
+    ) -> Result<fsct::definitions::DeviceInfo, Error> {
         use crate::device_manager::DeviceManagement;
         let devices = self.device_manager.get_detected_devices();
-        devices.into_iter()
+        devices
+            .into_iter()
             .find(|d| d.id == device_id)
             .ok_or_else(|| anyhow::anyhow!("device not found"))
     }

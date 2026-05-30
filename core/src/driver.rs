@@ -15,13 +15,13 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::definitions::ManagedDeviceId;
+use crate::definitions::ManagedPlayerId;
+use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
+use crate::player_state::PlayerState;
 use anyhow::Error;
 use async_trait::async_trait;
 use tokio::sync::broadcast;
-use crate::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
-use crate::definitions::ManagedDeviceId;
-use crate::definitions::ManagedPlayerId;
-use crate::player_state::PlayerState;
 
 /// Device change event types that can be received from device change subscription
 #[derive(Debug, Clone)]
@@ -40,16 +40,33 @@ pub trait FsctDriver: Send + Sync {
     async fn register_player(&self, self_id: String) -> Result<ManagedPlayerId, Error>;
     async fn unregister_player(&self, player_id: ManagedPlayerId) -> Result<(), Error>;
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error>;
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> Result<(), Error>;
+    async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error>;
+    async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> Result<(), Error>;
 
     async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> Result<(), Error>;
 
     async fn update_player_status(&self, player_id: ManagedPlayerId, new_status: FsctStatus) -> Result<(), Error>;
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> Result<(), Error>;
+    async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> Result<(), Error>;
 
-    async fn update_player_metadata(&self, player_id: ManagedPlayerId, metadata_id: FsctTextMetadata, new_text: Option<String>) -> Result<(), Error>;
+    async fn update_player_metadata(
+        &self,
+        player_id: ManagedPlayerId,
+        metadata_id: FsctTextMetadata,
+        new_text: Option<String>,
+    ) -> Result<(), Error>;
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> Result<Option<ManagedDeviceId>, Error>;
 
@@ -64,5 +81,3 @@ pub trait FsctDriver: Send + Sync {
     /// Get device info of a connected device by device ID
     async fn get_device_info(&self, device_id: ManagedDeviceId) -> Result<DeviceInfo, Error>;
 }
-
-

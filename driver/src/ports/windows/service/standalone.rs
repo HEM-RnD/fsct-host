@@ -15,20 +15,22 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use log::{info, debug};
-use tokio::runtime::Runtime;
 use anyhow::anyhow;
+use log::{debug, info};
+use tokio::runtime::Runtime;
 
-use crate::cli::{LogLevel};
-use crate::ports::windows::service::logger::init_standalone_logger;
-use tokio::signal::windows::ctrl_close;
-use crate::service_main::{async_main, StopSignal};
 use crate::ServiceStateNullListener;
+use crate::cli::LogLevel;
+use crate::ports::windows::service::logger::init_standalone_logger;
+use crate::service_main::{StopSignal, async_main};
+use tokio::signal::windows::ctrl_close;
 
 struct WindowsStandaloneStopSignal;
 
 impl WindowsStandaloneStopSignal {
-    fn new() -> Self { Self }
+    fn new() -> Self {
+        Self
+    }
 }
 
 impl StopSignal for WindowsStandaloneStopSignal {
@@ -71,7 +73,5 @@ pub fn run_standalone(log_level: LogLevel) -> anyhow::Result<()> {
     let stop_signal = WindowsStandaloneStopSignal::new();
 
     // Run the service in the Tokio runtime
-    rt.block_on(async move {
-        async_main(stop_signal, ServiceStateNullListener).await
-    })
+    rt.block_on(async move { async_main(stop_signal, ServiceStateNullListener).await })
 }

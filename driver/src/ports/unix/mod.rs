@@ -15,6 +15,6 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-pub mod service;
 #[cfg(unix)]
 pub mod ipc_transport;
+pub mod service;

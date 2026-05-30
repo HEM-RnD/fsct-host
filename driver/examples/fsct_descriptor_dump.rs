@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use fsct_driver::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
-use nusb::DeviceInfo;
 use fsct_driver::usb::descriptor_utils::get_fsct_functionality_descriptor_set;
+use fsct_driver::usb::fsct_bos_finder::get_fsct_vendor_subclass_number_from_device;
 use fsct_driver::usb::{find_fsct_interface_number, open_interface};
+use nusb::DeviceInfo;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -39,8 +39,10 @@ async fn main() -> Result<(), anyhow::Error> {
 async fn print_fsct_dump(device_info: &DeviceInfo, fsct_vendor_subclass_number: u8) -> Result<(), anyhow::Error> {
     let fsct_interface_number = find_fsct_interface_number(&device_info, fsct_vendor_subclass_number);
     if let Err(e) = fsct_interface_number {
-        println!("Device reports FSCT in BOS descriptor, but no Ferrum Streaming Control Technology interface found. \
-        Error: {e}");
+        println!(
+            "Device reports FSCT in BOS descriptor, but no Ferrum Streaming Control Technology interface found. \
+        Error: {e}"
+        );
         return Ok(()); // ignore devices that report FSCT in BOS descriptor but don't have FSCT interface
     }
     let fsct_interface_number = fsct_interface_number.unwrap();

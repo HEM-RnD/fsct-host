@@ -15,22 +15,21 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::cli::LogLevel;
+use crate::ports::windows::service::constants::{
+    DRIVER_SERVICE_DESCRIPTION, DRIVER_SERVICE_DISPLAY_NAME, USER_SERVICE_DESCRIPTION, USER_SERVICE_DISPLAY_NAME,
+};
+use crate::ports::windows::service::get_service_name;
+use anyhow::Result;
+use log::{debug, error, info};
 use std::ffi::OsString;
 use std::path::PathBuf;
-use anyhow::Result;
-use log::{info, error, debug};
 use windows_service::{
-    service::{
-        ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceType,
-    },
+    service::{ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceType},
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
-use crate::cli::LogLevel;
-use crate::ports::windows::service::constants::{DRIVER_SERVICE_DISPLAY_NAME, DRIVER_SERVICE_DESCRIPTION, USER_SERVICE_DISPLAY_NAME, USER_SERVICE_DESCRIPTION};
-use crate::ports::windows::service::get_service_name;
 
-fn get_service_type(user_service: bool) -> ServiceType
-{
+fn get_service_type(user_service: bool) -> ServiceType {
     if user_service {
         ServiceType::USER_OWN_PROCESS
     } else {
@@ -71,18 +70,22 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
     };
 
     debug!("Service binary path: {}", service_binary_path);
-    let mut launch_arguments =  vec![];
+    let mut launch_arguments = vec![];
     if let Some(log_level) = log_level {
         launch_arguments.extend_from_slice(&[OsString::from("--log-level"), OsString::from(log_level.to_string())])
     };
     launch_arguments.extend_from_slice(&[
-        OsString::from(if user_service {"--user"} else {"--driver"}),
+        OsString::from(if user_service { "--user" } else { "--driver" }),
         OsString::from("service"),
         OsString::from("run"),
     ]);
 
     let service_name = get_service_name(user_service);
-    let service_display_name = if user_service { USER_SERVICE_DISPLAY_NAME } else { DRIVER_SERVICE_DISPLAY_NAME };
+    let service_display_name = if user_service {
+        USER_SERVICE_DISPLAY_NAME
+    } else {
+        DRIVER_SERVICE_DISPLAY_NAME
+    };
 
     // Create the service info
     debug!("Creating service info");
@@ -111,7 +114,11 @@ pub fn install_service(log_level: Option<LogLevel>, user_service: bool) -> Resul
 
     // Set the service description
     debug!("Setting service description");
-    let service_description = if user_service { USER_SERVICE_DESCRIPTION } else { DRIVER_SERVICE_DESCRIPTION };
+    let service_description = if user_service {
+        USER_SERVICE_DESCRIPTION
+    } else {
+        DRIVER_SERVICE_DESCRIPTION
+    };
     if let Err(e) = service.set_description(service_description) {
         error!("Failed to set service description: {}", e);
         return Err(e.into());

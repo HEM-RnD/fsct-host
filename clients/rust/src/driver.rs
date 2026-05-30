@@ -17,9 +17,11 @@
 
 use anyhow::Context;
 use async_trait::async_trait;
-use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimelineInfo};
+use fsct::definitions::{
+    DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimelineInfo,
+};
 use fsct::player_state::PlayerState;
-use fsct::{default_endpoint_path, DeviceChangeEvent, FsctDriver};
+use fsct::{DeviceChangeEvent, FsctDriver, default_endpoint_path};
 use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -69,13 +71,22 @@ impl IpcDriver {
 
         let negotiated_version = Self::perform_handshake(&call_tx).await.inspect_err(|_| task.abort())?;
 
-        Ok(Self { call_tx, device_tx, negotiated_version, _task: task })
+        Ok(Self {
+            call_tx,
+            device_tx,
+            negotiated_version,
+            _task: task,
+        })
     }
 
     async fn perform_handshake(call_tx: &mpsc::Sender<OutboundCall>) -> anyhow::Result<ProtocolVersion> {
         let (reply_tx, reply_rx) = oneshot::channel();
         call_tx
-            .send(OutboundCall { method: "get_protocol_version".into(), params: json!({}), reply: reply_tx })
+            .send(OutboundCall {
+                method: "get_protocol_version".into(),
+                params: json!({}),
+                reply: reply_tx,
+            })
             .await
             .map_err(|_| anyhow::anyhow!("IPC connection closed"))?;
         let resp = reply_rx
@@ -83,8 +94,12 @@ impl IpcDriver {
             .map_err(|_| anyhow::anyhow!("IPC connection closed"))?
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let major = resp["major"].as_u64().with_context(|| "missing major in protocol version")? as u16;
-        let minor = resp["minor"].as_u64().with_context(|| "missing minor in protocol version")? as u16;
+        let major = resp["major"]
+            .as_u64()
+            .with_context(|| "missing major in protocol version")? as u16;
+        let minor = resp["minor"]
+            .as_u64()
+            .with_context(|| "missing minor in protocol version")? as u16;
         let negotiated = ProtocolVersion { major, minor };
 
         if negotiated.major != fsct::FSCT_PROTOCOL_VERSION.major {
@@ -102,7 +117,11 @@ impl IpcDriver {
     async fn rpc_call(&self, method: &str, params: JsonValue) -> anyhow::Result<JsonValue> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.call_tx
-            .send(OutboundCall { method: method.into(), params, reply: reply_tx })
+            .send(OutboundCall {
+                method: method.into(),
+                params,
+                reply: reply_tx,
+            })
             .await
             .map_err(|_| anyhow::anyhow!("IPC connection closed"))?;
         reply_rx
@@ -120,16 +139,23 @@ impl IpcDriver {
 impl FsctDriver for IpcDriver {
     async fn register_player(&self, self_id: String) -> anyhow::Result<ManagedPlayerId> {
         let resp = self.rpc_call("register_player", json!({ "self_id": self_id })).await?;
-        let id = resp.as_u64().with_context(|| "invalid response for register_player: expected integer")? as u32;
+        let id = resp
+            .as_u64()
+            .with_context(|| "invalid response for register_player: expected integer")? as u32;
         std::num::NonZeroU32::new(id).with_context(|| "server returned zero player id")
     }
 
     async fn unregister_player(&self, player_id: ManagedPlayerId) -> anyhow::Result<()> {
-        self.rpc_call("unregister_player", json!({ "player_id": player_id.get() })).await?;
+        self.rpc_call("unregister_player", json!({ "player_id": player_id.get() }))
+            .await?;
         Ok(())
     }
 
-    async fn assign_player_to_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+    async fn assign_player_to_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> anyhow::Result<()> {
         self.rpc_call(
             "assign_player_to_device",
             json!({ "player_id": player_id.get(), "device_id": device_id.to_string() }),
@@ -138,7 +164,11 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    async fn unassign_player_from_device(&self, player_id: ManagedPlayerId, device_id: ManagedDeviceId) -> anyhow::Result<()> {
+    async fn unassign_player_from_device(
+        &self,
+        player_id: ManagedPlayerId,
+        device_id: ManagedDeviceId,
+    ) -> anyhow::Result<()> {
         self.rpc_call(
             "unassign_player_from_device",
             json!({ "player_id": player_id.get(), "device_id": device_id.to_string() }),
@@ -165,7 +195,11 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    async fn update_player_timeline(&self, player_id: ManagedPlayerId, new_timeline: Option<TimelineInfo>) -> anyhow::Result<()> {
+    async fn update_player_timeline(
+        &self,
+        player_id: ManagedPlayerId,
+        new_timeline: Option<TimelineInfo>,
+    ) -> anyhow::Result<()> {
         self.rpc_call(
             "update_player_timeline",
             json!({ "player_id": player_id.get(), "timeline": serde_json::to_value(&new_timeline)? }),
@@ -189,17 +223,23 @@ impl FsctDriver for IpcDriver {
     }
 
     async fn get_player_assigned_device(&self, player_id: ManagedPlayerId) -> anyhow::Result<Option<ManagedDeviceId>> {
-        let resp = self.rpc_call("get_player_assigned_device", json!({ "player_id": player_id.get() })).await?;
+        let resp = self
+            .rpc_call("get_player_assigned_device", json!({ "player_id": player_id.get() }))
+            .await?;
         if resp.is_null() {
             return Ok(None);
         }
-        let s = resp.as_str().with_context(|| "get_player_assigned_device: expected UUID string or null")?;
+        let s = resp
+            .as_str()
+            .with_context(|| "get_player_assigned_device: expected UUID string or null")?;
         Ok(Some(uuid::Uuid::parse_str(s)?))
     }
 
     async fn get_detected_devices(&self) -> anyhow::Result<Vec<ManagedDeviceId>> {
         let resp = self.rpc_call("get_detected_devices", json!({})).await?;
-        let arr = resp.as_array().with_context(|| "get_detected_devices: expected array")?;
+        let arr = resp
+            .as_array()
+            .with_context(|| "get_detected_devices: expected array")?;
         arr.iter()
             .map(|v| {
                 let s = v.as_str().with_context(|| "device id must be a string")?;
@@ -209,7 +249,9 @@ impl FsctDriver for IpcDriver {
     }
 
     async fn get_device_info(&self, device_id: ManagedDeviceId) -> anyhow::Result<DeviceInfo> {
-        let resp = self.rpc_call("get_device_info", json!({ "device_id": device_id.to_string() })).await?;
+        let resp = self
+            .rpc_call("get_device_info", json!({ "device_id": device_id.to_string() }))
+            .await?;
         serde_json::from_value(resp).with_context(|| "failed to deserialize DeviceInfo")
     }
 
@@ -225,7 +267,9 @@ mod transport {
         #[cfg(unix)]
         pub async fn connect(path: String) -> anyhow::Result<tokio::net::UnixStream> {
             use anyhow::Context;
-            tokio::net::UnixStream::connect(path).await.context("unix client connect failed")
+            tokio::net::UnixStream::connect(path)
+                .await
+                .context("unix client connect failed")
         }
 
         #[cfg(windows)]
@@ -238,7 +282,11 @@ mod transport {
             const PIPE_AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
             let attempt_start = Instant::now();
             let client = loop {
-                match named_pipe::ClientOptions::new().read(true).write(true).open(name.as_str()) {
+                match named_pipe::ClientOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(name.as_str())
+                {
                     Ok(client) => break client,
                     Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
                         if attempt_start.elapsed() < PIPE_AVAILABILITY_TIMEOUT {

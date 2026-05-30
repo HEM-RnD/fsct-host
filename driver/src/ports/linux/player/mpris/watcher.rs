@@ -15,10 +15,10 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+use crate::ports::linux::player::mpris::player::Player;
 use futures_util::Stream;
 use zbus::fdo::DBusProxy;
 use zbus::names::OwnedBusName;
-use crate::ports::linux::player::mpris::player::Player;
 
 pub struct SessionWatcher {
     conn: zbus::Connection,
@@ -35,13 +35,15 @@ impl SessionWatcher {
     }
 
     async fn get_player(&self, bus_name: OwnedBusName) -> anyhow::Result<Option<Player>> {
-        if !bus_name.starts_with("org.mpris.MediaPlayer2.") { return Ok(None); }
+        if !bus_name.starts_with("org.mpris.MediaPlayer2.") {
+            return Ok(None);
+        }
         let conn = self.conn.clone();
         let player = Player::new(conn, bus_name);
         Ok(Some(player))
     }
 
-    pub async fn iter_player(&self, with_initial: bool) -> impl Stream<Item=anyhow::Result<Player>> {
+    pub async fn iter_player(&self, with_initial: bool) -> impl Stream<Item = anyhow::Result<Player>> {
         async_stream::try_stream! {
             let bus = DBusProxy::new(&self.conn).await?;
 

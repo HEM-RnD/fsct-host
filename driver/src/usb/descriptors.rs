@@ -57,7 +57,6 @@ pub struct FsctTextMetadataDescriptor {
     pub aMetadata: Vec<FsctTextMetadataDescriptorMultiPart>,
 }
 
-
 #[repr(C, packed)]
 #[derive(Debug, Default, Clone, Copy)]
 #[allow(non_snake_case)]
@@ -68,4 +67,3 @@ pub struct FsctImageMetadataDescriptor {
     pub wImageHeight: u16,
     pub bPixelFormat: FsctImagePixelFormat, // Updated type
 }
-

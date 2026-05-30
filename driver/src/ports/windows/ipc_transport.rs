@@ -21,13 +21,13 @@
 // Platform-specific IPC transport for Windows using Tokio Named Pipes
 // Provides EndpointListener (as Stream) and EndpointClient
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::Stream;
 use futures::stream;
 use std::{io, marker, mem, ptr};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use winapi::shared::winerror::{ERROR_SUCCESS};
+use winapi::shared::winerror::ERROR_SUCCESS;
 use winapi::um::accctrl::*;
 use winapi::um::aclapi::*;
 use winapi::um::minwinbase::{LPTR, PSECURITY_ATTRIBUTES, SECURITY_ATTRIBUTES};
@@ -45,15 +45,21 @@ impl EndpointListener {
     /// Create a named-pipe listener bound to the given name. Access: allow everyone.
     pub async fn from_path(name: String) -> Result<Self> {
         let security_attributes = SecurityAttributes::allow_everyone_create()?;
-        Ok(EndpointListener { name, security_attributes, pipe_created: false })
+        Ok(EndpointListener {
+            name,
+            security_attributes,
+            pipe_created: false,
+        })
     }
 
-    pub fn listen(mut self) -> Result<impl Stream<Item=Result<NamedPipeServer>> + Send> {
+    pub fn listen(mut self) -> Result<impl Stream<Item = Result<NamedPipeServer>> + Send> {
         // Create the first server instance before starting the unfold
         let first = self.create_server()?;
         let s = stream::unfold((self, first), |(mut endpoint_listener, server)| async move {
             // Wait for client to connect
-            let ret = server.connect().await
+            let ret = server
+                .connect()
+                .await
                 .map(|_| server)
                 .map_err(|e| anyhow!("failed to connect to named pipe: {}", e));
             // Pre-create next listening instance before yielding
@@ -120,9 +126,7 @@ impl SecurityAttributes {
 
     /// New default security attributes that allow everyone to connect.
     pub fn allow_everyone_connect(&self) -> io::Result<SecurityAttributes> {
-        let attributes = Some(InnerAttributes::allow_everyone(
-            GENERIC_READ | FILE_WRITE_DATA,
-        )?);
+        let attributes = Some(InnerAttributes::allow_everyone(GENERIC_READ | FILE_WRITE_DATA)?);
         Ok(SecurityAttributes { attributes })
     }
 
@@ -134,16 +138,14 @@ impl SecurityAttributes {
 
     /// New default security attributes that allow everyone to create.
     pub fn allow_everyone_create() -> io::Result<SecurityAttributes> {
-        let attributes = Some(InnerAttributes::allow_everyone(
-            GENERIC_READ | GENERIC_WRITE,
-        )?);
+        let attributes = Some(InnerAttributes::allow_everyone(GENERIC_READ | GENERIC_WRITE)?);
         Ok(SecurityAttributes { attributes })
     }
 
     /// Return raw handle of security attributes.
     pub fn as_ptr(&mut self) -> PSECURITY_ATTRIBUTES {
         match self.attributes.as_mut() {
-            Some(attributes) => unsafe {attributes.as_ptr()},
+            Some(attributes) => unsafe { attributes.as_ptr() },
             None => ptr::null_mut(),
         }
     }
@@ -285,9 +287,7 @@ impl SecurityDescriptor {
             ));
         }
 
-        if unsafe {
-            InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) == 0
-        } {
+        if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) == 0 } {
             return Err(io::Error::last_os_error());
         };
 
@@ -295,10 +295,7 @@ impl SecurityDescriptor {
     }
 
     fn set_dacl(&mut self, acl: &Acl) -> io::Result<()> {
-        if unsafe {
-            SetSecurityDescriptorDacl(self.descriptor_ptr, true as i32, acl.as_ptr(), false as i32)
-                == 0
-        } {
+        if unsafe { SetSecurityDescriptorDacl(self.descriptor_ptr, true as i32, acl.as_ptr(), false as i32) == 0 } {
             return Err(io::Error::last_os_error());
         }
         Ok(())
@@ -334,11 +331,7 @@ impl InnerAttributes {
 
         let acl = Acl::empty().expect("this should never fail");
 
-        Ok(InnerAttributes {
-            acl,
-            descriptor,
-            attrs,
-        })
+        Ok(InnerAttributes { acl, descriptor, attrs })
     }
 
     fn allow_everyone(permissions: u32) -> io::Result<InnerAttributes> {

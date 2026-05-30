@@ -71,7 +71,6 @@ pub enum FsctRequestCode {
     QueueText = 0x23,
 }
 
-
 /// Defines the enabling or disabling states for Ferrum Streaming Control Technology (FSCT) USB function.
 ///
 /// This enumeration represents two states, enable or disable, that configure the activation of specific
@@ -87,5 +86,3 @@ pub enum FsctEnable {
     /// Indicates that the FSCT function is activated.
     Enable = 0x01,
 }
-
-

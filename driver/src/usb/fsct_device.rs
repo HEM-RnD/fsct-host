@@ -15,15 +15,14 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use fsct::definitions::TimelineInfo;
-use fsct::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
 use super::descriptor_utils::FsctDescriptorSet;
 use super::errors::FsctDeviceError;
 use super::fsct_usb_interface::FsctUsbInterface;
 use super::requests::TrackProgressRequestData;
-
+use fsct::definitions::TimelineInfo;
+use fsct::definitions::{FsctFunctionality, FsctTextEncoding, FsctTextMetadata};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 struct SupportedMetadata {
@@ -60,19 +59,25 @@ impl FsctDevice {
 
     pub async fn init(&mut self, fsct_descriptors: &[FsctDescriptorSet]) -> Result<(), FsctDeviceError> {
         self.parse_descriptors(fsct_descriptors);
-        if self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+        if self
+            .state
+            .lock()
+            .unwrap()
+            .supported_functionalities
+            .contains(FsctFunctionality::CurrentPlaybackProgress)
+        {
             self.synchronize_time().await?;
         }
         self.fsct_interface.set_enable(true).await?;
-      
+
         let state = self.state.clone();
         let fsct_interface = self.fsct_interface.clone();
         self.time_sync_handle = Some(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60 * 10)).await;
-                Self::synchronize_time_impl(state.clone(), fsct_interface.clone()).await.unwrap_or_else(|e|
-                    log::error!("Failed to synchronize time: {}", e)
-                )
+                Self::synchronize_time_impl(state.clone(), fsct_interface.clone())
+                    .await
+                    .unwrap_or_else(|e| log::error!("Failed to synchronize time: {}", e))
             }
         }));
 
@@ -94,7 +99,7 @@ impl FsctDevice {
                         });
                     }
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
@@ -110,15 +115,24 @@ impl FsctDevice {
         Self::synchronize_time_impl(state, fsct_interface).await
     }
 
-    async fn synchronize_time_impl(state: Arc<Mutex<FsctDeviceSharedState>>, fsct_interface: Arc<FsctUsbInterface>) -> Result<(), FsctDeviceError> {
-        if !state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+    async fn synchronize_time_impl(
+        state: Arc<Mutex<FsctDeviceSharedState>>,
+        fsct_interface: Arc<FsctUsbInterface>,
+    ) -> Result<(), FsctDeviceError> {
+        if !state
+            .lock()
+            .unwrap()
+            .supported_functionalities
+            .contains(FsctFunctionality::CurrentPlaybackProgress)
+        {
             return Err(FsctDeviceError::PlaybackProgressNotSupported);
         }
         let before = std::time::SystemTime::now();
         let timestamp_in_millis = fsct_interface.get_device_timestamp().await?;
         let after = std::time::SystemTime::now();
-        let mean_now = ((before.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + after.duration_since
-        (std::time::UNIX_EPOCH).unwrap().as_millis()) / 2) as i128;
+        let mean_now = ((before.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            + after.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis())
+            / 2) as i128;
         let time_diff = mean_now - (timestamp_in_millis as i128);
         if time_diff > u64::MAX as i128 {
             return Err(FsctDeviceError::TimeDifferenceTooLarge);
@@ -137,40 +151,59 @@ impl FsctDevice {
         self.fsct_interface.set_enable(enable).await
     }
 
-    pub async fn set_progress(&self, progress: Option<TimelineInfo>) -> Result<(), FsctDeviceError>
-    {
-        if !self.state.lock().unwrap().supported_functionalities.contains(FsctFunctionality::CurrentPlaybackProgress) {
+    pub async fn set_progress(&self, progress: Option<TimelineInfo>) -> Result<(), FsctDeviceError> {
+        if !self
+            .state
+            .lock()
+            .unwrap()
+            .supported_functionalities
+            .contains(FsctFunctionality::CurrentPlaybackProgress)
+        {
             return Ok(()); // not supported, omitting
         }
-        let time_diff = self.state.lock().unwrap().time_diff.ok_or(FsctDeviceError::TimeNotSynchronized)?;
+        let time_diff = self
+            .state
+            .lock()
+            .unwrap()
+            .time_diff
+            .ok_or(FsctDeviceError::TimeNotSynchronized)?;
         match progress {
             None => self.fsct_interface.disable_track_progress().await,
             Some(progress) => {
                 let timestamp = std::time::SystemTime::now();
-                let duration_since_update_time = timestamp.duration_since(progress.update_time).map_err(
-                    |e| FsctDeviceError::TimeDifferenceCalculationError(e.to_string())
-                )?;
+                let duration_since_update_time = timestamp
+                    .duration_since(progress.update_time)
+                    .map_err(|e| FsctDeviceError::TimeDifferenceCalculationError(e.to_string()))?;
 
-                let position = progress.position.as_secs_f64() + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
+                let position =
+                    progress.position.as_secs_f64() + (duration_since_update_time.as_secs_f64() * progress.rate as f64);
                 let position = position * 1000.0; // position is in milliseconds
-                let device_timestamp = (timestamp - time_diff).duration_since(std::time::UNIX_EPOCH)
-                                                              .unwrap().as_millis() as u64;
+                let device_timestamp = (timestamp - time_diff)
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
                 let track_progress_request_data = TrackProgressRequestData {
                     duration: progress.duration.as_secs_f64().round() as u32,
                     position: position.round() as i32,
                     timestamp: device_timestamp,
                     rate: progress.rate as f32,
                 };
-                self.fsct_interface.send_track_progress(&track_progress_request_data).await
+                self.fsct_interface
+                    .send_track_progress(&track_progress_request_data)
+                    .await
             }
         }
     }
 
-
-    pub async fn set_current_text(&self, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), FsctDeviceError>
-    {
-        let supported_metadata =
-            self.state.lock().unwrap().supported_current_texts.iter().find(|metadata| metadata.metadata == text_id).copied();
+    pub async fn set_current_text(&self, text_id: FsctTextMetadata, text: Option<&str>) -> Result<(), FsctDeviceError> {
+        let supported_metadata = self
+            .state
+            .lock()
+            .unwrap()
+            .supported_current_texts
+            .iter()
+            .find(|metadata| metadata.metadata == text_id)
+            .copied();
         if supported_metadata.is_none() {
             return Ok(());
         }
@@ -179,14 +212,19 @@ impl FsctDevice {
         match text {
             None => self.fsct_interface.disable_current_text(text_id).await,
             Some(text) => {
-                let data_text = to_usb_encoded_text(self.state.lock().unwrap().fsct_text_encoding, text, supported_metadata.max_length);
-                self.fsct_interface.send_current_text(text_id, data_text.as_slice()).await
+                let data_text = to_usb_encoded_text(
+                    self.state.lock().unwrap().fsct_text_encoding,
+                    text,
+                    supported_metadata.max_length,
+                );
+                self.fsct_interface
+                    .send_current_text(text_id, data_text.as_slice())
+                    .await
             }
         }
     }
 
-    pub async fn set_status(&self, status: fsct::definitions::FsctStatus) -> Result<(), FsctDeviceError>
-    {
+    pub async fn set_status(&self, status: fsct::definitions::FsctStatus) -> Result<(), FsctDeviceError> {
         self.fsct_interface.send_status(status).await
     }
 }
@@ -210,23 +248,27 @@ fn floor_char_boundary_utf8(text: &str, max_length: usize) -> &str {
 
 fn to_usb_encoded_text(fsct_text_encoding: FsctTextEncoding, text: &str, max_length_in_bytes: usize) -> Vec<u8> {
     match fsct_text_encoding {
-        FsctTextEncoding::Ucs2 => {
-            text.chars().map(|c| {
+        FsctTextEncoding::Ucs2 => text
+            .chars()
+            .map(|c| {
                 if (c as u32) < (u16::MAX as u32) {
                     c as u16
                 } else {
                     char::REPLACEMENT_CHARACTER as u16
                 }
-            }).take(max_length_in_bytes / 2).map(u16::to_ne_bytes).flatten().collect()
-        }
-        FsctTextEncoding::Utf8 => {
-            floor_char_boundary_utf8(text, max_length_in_bytes).as_bytes().to_vec()
-        }
+            })
+            .take(max_length_in_bytes / 2)
+            .map(u16::to_ne_bytes)
+            .flatten()
+            .collect(),
+        FsctTextEncoding::Utf8 => floor_char_boundary_utf8(text, max_length_in_bytes).as_bytes().to_vec(),
         FsctTextEncoding::Utf16 => {
-            let mut res: Vec<u8> = text.encode_utf16().take(max_length_in_bytes / 2)
-                                       .map(u16::to_ne_bytes)
-                                       .flatten()
-                                       .collect();
+            let mut res: Vec<u8> = text
+                .encode_utf16()
+                .take(max_length_in_bytes / 2)
+                .map(u16::to_ne_bytes)
+                .flatten()
+                .collect();
             if (res.last().unwrap_or(&0) & 0xFC) == 0xD8 {
                 // when last word starts from utf-16 4-word marker, we remove half of the character
                 let new_len = res.len() - 2;
@@ -234,9 +276,13 @@ fn to_usb_encoded_text(fsct_text_encoding: FsctTextEncoding, text: &str, max_len
             }
             res
         }
-        FsctTextEncoding::Utf32 => {
-            text.chars().map(|c| c as u32).take(max_length_in_bytes / 4).map(u32::to_ne_bytes).flatten().collect()
-        }
+        FsctTextEncoding::Utf32 => text
+            .chars()
+            .map(|c| c as u32)
+            .take(max_length_in_bytes / 4)
+            .map(u32::to_ne_bytes)
+            .flatten()
+            .collect(),
     }
 }
 
@@ -324,4 +370,3 @@ mod tests {
         assert_eq!(encoded_text, required);
     }
 }
-

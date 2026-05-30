@@ -15,7 +15,6 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-
 use fsct::definitions::FsctStatus;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd)]
@@ -53,7 +52,6 @@ pub struct PlayerSelectionParams {
     pub has_metadata: bool,
 }
 
-
 // so the importance is that:
 // * assignment - has precedence overall
 // * playing status - has precedence over other statuses
@@ -63,7 +61,6 @@ pub struct PlayerSelectionParams {
 //   * we use the paused one with metadata
 //   * we also prefer stopped with metadata over paused without metadata
 //   * because we want to show something.
-
 
 const ASSIGNED_TO_OTHER_DEVICE_SCORE: isize = 0;
 const UNASSIGNED_SCORE: isize = 32;

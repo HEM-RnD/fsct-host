@@ -15,25 +15,25 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
+mod scoring;
 #[cfg(test)]
 mod tests;
-mod scoring;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use log::{debug, info, warn};
-use tokio::select;
-use tokio::sync::broadcast;
-use scoring::{Assignment, PlayerSelectionParams};
-use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
-use crate::device_manager::{DeviceEvent, DeviceManager};
 use crate::device_manager::DeviceControl;
+use crate::device_manager::{DeviceEvent, DeviceManager};
+use crate::joinable_task::{JoinableTaskHandle, spawn_service};
 use crate::player_events::PlayerEvent;
+use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
 use fsct::ManagedPlayerId;
 use fsct::PlayerState;
-use crate::player_state_applier::{DirectDeviceControlApplier, PlayerStateApplier};
-use crate::joinable_task::{spawn_service, JoinableTaskHandle};
+use fsct::definitions::{FsctStatus, FsctTextMetadata, ManagedDeviceId, TimelineInfo};
+use log::{debug, info, warn};
+use scoring::{Assignment, PlayerSelectionParams};
+use tokio::select;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Default)]
 struct RegisteredPlayer {
@@ -43,9 +43,11 @@ struct RegisteredPlayer {
 
 impl RegisteredPlayer {
     fn has_metadata(&self) -> bool {
-        self.state.texts.iter().any(|(_, text)| text.as_ref().map(|t| !t.is_empty()).unwrap_or(false))
+        self.state
+            .texts
+            .iter()
+            .any(|(_, text)| text.as_ref().map(|t| !t.is_empty()).unwrap_or(false))
     }
-
 
     fn score_for_player_and_device(&self, device_id: &ManagedDeviceId, is_last_selected: bool) -> isize {
         let assignment_state = match self.assigned_device.as_ref() {
@@ -69,7 +71,6 @@ struct ConnectedDevice {
     player_id: Option<ManagedPlayerId>,
     requires_update: bool,
 }
-
 
 /// Orchestrator subscribes to PlayerManager and DeviceManager events
 /// and applies routing policy to update devices using a PlayerStateApplier.
@@ -179,8 +180,13 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             PlayerEvent::TimelineUpdated { player_id, timeline } => {
                 self.handle_player_timeline_updated(player_id, timeline).await;
             }
-            PlayerEvent::TextMetadataUpdated { player_id, metadata, text } => {
-                self.handle_player_text_metadata_updated(player_id, metadata, text).await;
+            PlayerEvent::TextMetadataUpdated {
+                player_id,
+                metadata,
+                text,
+            } => {
+                self.handle_player_text_metadata_updated(player_id, metadata, text)
+                    .await;
             }
         }
     }
@@ -291,13 +297,21 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
             };
             if is_selected {
                 // best-effort; ignore errors here like other handlers
-                self.applier.apply_timeline(device_id.clone(), Some(timeline.clone())).await.ok();
+                self.applier
+                    .apply_timeline(device_id.clone(), Some(timeline.clone()))
+                    .await
+                    .ok();
             }
         }
         // Do not mark devices for full update; no selection recompute needed for timeline-only changes
     }
 
-    async fn handle_player_text_metadata_updated(&mut self, player_id: ManagedPlayerId, metadata: FsctTextMetadata, text: Option<String>) {
+    async fn handle_player_text_metadata_updated(
+        &mut self,
+        player_id: ManagedPlayerId,
+        metadata: FsctTextMetadata,
+        text: Option<String>,
+    ) {
         debug!("TextMetadataUpdated: player {} {:?}", player_id, metadata);
         // Convert Option<String> to Option<&str> for apply_text
         let has_metadata_changed = if let Some(player) = self.players.get_mut(&player_id) {
@@ -332,7 +346,8 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     // Dedicated handlers for DeviceEvent variants
     async fn handle_device_added(&mut self, device_id: ManagedDeviceId) {
         debug!("Device added: {}", device_id);
-        self.connected_devices.insert(device_id, Mutex::new(ConnectedDevice::default()));
+        self.connected_devices
+            .insert(device_id, Mutex::new(ConnectedDevice::default()));
         let device = self.connected_devices.get(&device_id).unwrap();
         self.update_selected_player_for_device(&device_id, &device);
         let state = self.get_state_for_device(&device.lock().unwrap());
@@ -346,7 +361,11 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     }
 
     // Selection helpers
-    fn find_player_for_device(&self, device_id: &ManagedDeviceId, device: &Mutex<ConnectedDevice>) -> Option<(ManagedPlayerId, isize)> {
+    fn find_player_for_device(
+        &self,
+        device_id: &ManagedDeviceId,
+        device: &Mutex<ConnectedDevice>,
+    ) -> Option<(ManagedPlayerId, isize)> {
         let mut selected: Option<(ManagedPlayerId, isize)> = None;
         let last_selected = device.lock().unwrap().player_id.clone();
         for (player_id, player) in self.players.iter() {
@@ -359,7 +378,6 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         selected
     }
 
-
     fn update_selected_players_for_devices(&self) {
         for (device_id, device) in self.connected_devices.iter() {
             self.update_selected_player_for_device(device_id, device);
@@ -371,7 +389,10 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         let mut device = device.lock().unwrap();
         if device.player_id != selected.map(|s| s.0) {
             let score = selected.map(|s| s.1).unwrap_or(0);
-            debug!("Selected player for device {} changed from {:?} to {:?}. New score: {}", device_id, device.player_id, selected, score);
+            debug!(
+                "Selected player for device {} changed from {:?} to {:?}. New score: {}",
+                device_id, device.player_id, selected, score
+            );
             device.player_id = selected.map(|s| s.0);
             device.requires_update = true;
         }
@@ -396,7 +417,9 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     }
 
     fn get_state_for_device(&self, device: &ConnectedDevice) -> PlayerState {
-        let state = device.player_id.as_ref()
+        let state = device
+            .player_id
+            .as_ref()
             .map(|id| self.players.get(id))
             .flatten()
             .map(|p| p.state.clone())
@@ -404,4 +427,3 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
         state
     }
 }
-

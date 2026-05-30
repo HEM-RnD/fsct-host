@@ -1,9 +1,9 @@
-use std::time::Duration;
-use log::info;
-use fsct::{FsctDriver, PlayerState, FSCT_PROTOCOL_VERSION};
 use fsct::definitions::{FsctStatus, TimelineInfo};
-use fsct_client::IpcDriver;
 use fsct::player_state::TrackMetadata;
+use fsct::{FSCT_PROTOCOL_VERSION, FsctDriver, PlayerState};
+use fsct_client::IpcDriver;
+use log::info;
+use std::time::Duration;
 
 async fn print_device_info(driver: &IpcDriver, device_id: uuid::Uuid) {
     let device_info = driver.get_device_info(device_id).await.unwrap();
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
             title: Option::from("Пісня Сміливих Дівчат".to_string()),
             artist: Option::from("KAZKA".to_string()),
             ..Default::default()
-        }
+        },
     };
 
     driver.update_player_state(player_id, state).await?;
@@ -53,17 +53,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut rx = driver.subscribe_device_changes().await?;
-    let handle =  tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
-                match event {
-                    fsct::DeviceChangeEvent::Added(uuid) => {
-                        info!("Device added: {}", uuid);
-                        print_device_info(&driver, uuid).await;
-                    }
-                    fsct::DeviceChangeEvent::Removed(uuid) => {
-                        info!("Device removed: {}", uuid);
-                    }
+            match event {
+                fsct::DeviceChangeEvent::Added(uuid) => {
+                    info!("Device added: {}", uuid);
+                    print_device_info(&driver, uuid).await;
                 }
+                fsct::DeviceChangeEvent::Removed(uuid) => {
+                    info!("Device removed: {}", uuid);
+                }
+            }
         }
     });
 

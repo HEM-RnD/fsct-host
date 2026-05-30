@@ -15,11 +15,11 @@
 // This file is part of an implementation of Ferrum Streaming Control Technology™,
 // which is subject to additional terms found in the LICENSE-FSCT.md file.
 
-use zbus::names::OwnedBusName;
-use zbus::fdo::{DBusProxy, PropertiesProxy};
+use crate::ports::linux::player::mpris::{media_player2, media_player2_player};
 use anyhow::bail;
 use zbus::export::ordered_stream::OrderedStreamExt;
-use crate::ports::linux::player::mpris::{media_player2, media_player2_player};
+use zbus::fdo::{DBusProxy, PropertiesProxy};
+use zbus::names::OwnedBusName;
 
 pub struct Player {
     conn: zbus::Connection,
@@ -31,18 +31,15 @@ impl Player {
         Self { conn, bus_name }
     }
 
-    pub async fn as_media_player2_interface(&self) -> anyhow::Result<media_player2::MediaPlayer2Proxy<'_>>
-    {
+    pub async fn as_media_player2_interface(&self) -> anyhow::Result<media_player2::MediaPlayer2Proxy<'_>> {
         Ok(media_player2::MediaPlayer2Proxy::new(&self.conn, self.bus_name.clone()).await?)
     }
 
-    pub async fn as_player_interface(&self) -> anyhow::Result<media_player2_player::PlayerProxy<'_>>
-    {
+    pub async fn as_player_interface(&self) -> anyhow::Result<media_player2_player::PlayerProxy<'_>> {
         Ok(media_player2_player::PlayerProxy::new(&self.conn, self.bus_name.clone()).await?)
     }
 
-    pub async fn wait_for_disconnect(&self) -> anyhow::Result<()>
-    {
+    pub async fn wait_for_disconnect(&self) -> anyhow::Result<()> {
         let dbus = DBusProxy::new(&self.conn).await?;
         let mut name_owner_changed = dbus.receive_name_owner_changed().await?;
         while let Some(event) = name_owner_changed.next().await {
