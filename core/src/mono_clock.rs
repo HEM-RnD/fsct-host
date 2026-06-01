@@ -20,7 +20,7 @@
 //! bridging step, so NTP steps cannot corrupt playback timelines.
 
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // Rust documents ~100 years as a cross-platform comfortable range for Instant arithmetic.
 const MAX_INSTANT_OFFSET_MS: u64 = 100 * 365 * 24 * 60 * 60 * 1_000;
@@ -48,6 +48,22 @@ pub fn mono_ms_of(instant: Instant) -> u64 {
 pub fn instant_from_mono_ms(ms: u64) -> Instant {
     let offset = Duration::from_millis(ms.min(MAX_INSTANT_OFFSET_MS));
     EPOCH.checked_add(offset).unwrap_or(*EPOCH)
+}
+
+/// Convert an OS-provided wall-clock timestamp into the monotonic frame.
+///
+/// The OS reports when playback info was last updated as a wall-clock `SystemTime`. We measure its
+/// age against the current wall-clock and subtract that age from `Instant::now()`, yielding a
+/// monotonic anchor immune to wall-clock steps. The age is normally a few seconds, well inside any
+/// NTP step window, so the result is a faithful monotonic anchor that no longer drifts when the
+/// wall-clock jumps. Callers are responsible for turning their platform timestamp (FILETIME, JXA,
+/// …) into a `SystemTime` first.
+pub fn instant_from_wall(wall: SystemTime) -> Instant {
+    let now = Instant::now();
+    match SystemTime::now().duration_since(wall) {
+        Ok(age) => now.checked_sub(age).unwrap_or(now),
+        Err(_) => now,
+    }
 }
 
 /// NTP/PTP-style offset (ms) that converts a *client-frame* monotonic stamp into the
@@ -108,6 +124,30 @@ mod tests {
     fn mono_offset_saturates_extreme_inputs() {
         assert_eq!(mono_offset_ms(0, i64::MAX, i64::MAX, i64::MIN), i64::MAX);
         assert_eq!(mono_offset_ms(i64::MAX, i64::MIN, 0, i64::MAX), i64::MIN);
+    }
+
+    #[test]
+    fn instant_from_wall_anchors_recent_past() {
+        // A wall stamp a few seconds in the past must map to roughly that far before now.
+        let wall = SystemTime::now() - Duration::from_secs(3);
+        let before = Instant::now();
+        let anchor = instant_from_wall(wall);
+        assert!(anchor <= before, "anchor must not be in the future");
+        let age = before.saturating_duration_since(anchor);
+        assert!(
+            age >= Duration::from_secs(2) && age <= Duration::from_secs(4),
+            "age was {age:?}"
+        );
+    }
+
+    #[test]
+    fn instant_from_wall_clamps_future_stamp() {
+        // A wall stamp in the future (clock skew) clamps to ~now, never past it.
+        let wall = SystemTime::now() + Duration::from_secs(10);
+        let before = Instant::now();
+        let anchor = instant_from_wall(wall);
+        let after = Instant::now();
+        assert!(anchor >= before && anchor <= after);
     }
 
     #[test]

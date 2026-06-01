@@ -19,10 +19,11 @@ use crate::{JoinableTaskHandle, spawn_service};
 use anyhow::Error as AnyError;
 use fsct::FsctDriver;
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
+use fsct::mono_clock::instant_from_wall;
 use fsct::player_state::{PlayerState, TrackMetadata};
 use log::{debug, error, warn};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use thiserror::Error;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
@@ -44,19 +45,6 @@ pub enum PlayerError {
     PlayerNotFound,
     #[error("Other error: {0}")]
     Other(#[from] AnyError),
-}
-
-/// Convert an OS-provided wall-clock timestamp into the monotonic frame.
-///
-/// `LastUpdatedTime` is a wall-clock FILETIME. We measure its age against the current wall-clock
-/// and subtract that age from `Instant::now()`, yielding a monotonic anchor immune to wall-clock
-/// steps. The age is normally a few seconds, well inside any NTP step window.
-fn instant_from_wall(wall: SystemTime) -> Instant {
-    let now = Instant::now();
-    match SystemTime::now().duration_since(wall) {
-        Ok(age) => now.checked_sub(age).unwrap_or(now),
-        Err(_) => now,
-    }
 }
 
 fn get_timeline_info(
