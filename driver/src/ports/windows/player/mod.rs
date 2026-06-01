@@ -47,10 +47,19 @@ pub enum PlayerError {
     Other(#[from] AnyError),
 }
 
-fn get_timeline_info(
-    playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,
+/// Position/duration/update_time read straight from GSMTC timeline properties.
+/// The extrapolation rate is intentionally NOT part of this — it depends on the
+/// playback status, which is tracked in `CombinedState` (the single source of truth).
+#[derive(Clone)]
+struct TimelineParts {
+    position: Duration,
+    duration: Duration,
+    update_time: Instant,
+}
+
+fn get_timeline_parts(
     timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties,
-) -> Result<Option<TimelineInfo>, PlayerError> {
+) -> Result<TimelineParts, PlayerError> {
     let position = timeline_properties.Position().into_player_error()?;
     let last_update_time = timeline_properties.LastUpdatedTime().into_player_error()?;
     let end_time = timeline_properties.EndTime().into_player_error()?.Duration as f64 / 10_000_000.0;
@@ -65,14 +74,85 @@ fn get_timeline_info(
 
     let position_sec = position.Duration as f64 / 10_000_000.0;
 
-    let rate = get_rate(playback_info);
-
-    Ok(Some(TimelineInfo {
+    Ok(TimelineParts {
         position: Duration::from_secs_f64(position_sec),
-        update_time,
         duration: Duration::from_secs_f64(end_time),
-        rate,
+        update_time,
+    })
+}
+
+fn get_timeline_info(
+    playback_info: Option<&GlobalSystemMediaTransportControlsSessionPlaybackInfo>,
+    timeline_properties: &GlobalSystemMediaTransportControlsSessionTimelineProperties,
+) -> Result<Option<TimelineInfo>, PlayerError> {
+    let parts = get_timeline_parts(timeline_properties)?;
+    Ok(Some(TimelineInfo {
+        position: parts.position,
+        duration: parts.duration,
+        update_time: parts.update_time,
+        rate: get_rate(playback_info),
     }))
+}
+
+/// Rate gated by playback status: a non-Playing status always extrapolates at 0,
+/// regardless of the rate the OS reports. Mirrors the Linux port's `effective_rate`.
+fn effective_rate(status: FsctStatus, reported_rate: f64) -> f64 {
+    if status == FsctStatus::Playing {
+        reported_rate
+    } else {
+        0.0
+    }
+}
+
+/// Ungated playback rate as reported by GSMTC (defaults to 1.0 when unavailable).
+fn get_reported_rate(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> f64 {
+    playback_info
+        .PlaybackRate()
+        .map(|rate| rate.Value().unwrap_or(1.0))
+        .unwrap_or(1.0)
+}
+
+/// Single source of truth combining the two racing GSMTC events: playback status
+/// (incl. reported rate) from PlaybackInfoChanged and the timeline parts from
+/// TimelinePropertiesChanged. The emitted timeline's rate is always recomputed from
+/// `status` here, so it can never lag the status by one transition.
+#[derive(Default)]
+struct CombinedState {
+    status: FsctStatus,
+    reported_rate: f64,
+    parts: Option<TimelineParts>,
+    last_timeline: Option<TimelineInfo>,
+}
+
+fn build_timeline(state: &CombinedState) -> Option<TimelineInfo> {
+    let parts = state.parts.as_ref()?;
+    Some(TimelineInfo {
+        position: parts.position,
+        duration: parts.duration,
+        update_time: parts.update_time,
+        rate: effective_rate(state.status, state.reported_rate),
+    })
+}
+
+fn read_combined_state(session: &GlobalSystemMediaTransportControlsSession) -> CombinedState {
+    let playback_info = session.GetPlaybackInfo().into_player_error().ok();
+    let (status, reported_rate) = match playback_info.as_ref() {
+        Some(info) => (get_status(info), get_reported_rate(info)),
+        None => (FsctStatus::Unknown, 0.0),
+    };
+    let parts = session
+        .GetTimelineProperties()
+        .into_player_error()
+        .ok()
+        .and_then(|tp| get_timeline_parts(&tp).ok());
+    let mut state = CombinedState {
+        status,
+        reported_rate,
+        parts,
+        last_timeline: None,
+    };
+    state.last_timeline = build_timeline(&state);
+    state
 }
 
 fn get_status(playback_info: &GlobalSystemMediaTransportControlsSessionPlaybackInfo) -> FsctStatus {
@@ -313,6 +393,7 @@ struct WindowsOsWatcher {
     driver: Arc<dyn FsctDriver>,
     player_id: ManagedPlayerId,
     handles: Mutex<Option<WindowsSessionHandles>>,
+    state: Mutex<CombinedState>,
 }
 
 async fn get_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, PlayerError> {
@@ -333,6 +414,7 @@ impl WindowsOsWatcher {
             driver,
             player_id,
             handles: Mutex::new(None),
+            state: Mutex::new(CombinedState::default()),
         })
     }
 
@@ -376,6 +458,9 @@ impl WindowsOsWatcher {
         debug!("[WindowsPlayer] Current session: {:?}", session);
         let new_player_state = get_playback_state(&session).await?;
         debug!("[WindowsPlayer] New player state: {:?}", new_player_state);
+        // Seed the single source of truth before handles start delivering events,
+        // so the first incremental event gates its emit against the initial timeline.
+        *self.state.lock().unwrap() = read_combined_state(&session);
         self.handles.lock().unwrap().take();
         *self.handles.lock().unwrap() = Some(WindowsSessionHandles::new(session, notification_sender)?);
         self.driver
@@ -501,21 +586,71 @@ impl WindowsOsWatcher {
     }
 
     async fn handle_timeline_properties_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        // Partial update: recompute timeline (position, duration, rate)
-        let playback_info = session.GetPlaybackInfo().into_player_error().ok();
-        let timeline_props = session.GetTimelineProperties().into_player_error().ok();
-        if let Some(tprops) = timeline_props {
-            if let Ok(Some(timeline)) = get_timeline_info(playback_info.as_ref(), &tprops) {
-                let _ = self.driver.update_player_timeline(self.player_id, Some(timeline)).await;
-            }
+        // Update the timeline parts in the combined state, then recompute the emitted
+        // timeline's rate from the *stored* status (not a freshly-fetched one) so the two
+        // GSMTC events can't race on the rate.
+        let Ok(tprops) = session.GetTimelineProperties().into_player_error() else {
+            return;
+        };
+        let Ok(parts) = get_timeline_parts(&tprops) else {
+            return;
+        };
+        let timeline = {
+            let mut state = self.state.lock().unwrap();
+            state.parts = Some(parts);
+            Self::recompute_timeline(&mut state)
+        };
+        if let Some(timeline) = timeline {
+            let _ = self.driver.update_player_timeline(self.player_id, timeline).await;
         }
     }
 
     async fn handle_playback_info_changed(&self, session: GlobalSystemMediaTransportControlsSession) {
-        // Partial update: update only playback status
-        if let Ok(info) = session.GetPlaybackInfo().into_player_error() {
-            let status = get_status(&info);
-            let _ = self.driver.update_player_status(self.player_id, status).await;
+        // Update status + reported rate in the combined state, then recompute the timeline
+        // so the device's extrapolation rate flips in lockstep with the status. Without this
+        // the rate lagged the status by one transition (advanced on pause / froze on play).
+        let Ok(info) = session.GetPlaybackInfo().into_player_error() else {
+            return;
+        };
+        let status = get_status(&info);
+        let reported_rate = get_reported_rate(&info);
+        let timeline = {
+            let mut state = self.state.lock().unwrap();
+            // re-anchor position to now using the old rate before the status changes
+            Self::recalculate_position(&mut state);
+            state.status = status;
+            state.reported_rate = reported_rate;
+            Self::recompute_timeline(&mut state)
+        };
+        let _ = self.driver.update_player_status(self.player_id, status).await;
+        if let Some(timeline) = timeline {
+            let _ = self.driver.update_player_timeline(self.player_id, timeline).await;
+        }
+    }
+
+    /// Rebuild the timeline from the combined state and gate it against the last emitted one.
+    /// Returns `Some` only when it changed (the inner `Option` is the value to send).
+    fn recompute_timeline(state: &mut CombinedState) -> Option<Option<TimelineInfo>> {
+        let timeline = build_timeline(state);
+        if timeline != state.last_timeline {
+            state.last_timeline = timeline.clone();
+            Some(timeline)
+        } else {
+            None
+        }
+    }
+
+    /// Advance the stored position to now using the current (gated) rate, then re-anchor
+    /// the update time. Mirrors the Linux port so a status change freezes/resumes from the
+    /// correct point instead of an old timestamp.
+    fn recalculate_position(state: &mut CombinedState) {
+        let rate = effective_rate(state.status, state.reported_rate);
+        if let Some(parts) = state.parts.as_mut() {
+            let now = Instant::now();
+            let elapsed = now.saturating_duration_since(parts.update_time);
+            let advance = (elapsed.as_secs_f64() * rate).max(0.0);
+            parts.position += Duration::from_secs_f64(advance);
+            parts.update_time = now;
         }
     }
 }
