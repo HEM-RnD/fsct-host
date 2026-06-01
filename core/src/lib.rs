@@ -3,6 +3,7 @@ pub mod definitions;
 mod device_uuid_calculator;
 pub mod driver;
 mod endpoint;
+pub mod mono_clock;
 pub mod player_state;
 
 pub use player_state::{PlayerState, TrackMetadata, TrackMetadataIterator};
@@ -16,3 +17,5 @@ pub use definitions::{FSCT_PROTOCOL_VERSION, ProtocolVersion};
 pub use definitions::*;
 pub use device_uuid_calculator::calculate_uuid;
 pub use endpoint::default_endpoint_path;
+// Export monotonic-clock helpers and time-sync bridging math
+pub use mono_clock::*;

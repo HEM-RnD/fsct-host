@@ -19,11 +19,12 @@ use crate::joinable_task::{JoinableTaskHandle, spawn_service};
 use anyhow::anyhow;
 use fsct::FsctDriver;
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
+use fsct::mono_clock::instant_from_wall;
 use fsct::player_state::{PlayerState, TrackMetadata};
 use media_remote::{NowPlaying, NowPlayingInfo, NowPlayingJXA, Subscription};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]
@@ -46,7 +47,10 @@ fn get_current_track(now_playing_info: &NowPlayingInfo) -> TrackMetadata {
 fn get_timeline_info(now_playing_info: &NowPlayingInfo) -> Option<TimelineInfo> {
     let duration = now_playing_info.duration?;
     let position = now_playing_info.elapsed_time.unwrap_or(0.0);
-    let update_time = now_playing_info.info_update_time.unwrap_or(SystemTime::now());
+    let update_time = now_playing_info
+        .info_update_time
+        .map(instant_from_wall)
+        .unwrap_or_else(Instant::now);
     let is_playing = now_playing_info.is_playing.unwrap_or(false);
     let rate = if is_playing {
         now_playing_info.playback_rate.unwrap_or(0.0)

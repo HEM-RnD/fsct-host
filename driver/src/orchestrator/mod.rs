@@ -35,6 +35,18 @@ use scoring::{Assignment, PlayerSelectionParams};
 use tokio::select;
 use tokio::sync::broadcast;
 
+/// Force the extrapolation rate to 0 unless the player is actually Playing.
+///
+/// `rate` reported by the OS is meaningful only while playing; paused/stopped/etc. must freeze
+/// the device's position. Gating here — where status and timeline are combined for a device —
+/// makes it immune to the order in which a platform watcher emits status- vs timeline-change
+/// events (a real race on Windows GSMTC, where play/pause fires both independently).
+fn gate_timeline_rate(status: FsctStatus, timeline: &mut TimelineInfo) {
+    if status != FsctStatus::Playing {
+        timeline.rate = 0.0;
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct RegisteredPlayer {
     assigned_device: Option<ManagedDeviceId>,
@@ -285,10 +297,15 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
 
     async fn handle_player_timeline_updated(&mut self, player_id: ManagedPlayerId, timeline: TimelineInfo) {
         debug!("TimelineUpdated: player {}", player_id);
-        // Update local state
+        // Update local state (store the raw timeline; rate is gated only on the way to the device)
+        // and read the authoritative status to gate the extrapolation rate against event-order races.
+        let mut status = FsctStatus::Unknown;
         if let Some(player) = self.players.get_mut(&player_id) {
             player.state.timeline = Some(timeline.clone());
+            status = player.state.status;
         }
+        let mut timeline = timeline;
+        gate_timeline_rate(status, &mut timeline);
         // Directly apply only the timeline to devices currently showing this player
         for (device_id, device) in self.connected_devices.iter() {
             let is_selected = {
@@ -417,13 +434,17 @@ impl<A: PlayerStateApplier + 'static> Orchestrator<A> {
     }
 
     fn get_state_for_device(&self, device: &ConnectedDevice) -> PlayerState {
-        let state = device
+        let mut state = device
             .player_id
             .as_ref()
             .map(|id| self.players.get(id))
             .flatten()
             .map(|p| p.state.clone())
             .unwrap_or_default();
+        let status = state.status;
+        if let Some(timeline) = state.timeline.as_mut() {
+            gate_timeline_rate(status, timeline);
+        }
         state
     }
 }

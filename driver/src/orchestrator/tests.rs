@@ -1077,7 +1077,7 @@ async fn timeline_update_triggers_partial_apply_only() {
     // Send timeline update
     let tl = TimelineInfo {
         position: std::time::Duration::from_secs(12),
-        update_time: std::time::SystemTime::now(),
+        update_time: std::time::Instant::now(),
         duration: std::time::Duration::from_secs(300),
         rate: 1.0,
     };

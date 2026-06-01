@@ -18,10 +18,13 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use fsct::definitions::{
-    DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimelineInfo,
+    DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, ProtocolVersion, TimeSync, TimelineInfo,
 };
 use fsct::player_state::PlayerState;
-use fsct::{DeviceChangeEvent, FsctDriver, default_endpoint_path};
+use fsct::{
+    DeviceChangeEvent, FsctDriver, default_endpoint_path, instant_from_mono_ms, mono_ms_of, mono_offset_ms,
+    offsets_consistent,
+};
 use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -30,10 +33,18 @@ use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use crate::mux::{OutboundCall, run_mux};
 use crate::rpc::MAX_LINE_BYTES;
 
+/// Maximum tolerated disagreement (ms) between two handshake offset samples before we retry.
+/// A few milliseconds easily covers scheduling jitter while still catching a real wall-clock step.
+const OFFSET_CONSISTENCY_TOLERANCE_MS: i64 = 5;
+/// How many times to retry the two-sample handshake before giving up.
+const OFFSET_HANDSHAKE_ATTEMPTS: usize = 5;
+
 pub struct IpcDriver {
     call_tx: mpsc::Sender<OutboundCall>,
     device_tx: broadcast::Sender<DeviceChangeEvent>,
     negotiated_version: ProtocolVersion,
+    /// Offset (ms) converting this client's monotonic frame to the driver's: `driver = client + offset`.
+    mono_offset_ms: i64,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -70,11 +81,15 @@ impl IpcDriver {
         let task = tokio::spawn(run_mux(reader, writer, call_rx, device_tx_task));
 
         let negotiated_version = Self::perform_handshake(&call_tx).await.inspect_err(|_| task.abort())?;
+        let mono_offset_ms = Self::establish_mono_offset(&call_tx)
+            .await
+            .inspect_err(|_| task.abort())?;
 
         Ok(Self {
             call_tx,
             device_tx,
             negotiated_version,
+            mono_offset_ms,
             _task: task,
         })
     }
@@ -112,6 +127,72 @@ impl IpcDriver {
             ));
         }
         Ok(negotiated)
+    }
+
+    /// Establish the monotonic-frame offset to the driver via a mini NTP/PTP handshake.
+    ///
+    /// Each round-trip fetches the driver's `(wall, mono)` sample and pairs it with a local
+    /// `(wall, mono)` sample taken right after the response arrives. Two round-trips are compared:
+    /// if they agree (no wall step occurred in between) the averaged offset is returned, otherwise
+    /// we retry. This runs once per connection, so a driver restart (which yields a new monotonic
+    /// epoch) is re-bridged automatically on reconnect.
+    async fn establish_mono_offset(call_tx: &mpsc::Sender<OutboundCall>) -> anyhow::Result<i64> {
+        let mut last_pair: Option<(i64, i64)> = None;
+        for _ in 0..OFFSET_HANDSHAKE_ATTEMPTS {
+            let k1 = Self::measure_offset_once(call_tx).await?;
+            let k2 = Self::measure_offset_once(call_tx).await?;
+            if offsets_consistent(k1, k2, OFFSET_CONSISTENCY_TOLERANCE_MS) {
+                return Ok((k1 + k2) / 2);
+            }
+            last_pair = Some((k1, k2));
+        }
+        Err(anyhow::anyhow!(
+            "time-sync handshake did not stabilize after {} attempts (last samples: {:?}); \
+             the wall clock may be stepping repeatedly",
+            OFFSET_HANDSHAKE_ATTEMPTS,
+            last_pair
+        ))
+    }
+
+    async fn measure_offset_once(call_tx: &mpsc::Sender<OutboundCall>) -> anyhow::Result<i64> {
+        let driver = Self::fetch_timesync(call_tx).await?;
+        let client = TimeSync::sample_now();
+        Ok(mono_offset_ms(
+            driver.wall_ms as i64,
+            driver.mono_ms as i64,
+            client.wall_ms as i64,
+            client.mono_ms as i64,
+        ))
+    }
+
+    async fn fetch_timesync(call_tx: &mpsc::Sender<OutboundCall>) -> anyhow::Result<TimeSync> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        call_tx
+            .send(OutboundCall {
+                method: "get_timesync".into(),
+                params: json!({}),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("IPC connection closed"))?;
+        let resp = reply_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("IPC connection closed"))?
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        serde_json::from_value(resp).context("invalid get_timesync response")
+    }
+
+    /// Shift a timeline's monotonic anchor from this client's frame into the driver's frame, so
+    /// the driver can compare it directly against its own clock. Applied to the typed value
+    /// before serialization, so the wire format naturally carries a driver-frame stamp without
+    /// any post-serialization patching.
+    fn anchor_in_driver_frame(&self, mut timeline: TimelineInfo) -> TimelineInfo {
+        // Shift the client-frame anchor into the driver's frame, in ms. The number→Instant→number
+        // round-trip is intentional: the wire serializer re-extracts ms from the Instant.
+        let client_ms = mono_ms_of(timeline.update_time) as i64;
+        let driver_ms = (client_ms + self.mono_offset_ms).max(0) as u64;
+        timeline.update_time = instant_from_mono_ms(driver_ms);
+        timeline
     }
 
     async fn rpc_call(&self, method: &str, params: JsonValue) -> anyhow::Result<JsonValue> {
@@ -177,7 +258,8 @@ impl FsctDriver for IpcDriver {
         Ok(())
     }
 
-    async fn update_player_state(&self, player_id: ManagedPlayerId, new_state: PlayerState) -> anyhow::Result<()> {
+    async fn update_player_state(&self, player_id: ManagedPlayerId, mut new_state: PlayerState) -> anyhow::Result<()> {
+        new_state.timeline = new_state.timeline.map(|t| self.anchor_in_driver_frame(t));
         self.rpc_call(
             "update_player_state",
             json!({ "player_id": player_id.get(), "state": serde_json::to_value(&new_state)? }),
@@ -200,9 +282,10 @@ impl FsctDriver for IpcDriver {
         player_id: ManagedPlayerId,
         new_timeline: Option<TimelineInfo>,
     ) -> anyhow::Result<()> {
+        let timeline = new_timeline.map(|t| self.anchor_in_driver_frame(t));
         self.rpc_call(
             "update_player_timeline",
-            json!({ "player_id": player_id.get(), "timeline": serde_json::to_value(&new_timeline)? }),
+            json!({ "player_id": player_id.get(), "timeline": timeline }),
         )
         .await?;
         Ok(())
@@ -257,6 +340,11 @@ impl FsctDriver for IpcDriver {
 
     async fn subscribe_device_changes(&self) -> anyhow::Result<broadcast::Receiver<DeviceChangeEvent>> {
         Ok(self.device_tx.subscribe())
+    }
+
+    async fn get_timesync(&self) -> anyhow::Result<TimeSync> {
+        let resp = self.rpc_call("get_timesync", json!({})).await?;
+        serde_json::from_value(resp).context("invalid get_timesync response")
     }
 }
 

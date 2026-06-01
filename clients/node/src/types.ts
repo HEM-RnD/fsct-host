@@ -42,10 +42,18 @@ export type FsctTextMetadata =
   | 'queue_album'
   | 'queue_genre';
 
-/** Playback timeline snapshot. All times in milliseconds. */
+/** Playback timeline snapshot. Positions/durations in milliseconds; the anchor is monotonic. */
 export interface TimelineInfo {
   positionMs: number;
-  updateUnixMs: number;
+  /**
+   * Monotonic timestamp (milliseconds, in this client's `process.hrtime` frame) at which
+   * `positionMs` was sampled. Use {@link FsctIpcClient.monoNowMs} for "now". Omit to anchor at
+   * "now" (age 0) — appropriate when the source has no timestamp of its own (e.g. Volumio).
+   *
+   * The client converts this into the driver's monotonic frame (via the connect-time handshake)
+   * before sending, so it is immune to wall-clock steps.
+   */
+  updateMonoMs?: number;
   durationMs: number;
   rate: number;
 }

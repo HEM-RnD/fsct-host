@@ -40,7 +40,7 @@ use tokio::select;
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use uuid::Uuid;
 
-use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimelineInfo};
+use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, TimeSync, TimelineInfo};
 use fsct::player_state::PlayerState;
 use fsct::{DeviceChangeEvent, FSCT_PROTOCOL_VERSION, FsctDriver};
 use fsct_client::rpc::{
@@ -331,6 +331,7 @@ impl ConnectionHandler {
     async fn dispatch(&self, method: &str, params: &JsonValue) -> anyhow::Result<JsonValue> {
         match method {
             "get_protocol_version" => self.req_get_protocol_version(params).await,
+            "get_timesync" => self.req_get_timesync(params).await,
             "register_player" => self.req_register_player(params).await,
             "unregister_player" => self.req_unregister_player(params).await,
             "assign_player_to_device" => self.req_assign_player_to_device(params).await,
@@ -394,6 +395,11 @@ impl ConnectionHandler {
 
     async fn req_get_protocol_version(&self, _params: &JsonValue) -> anyhow::Result<JsonValue> {
         Ok(serde_json::to_value(FSCT_PROTOCOL_VERSION)?)
+    }
+
+    async fn req_get_timesync(&self, _params: &JsonValue) -> anyhow::Result<JsonValue> {
+        let sync: TimeSync = self.driver.get_timesync().await?;
+        Ok(serde_json::to_value(sync)?)
     }
 
     async fn req_register_player(&self, params: &JsonValue) -> anyhow::Result<JsonValue> {

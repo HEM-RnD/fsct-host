@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
             position: Duration::from_secs(30),
             duration: Duration::from_secs(180),
             rate: 1.0,
-            update_time: std::time::SystemTime::now(),
+            update_time: std::time::Instant::now(),
         };
 
         info!("Setting progress for device {}", managed_id);

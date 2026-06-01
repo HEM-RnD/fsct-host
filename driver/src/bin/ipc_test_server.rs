@@ -36,7 +36,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use fsct::definitions::{DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimelineInfo};
+use fsct::definitions::{
+    DeviceInfo, FsctStatus, FsctTextMetadata, ManagedDeviceId, ManagedPlayerId, TimeSync, TimelineInfo,
+};
 use fsct::player_state::PlayerState;
 use fsct::{DeviceChangeEvent, FsctDriver};
 use fsct_driver::IpcServer;
@@ -185,6 +187,10 @@ impl FsctDriver for MockFsctDriver {
 
     async fn subscribe_device_changes(&self) -> anyhow::Result<broadcast::Receiver<DeviceChangeEvent>> {
         Ok(self.device_changes_tx.subscribe())
+    }
+
+    async fn get_timesync(&self) -> anyhow::Result<TimeSync> {
+        Ok(TimeSync::sample_now())
     }
 }
 

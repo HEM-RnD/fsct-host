@@ -19,10 +19,11 @@ use crate::{JoinableTaskHandle, spawn_service};
 use anyhow::Error as AnyError;
 use fsct::FsctDriver;
 use fsct::definitions::{FsctStatus, ManagedPlayerId, TimelineInfo};
+use fsct::mono_clock::instant_from_wall;
 use fsct::player_state::{PlayerState, TrackMetadata};
 use log::{debug, error, warn};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use thiserror::Error;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
@@ -55,10 +56,11 @@ fn get_timeline_info(
     let end_time = timeline_properties.EndTime().into_player_error()?.Duration as f64 / 10_000_000.0;
 
     let update_time = if last_update_time.UniversalTime < UNIX_EPOCH_OFFSET {
-        std::time::SystemTime::now()
+        Instant::now()
     } else {
         let last_update_unix_nanos = (last_update_time.UniversalTime - UNIX_EPOCH_OFFSET) * 100;
-        std::time::UNIX_EPOCH + std::time::Duration::from_nanos(last_update_unix_nanos as u64)
+        let wall = UNIX_EPOCH + Duration::from_nanos(last_update_unix_nanos as u64);
+        instant_from_wall(wall)
     };
 
     let position_sec = position.Duration as f64 / 10_000_000.0;

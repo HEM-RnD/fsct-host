@@ -36,6 +36,42 @@ export { FsctError } from './protocol.js';
 const PIPE_RETRY_INTERVAL_MS = 50;
 const PIPE_RETRY_TIMEOUT_MS = 5000;
 
+/**
+ * Process-global monotonic epoch, captured once at module load. Monotonic timestamps are
+ * expressed as milliseconds since this epoch (a process-local, jump-free reference), mirroring the
+ * Rust core's `EPOCH`. Milliseconds keep every value well within 2^53, so plain `number`
+ * arithmetic is precise. The epoch differs per process, so a client's frame is bridged to the
+ * driver's via the connect-time time-sync handshake (see {@link monoOffsetMs}).
+ */
+const NODE_EPOCH = process.hrtime.bigint();
+
+/** Current monotonic time as milliseconds since {@link NODE_EPOCH}. */
+function monoNowMs(): number {
+  return Number((process.hrtime.bigint() - NODE_EPOCH) / 1_000_000n);
+}
+
+/** Maximum tolerated disagreement (ms) between two handshake offset samples before retrying. */
+const OFFSET_CONSISTENCY_TOLERANCE_MS = 5;
+/** How many times to retry the two-sample handshake before giving up. */
+const OFFSET_HANDSHAKE_ATTEMPTS = 5;
+
+/** A back-to-back wall + monotonic sample in this process's frame. */
+function sampleClientTime(): { wallMs: number; monoMs: number } {
+  const wallMs = Date.now();
+  const monoMs = monoNowMs();
+  return { wallMs, monoMs };
+}
+
+/**
+ * NTP/PTP-style offset (ms) converting a *client-frame* monotonic stamp into the *driver-frame*:
+ * `driver = client + offset`. IPC latency cancels (the `wallC - wallD` term corrects for which
+ * wall instant each side sampled); only a wall-clock step between the two samples corrupts it,
+ * which the two-sample consistency check detects.
+ */
+function monoOffsetMs(wallD: number, monoD: number, wallC: number, monoC: number): number {
+  return monoD - monoC + (wallC - wallD);
+}
+
 function defaultEndpointPath(): string {
   switch (process.platform) {
     case 'linux':
@@ -91,7 +127,7 @@ async function openSocket(path: string): Promise<net.Socket> {
 
 interface TimelineWire {
   position_ms: number;
-  update_unix_ms: number;
+  update_mono_ms: number;
   duration_ms: number;
   rate: number;
 }
@@ -111,21 +147,16 @@ interface PlayerStateWire {
   texts: { title: string | null; artist: string | null; album: string | null; genre: string | null };
 }
 
-function timelineToWire(t: TimelineInfo): TimelineWire {
+// Converts the timeline's client-frame monotonic anchor into the driver's frame using the
+// handshake offset, so the driver compares it directly against its own clock. An absent
+// `updateMonoMs` is anchored at "now" (age 0).
+function timelineToWire(t: TimelineInfo, offsetMs: number): TimelineWire {
+  const clientMs = t.updateMonoMs !== undefined ? Math.trunc(t.updateMonoMs) : monoNowMs();
   return {
     position_ms: t.positionMs,
-    update_unix_ms: t.updateUnixMs,
+    update_mono_ms: clientMs + offsetMs,
     duration_ms: t.durationMs,
     rate: t.rate,
-  };
-}
-
-function timelineFromWire(w: TimelineWire): TimelineInfo {
-  return {
-    positionMs: w.position_ms,
-    updateUnixMs: w.update_unix_ms,
-    durationMs: w.duration_ms,
-    rate: w.rate,
   };
 }
 
@@ -140,10 +171,10 @@ function deviceInfoFromWire(w: DeviceInfoWire): DeviceInfo {
   };
 }
 
-function playerStateToWire(s: PlayerState): PlayerStateWire {
+function playerStateToWire(s: PlayerState, offsetMs: number): PlayerStateWire {
   return {
     status: s.status,
-    timeline: s.timeline ? timelineToWire(s.timeline) : null,
+    timeline: s.timeline ? timelineToWire(s.timeline, offsetMs) : null,
     texts: s.texts,
   };
 }
@@ -161,6 +192,8 @@ export class FsctIpcClient extends EventEmitter {
   private constructor(
     private readonly mux: Mux,
     public readonly negotiatedVersion: ProtocolVersion,
+    /** Offset (ms) converting this client's monotonic frame to the driver's: `driver = client + offset`. */
+    private readonly monoOffsetMs: number,
   ) {
     super();
     mux.on('deviceChanged', (event: DeviceChangeEvent) => this.emit('deviceChanged', event));
@@ -179,14 +212,16 @@ export class FsctIpcClient extends EventEmitter {
     const mux = new Mux(socket);
 
     let negotiatedVersion: ProtocolVersion;
+    let monoOffsetMs: number;
     try {
       negotiatedVersion = await FsctIpcClient.performHandshake(mux);
+      monoOffsetMs = await FsctIpcClient.establishMonoOffset(mux);
     } catch (err) {
       socket.destroy();
       throw err;
     }
 
-    return new FsctIpcClient(mux, negotiatedVersion);
+    return new FsctIpcClient(mux, negotiatedVersion, monoOffsetMs);
   }
 
   private static async performHandshake(mux: Mux): Promise<ProtocolVersion> {
@@ -199,9 +234,51 @@ export class FsctIpcClient extends EventEmitter {
     return { major: resp.major, minor: resp.minor };
   }
 
+  /**
+   * Establish the monotonic-frame offset to the driver via a mini NTP/PTP handshake. Each
+   * round-trip fetches the driver's `(wall, mono)` sample and pairs it with a local one taken
+   * right after the response arrives; two round-trips are compared, and if they agree (no wall
+   * step in between) the averaged offset is returned, otherwise we retry. Runs once per
+   * connection, so a driver restart (new monotonic epoch) is re-bridged on reconnect.
+   */
+  private static async establishMonoOffset(mux: Mux): Promise<number> {
+    let last: [number, number] | null = null;
+    for (let i = 0; i < OFFSET_HANDSHAKE_ATTEMPTS; i++) {
+      const k1 = await FsctIpcClient.measureOffsetOnce(mux);
+      const k2 = await FsctIpcClient.measureOffsetOnce(mux);
+      if (Math.abs(k1 - k2) <= OFFSET_CONSISTENCY_TOLERANCE_MS) {
+        return Math.trunc((k1 + k2) / 2);
+      }
+      last = [k1, k2];
+    }
+    throw new Error(
+      `time-sync handshake did not stabilize after ${OFFSET_HANDSHAKE_ATTEMPTS} attempts ` +
+        `(last samples: ${last}); the wall clock may be stepping repeatedly`,
+    );
+  }
+
+  private static async measureOffsetOnce(mux: Mux): Promise<number> {
+    const driver = await mux.call<{ wall_ms: number; mono_ms: number }>('get_timesync', {});
+    const client = sampleClientTime();
+    return monoOffsetMs(
+      Math.trunc(driver.wall_ms),
+      Math.trunc(driver.mono_ms),
+      client.wallMs,
+      client.monoMs,
+    );
+  }
+
   /** Returns the protocol version negotiated during connection (no RPC call). */
   getProtocolVersion(): ProtocolVersion {
     return this.negotiatedVersion;
+  }
+
+  /**
+   * Current monotonic time in milliseconds, in this client's frame. Pass the returned value as a
+   * {@link TimelineInfo.updateMonoMs} to stamp when a playback position was sampled.
+   */
+  monoNowMs(): number {
+    return monoNowMs();
   }
 
   /** Destroy the underlying socket. The server automatically unregisters all players. */
@@ -240,7 +317,7 @@ export class FsctIpcClient extends EventEmitter {
   async updatePlayerState(playerId: PlayerId, state: PlayerState): Promise<void> {
     await this.mux.call<null>('update_player_state', {
       player_id: playerId,
-      state: playerStateToWire(state),
+      state: playerStateToWire(state, this.monoOffsetMs),
     });
   }
 
@@ -251,7 +328,7 @@ export class FsctIpcClient extends EventEmitter {
   async updatePlayerTimeline(playerId: PlayerId, timeline: TimelineInfo | null): Promise<void> {
     await this.mux.call<null>('update_player_timeline', {
       player_id: playerId,
-      timeline: timeline ? timelineToWire(timeline) : null,
+      timeline: timeline ? timelineToWire(timeline, this.monoOffsetMs) : null,
     });
   }
 

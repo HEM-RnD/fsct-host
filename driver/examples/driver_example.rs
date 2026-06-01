@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
             position: Duration::from_secs(5),
             duration: Duration::from_secs(200),
             rate: 1.0,
-            update_time: std::time::SystemTime::now(),
+            update_time: std::time::Instant::now(),
         }),
         texts: TrackMetadata {
             title: Option::from("Пісня Сміливих Дівчат".to_string()),
