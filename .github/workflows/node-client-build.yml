@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'
@@ -43,7 +43,7 @@ jobs:
         run: bash script/inject_version.sh "${{ inputs.cargo_version }}"
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -86,7 +86,7 @@ jobs:
       # Tarball is the same on all 3 OSes (pure JS in dist/); upload it once from Linux only.
       - name: Upload npm package artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fsct-client-node
           path: clients/node/hemspzoo-fsct-client-*.tgz
