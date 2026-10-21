@@ -12,6 +12,5 @@ accepted = [
 
 private = { ignore = true }
 
-no-clearly-defined = true
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
