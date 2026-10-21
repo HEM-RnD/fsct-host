@@ -58,7 +58,7 @@ jobs:
       should_notarize: ${{ steps.final.outputs.should_notarize }}
     steps:
       - name: Checkout (full history for GitVersion)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
